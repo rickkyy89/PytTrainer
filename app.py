@@ -21,7 +21,19 @@ from video_helper import (
 PERCORSO_CSV_ESEMPIO = "esercizi_example.csv"
 
 
-def _nuovo_esercizio(nome="", spiegazione="", note="", ripetizioni="", recupero=""):
+def _nuovo_esercizio(
+    nome="",
+    spiegazione="",
+    note="",
+    ripetizioni="",
+    recupero="",
+    gruppo="",
+    video_url="",
+    ts_start=0.0,
+    ts_finish=1.0,
+    frame_start=None,
+    frame_finish=None,
+):
     """Crea un dizionario esercizio con tutte le chiavi usate dall'app inizializzate."""
     return {
         "nome": nome,
@@ -29,12 +41,13 @@ def _nuovo_esercizio(nome="", spiegazione="", note="", ripetizioni="", recupero=
         "note": note,
         "ripetizioni": ripetizioni,
         "recupero": recupero,
-        "video_url": "",
+        "gruppo": gruppo,
+        "video_url": video_url or "",
         "risultati_ricerca": [],
-        "frame_start": None,
-        "frame_finish": None,
-        "ts_start": 0.0,
-        "ts_finish": 1.0,
+        "frame_start": frame_start,
+        "frame_finish": frame_finish,
+        "ts_start": ts_start if ts_start is not None else 0.0,
+        "ts_finish": ts_finish if ts_finish is not None else 1.0,
     }
 
 
@@ -102,12 +115,15 @@ def main():
                 ripetizioni = st.text_input("Ripetizioni (es. 3x12)")
             with colonna_rec:
                 recupero = st.text_input("Recupero (es. 90 SEC)")
+            gruppo = st.text_input("Gruppo (opzionale, es. Attivazione)")
             inviato = st.form_submit_button("Aggiungi esercizio")
 
         if inviato:
             if nome.strip():
                 st.session_state["esercizi"].append(
-                    _nuovo_esercizio(nome.strip(), spiegazione, note, ripetizioni, recupero)
+                    _nuovo_esercizio(
+                        nome.strip(), spiegazione, note, ripetizioni, recupero, gruppo.strip()
+                    )
                 )
                 st.rerun()
             else:
@@ -138,6 +154,11 @@ def main():
                 st.dataframe(esercizi_importati, use_container_width=True)
                 if st.button("➕ Importa esercizi nella lista"):
                     for riga in esercizi_importati:
+                        # Le colonne opzionali del manifest (gruppo, video_url,
+                        # timestamp, frame) precompilano l'esercizio se presenti nel
+                        # CSV: i frame mostrano subito l'anteprima se i file esistono
+                        # ancora su disco, l'URL diretto precompila il campo video, i
+                        # timestamp precompilano i number_input.
                         st.session_state["esercizi"].append(
                             _nuovo_esercizio(
                                 riga["nome"],
@@ -145,6 +166,12 @@ def main():
                                 riga["note"],
                                 riga["ripetizioni"],
                                 riga["recupero"],
+                                riga.get("gruppo", ""),
+                                riga.get("video_url", ""),
+                                riga.get("ts_start"),
+                                riga.get("ts_finish"),
+                                riga.get("frame_start"),
+                                riga.get("frame_finish"),
                             )
                         )
                     st.rerun()
@@ -156,7 +183,9 @@ def main():
 
     for i, esercizio in enumerate(st.session_state["esercizi"]):
         etichetta = esercizio["nome"] or f"Esercizio {i + 1}"
-        with st.expander(f"{i + 1}. {etichetta}", expanded=False):
+        gruppo_esercizio = (esercizio.get("gruppo") or "").strip()
+        prefisso_gruppo = f"[{gruppo_esercizio}] " if gruppo_esercizio else ""
+        with st.expander(f"{i + 1}. {prefisso_gruppo}{etichetta}", expanded=False):
 
             st.subheader("Ricerca video YouTube")
             if st.button("🔍 Cerca su YouTube", key=f"cerca_{i}"):

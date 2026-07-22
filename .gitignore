@@ -2,6 +2,7 @@ credentials.json
 service_account.json
 token.json
 frames/
+*.state.json
 venv/
 .venv/
 __pycache__/
