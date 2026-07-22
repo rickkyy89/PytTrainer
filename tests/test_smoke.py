@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 # Rendiamo importabili i moduli del progetto (root della repo) indipendentemente
 # da dove viene lanciato pytest.
@@ -28,9 +29,15 @@ if str(RADICE_PROGETTO) not in sys.path:
 import csv_utils  # noqa: E402
 import google_docs_helper  # noqa: E402
 import video_helper  # noqa: E402
-from csv_utils import parse_esercizi_csv, scrivi_esercizi_csv, slugify  # noqa: E402
+from csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv, slugify  # noqa: E402
 from google_docs_helper import create_workout_document, update_exercise_media  # noqa: E402
-from video_helper import FrameExtractionError, extract_frame, filtra_risultati_pertinenti  # noqa: E402
+from video_helper import (  # noqa: E402
+    FrameExtractionError,
+    box_ritaglio,
+    crop_frame,
+    extract_frame,
+    filtra_risultati_pertinenti,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -46,12 +53,15 @@ def test_import_moduli_principali():
     assert hasattr(video_helper, "filtra_risultati_pertinenti")
     assert hasattr(video_helper, "scegli_ed_estrai")
     assert hasattr(video_helper, "get_video_info")
+    assert hasattr(video_helper, "box_ritaglio")
+    assert hasattr(video_helper, "crop_frame")
     assert hasattr(google_docs_helper, "create_workout_document")
     assert hasattr(google_docs_helper, "update_exercise_media")
     assert hasattr(google_docs_helper, "get_credentials")
     assert hasattr(google_docs_helper, "get_credentials_manual_flow")
     assert hasattr(csv_utils, "parse_esercizi_csv")
     assert hasattr(csv_utils, "scrivi_esercizi_csv")
+    assert hasattr(csv_utils, "esercizi_csv_bytes")
 
 
 def test_app_py_sintatticamente_valido():
@@ -192,6 +202,44 @@ def test_scrivi_esercizi_csv_round_trip(tmp_path):
     scrivi_esercizi_csv(esercizi, str(percorso))
     riletti = parse_esercizi_csv(str(percorso))
 
+    assert riletti == esercizi
+
+
+def test_esercizi_csv_bytes_round_trip():
+    """esercizi_csv_bytes → parse_esercizi_csv deve restituire gli stessi valori
+    ottenuti passando per un file su disco (stessa logica, buffer in memoria)."""
+    esercizi = [
+        {
+            "nome": "Squat",
+            "spiegazione": "Scendi e risali",
+            "note": "Attenzione alla schiena",
+            "ripetizioni": "3x12",
+            "recupero": "90 SEC",
+            "gruppo": "Attivazione",
+            "video_url": "https://youtu.be/abc",
+            "ts_start": 6.0,
+            "ts_finish": 24.0,
+            "frame_start": "frames/squat_start.jpg",
+            "frame_finish": "frames/squat_finish.jpg",
+        },
+        {
+            "nome": "Plank",
+            "spiegazione": "Mantieni la posizione",
+            "note": "",
+            "ripetizioni": "1x60s",
+            "recupero": "60 SEC",
+            "gruppo": "",
+            "video_url": "",
+            "ts_start": None,
+            "ts_finish": None,
+            "frame_start": None,
+            "frame_finish": None,
+        },
+    ]
+    dati_csv = esercizi_csv_bytes(esercizi)
+    assert isinstance(dati_csv, bytes)
+
+    riletti = parse_esercizi_csv(io.BytesIO(dati_csv))
     assert riletti == esercizi
 
 
@@ -344,6 +392,66 @@ def test_extract_frame_fallisce_con_input_non_valido(tmp_path):
     output_path = tmp_path / "out.jpg"
     with pytest.raises(FrameExtractionError):
         extract_frame(str(tmp_path / "video_inesistente.mp4"), 0.0, str(output_path))
+
+
+# ---------------------------------------------------------------------------
+# Test di ritaglio frame (video_helper.box_ritaglio / crop_frame)
+# ---------------------------------------------------------------------------
+
+def test_box_ritaglio():
+    """Verifica la formula su size (200, 100) con percentuali note."""
+    box = box_ritaglio((200, 100), sinistra_pct=10, alto_pct=20, destra_pct=5, basso_pct=25)
+    assert box == (20, 20, 190, 75)
+
+    # Nessun ritaglio: il box coincide con l'intera immagine.
+    assert box_ritaglio((200, 100)) == (0, 0, 200, 100)
+
+
+def _crea_immagine_di_prova(percorso, size=(200, 100)):
+    """Crea e salva un'immagine RGB di prova (tinta unita) per i test di ritaglio."""
+    immagine = Image.new("RGB", size, color=(120, 30, 200))
+    immagine.save(percorso, "JPEG")
+    return percorso
+
+
+def test_crop_frame_ritaglia_correttamente(tmp_path):
+    percorso_originale = tmp_path / "frame.jpg"
+    percorso_output = tmp_path / "frame_ritagliato.jpg"
+    _crea_immagine_di_prova(percorso_originale)
+
+    percorso_restituito = crop_frame(
+        str(percorso_originale), 10, 10, 10, 10, output_path=str(percorso_output)
+    )
+
+    assert percorso_restituito == str(percorso_output)
+    with Image.open(percorso_output) as immagine_ritagliata:
+        assert immagine_ritagliata.size == (160, 80)
+
+    with open(percorso_output, "rb") as file_immagine:
+        intestazione = file_immagine.read(2)
+    assert intestazione == b"\xff\xd8"  # magic bytes JPEG
+
+
+def test_crop_frame_sovrascrive_di_default(tmp_path):
+    percorso_originale = tmp_path / "frame.jpg"
+    _crea_immagine_di_prova(percorso_originale)
+
+    percorso_restituito = crop_frame(str(percorso_originale), 25, 0, 25, 0)
+
+    assert percorso_restituito == str(percorso_originale)
+    with Image.open(percorso_originale) as immagine_ritagliata:
+        assert immagine_ritagliata.size == (100, 100)
+
+
+def test_crop_frame_percentuali_non_valide(tmp_path):
+    percorso_originale = tmp_path / "frame.jpg"
+    _crea_immagine_di_prova(percorso_originale)
+
+    with pytest.raises(ValueError):
+        crop_frame(str(percorso_originale), sinistra_pct=50)
+
+    with pytest.raises(ValueError):
+        crop_frame(str(percorso_originale), sinistra_pct=45, destra_pct=45)
 
 
 # ---------------------------------------------------------------------------

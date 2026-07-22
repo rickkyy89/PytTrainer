@@ -12,6 +12,7 @@ import re
 import subprocess
 
 import yt_dlp
+from PIL import Image
 from yt_dlp.utils import DownloadError
 
 from csv_utils import slugify
@@ -382,3 +383,79 @@ def scegli_ed_estrai(esercizio: dict, output_dir: str = "frames", logger=print) 
 
     logger(f"[{nome}] nessun video utilizzabile trovato, frame lasciati vuoti.")
     return esercizio
+
+
+def box_ritaglio(
+    size: tuple[int, int],
+    sinistra_pct: float = 0.0,
+    alto_pct: float = 0.0,
+    destra_pct: float = 0.0,
+    basso_pct: float = 0.0,
+) -> tuple[int, int, int, int]:
+    """
+    Calcola il box in pixel (sinistra, alto, destra, basso), nel formato
+    atteso da Image.crop(), a partire dalle percentuali di ritaglio per lato
+    e dalle dimensioni (larghezza, altezza) dell'immagine originale.
+
+    Ogni percentuale deve essere compresa in [0, 45] e sinistra_pct +
+    destra_pct deve restare sotto 90 (così come alto_pct + basso_pct),
+    altrimenti il ritaglio azzererebbe o invertirebbe l'intera larghezza o
+    altezza: in questi casi solleva ValueError con un messaggio in italiano.
+    Pubblica (non prefissata con "_") perché riusata anche da app.py per
+    l'anteprima live del ritaglio, senza duplicare la formula.
+    """
+    for nome_percentuale, valore in (
+        ("sinistra_pct", sinistra_pct),
+        ("alto_pct", alto_pct),
+        ("destra_pct", destra_pct),
+        ("basso_pct", basso_pct),
+    ):
+        if not (0 <= valore <= 45):
+            raise ValueError(
+                f"Percentuale di ritaglio '{nome_percentuale}' non valida: {valore}. "
+                "Deve essere compresa tra 0 e 45."
+            )
+    if sinistra_pct + destra_pct >= 90:
+        raise ValueError(
+            "La somma delle percentuali di ritaglio sinistra e destra deve essere "
+            f"minore di 90 (ricevuto {sinistra_pct + destra_pct})."
+        )
+    if alto_pct + basso_pct >= 90:
+        raise ValueError(
+            "La somma delle percentuali di ritaglio alto e basso deve essere minore "
+            f"di 90 (ricevuto {alto_pct + basso_pct})."
+        )
+
+    larghezza, altezza = size
+    sinistra = round(larghezza * sinistra_pct / 100)
+    alto = round(altezza * alto_pct / 100)
+    destra = round(larghezza * (1 - destra_pct / 100))
+    basso = round(altezza * (1 - basso_pct / 100))
+    return (sinistra, alto, destra, basso)
+
+
+def crop_frame(
+    image_path: str,
+    sinistra_pct: float = 0.0,
+    alto_pct: float = 0.0,
+    destra_pct: float = 0.0,
+    basso_pct: float = 0.0,
+    output_path: str | None = None,
+) -> str:
+    """
+    Ritaglia un frame estratto (START o FINISH) in base alle percentuali
+    indicate per ciascun lato (sinistra/alto/destra/basso, vedi
+    box_ritaglio() per i vincoli), salvandolo come JPEG (quality=90).
+
+    Se output_path non è indicato, sovrascrive image_path. Le immagini con
+    canale alpha vengono convertite in RGB prima del salvataggio (il formato
+    JPEG non lo supporta). Restituisce il percorso del file scritto.
+    """
+    output_path = output_path or image_path
+    with Image.open(image_path) as immagine:
+        box = box_ritaglio(immagine.size, sinistra_pct, alto_pct, destra_pct, basso_pct)
+        ritagliata = immagine.crop(box)
+        if ritagliata.mode != "RGB":
+            ritagliata = ritagliata.convert("RGB")
+        ritagliata.save(output_path, "JPEG", quality=90)
+    return output_path

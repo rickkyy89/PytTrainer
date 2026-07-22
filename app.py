@@ -6,14 +6,18 @@ ricerca video YouTube e estrazione automatica dei frame START/FINISH.
 
 import os
 import shutil
+import uuid
 
 import streamlit as st
+from PIL import Image
 
-from csv_utils import COLONNE_ATTESE, parse_esercizi_csv
+from csv_utils import COLONNE_ATTESE, esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv
 from google_docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
 from video_helper import (
     FrameExtractionError,
     VideoSearchError,
+    box_ritaglio,
+    crop_frame,
     extract_start_finish_frames,
     search_youtube,
 )
@@ -36,6 +40,7 @@ def _nuovo_esercizio(
 ):
     """Crea un dizionario esercizio con tutte le chiavi usate dall'app inizializzate."""
     return {
+        "uid": uuid.uuid4().hex[:8],
         "nome": nome,
         "spiegazione": spiegazione,
         "note": note,
@@ -61,6 +66,63 @@ def _formatta_durata(secondi):
     return f"{minuti:02d}:{resto:02d}"
 
 
+def _percorso_backup_frame(percorso_frame):
+    """Percorso convenzionale del backup dell'originale non ritagliato di un frame."""
+    radice, _ = os.path.splitext(percorso_frame)
+    return f"{radice}_orig.jpg"
+
+
+def _ui_ritaglio_frame(percorso_frame, uid, suffisso):
+    """
+    Renderizza i controlli di ritaglio (slider percentuali, anteprima live,
+    applica/ripristina) per un frame (START o FINISH) di un esercizio. uid e
+    suffisso ("start"/"finish") rendono uniche le key dei widget Streamlit.
+    """
+    colonna_sinistra, colonna_alto, colonna_destra, colonna_basso = st.columns(4)
+    with colonna_sinistra:
+        sinistra_pct = st.slider("Sinistra %", 0, 45, 0, key=f"crop_sinistra_{suffisso}_{uid}")
+    with colonna_alto:
+        alto_pct = st.slider("Alto %", 0, 45, 0, key=f"crop_alto_{suffisso}_{uid}")
+    with colonna_destra:
+        destra_pct = st.slider("Destra %", 0, 45, 0, key=f"crop_destra_{suffisso}_{uid}")
+    with colonna_basso:
+        basso_pct = st.slider("Basso %", 0, 45, 0, key=f"crop_basso_{suffisso}_{uid}")
+
+    try:
+        with Image.open(percorso_frame) as immagine:
+            box = box_ritaglio(immagine.size, sinistra_pct, alto_pct, destra_pct, basso_pct)
+            st.image(immagine.crop(box), caption="Anteprima ritaglio")
+    except (ValueError, OSError) as errore:
+        st.error(str(errore))
+
+    percorso_backup = _percorso_backup_frame(percorso_frame)
+    colonna_applica, colonna_ripristina = st.columns(2)
+    with colonna_applica:
+        if st.button("✂️ Applica ritaglio", key=f"applica_crop_{suffisso}_{uid}"):
+            try:
+                if not os.path.exists(percorso_backup):
+                    shutil.copy2(percorso_frame, percorso_backup)
+                crop_frame(percorso_frame, sinistra_pct, alto_pct, destra_pct, basso_pct)
+            except (ValueError, OSError) as errore:
+                st.error(str(errore))
+            else:
+                st.success("Ritaglio applicato.")
+                st.rerun()
+    with colonna_ripristina:
+        if st.button(
+            "↩️ Ripristina originale",
+            key=f"ripristina_{suffisso}_{uid}",
+            disabled=not os.path.exists(percorso_backup),
+        ):
+            try:
+                shutil.copy2(percorso_backup, percorso_frame)
+            except OSError as errore:
+                st.error(str(errore))
+            else:
+                st.success("Originale ripristinato.")
+                st.rerun()
+
+
 def main():
     st.set_page_config(page_title="Workout Sheet Automator", layout="wide", page_icon="🏋️")
 
@@ -72,6 +134,55 @@ def main():
         st.title("🏋️ Workout Sheet Automator")
         titolo_scheda = st.text_input(
             "Titolo scheda", value="SCHEDA 1: GAMBE & GLUTEI", key="titolo_scheda"
+        )
+
+        st.markdown("---")
+        st.subheader("💾 Salvataggio scheda")
+        percorso_csv = st.text_input("Percorso file CSV", value="scheda.csv", key="percorso_csv")
+        colonna_salva, colonna_carica = st.columns(2)
+        with colonna_salva:
+            if st.button("💾 Salva su CSV"):
+                try:
+                    scrivi_esercizi_csv(st.session_state["esercizi"], percorso_csv)
+                except Exception as errore:
+                    st.error(f"Errore durante il salvataggio del CSV: {errore}")
+                else:
+                    n = len(st.session_state["esercizi"])
+                    st.success(f"Scheda salvata in '{percorso_csv}' ({n} esercizi).")
+        with colonna_carica:
+            if st.button("📂 Carica da CSV"):
+                if os.path.exists(percorso_csv):
+                    try:
+                        esercizi_caricati = parse_esercizi_csv(percorso_csv)
+                    except ValueError as errore:
+                        st.error(str(errore))
+                    except Exception as errore:  # errori generici di parsing pandas
+                        st.error(f"Errore durante la lettura del CSV: {errore}")
+                    else:
+                        st.session_state["esercizi"] = [
+                            _nuovo_esercizio(
+                                riga["nome"],
+                                riga["spiegazione"],
+                                riga["note"],
+                                riga["ripetizioni"],
+                                riga["recupero"],
+                                riga.get("gruppo", ""),
+                                riga.get("video_url", ""),
+                                riga.get("ts_start"),
+                                riga.get("ts_finish"),
+                                riga.get("frame_start"),
+                                riga.get("frame_finish"),
+                            )
+                            for riga in esercizi_caricati
+                        ]
+                        st.rerun()
+                else:
+                    st.warning(f"Il file '{percorso_csv}' non esiste.")
+        st.download_button(
+            "⬇️ Scarica CSV",
+            data=esercizi_csv_bytes(st.session_state["esercizi"]),
+            file_name=os.path.basename(percorso_csv) or "scheda.csv",
+            mime="text/csv",
         )
 
         st.markdown("---")
@@ -179,16 +290,27 @@ def main():
     st.markdown("---")
 
     # --- Elenco esercizi con gestione video/frame -------------------------
+    # Le key dei widget per-esercizio sono basate sull'uid (non sulla
+    # posizione i): con riordino/rimozione la posizione cambia da un rerun
+    # all'altro, mentre l'uid resta stabile e ancorato allo stesso esercizio.
     indice_da_rimuovere = None
+    scambio = None  # (indice_a, indice_b) da scambiare dopo il loop
 
+    numero_esercizi = len(st.session_state["esercizi"])
     for i, esercizio in enumerate(st.session_state["esercizi"]):
+        if "uid" not in esercizio:
+            # Retrocompatibilità con stato di sessione creato prima dell'introduzione
+            # dell'uid (es. sessione già aperta durante un aggiornamento dell'app).
+            esercizio["uid"] = uuid.uuid4().hex[:8]
+        uid = esercizio["uid"]
+
         etichetta = esercizio["nome"] or f"Esercizio {i + 1}"
         gruppo_esercizio = (esercizio.get("gruppo") or "").strip()
         prefisso_gruppo = f"[{gruppo_esercizio}] " if gruppo_esercizio else ""
         with st.expander(f"{i + 1}. {prefisso_gruppo}{etichetta}", expanded=False):
 
             st.subheader("Ricerca video YouTube")
-            if st.button("🔍 Cerca su YouTube", key=f"cerca_{i}"):
+            if st.button("🔍 Cerca su YouTube", key=f"cerca_{uid}"):
                 if esercizio["nome"].strip():
                     try:
                         with st.spinner("Ricerca dei video in corso..."):
@@ -219,14 +341,14 @@ def main():
                     "Seleziona il video da usare",
                     options=range(len(risultati_mostrati)),
                     format_func=lambda x: etichette_radio[x],
-                    key=f"radio_video_{i}",
+                    key=f"radio_video_{uid}",
                 )
                 video_selezionato_url = risultati_mostrati[scelta]["webpage_url"]
 
             url_manuale = st.text_input(
                 "Oppure incolla un URL YouTube diretto",
                 value=esercizio.get("video_url") or "",
-                key=f"url_manuale_{i}",
+                key=f"url_manuale_{uid}",
             )
 
             # L'URL incollato manualmente ha sempre precedenza sulla selezione da ricerca.
@@ -246,7 +368,7 @@ def main():
                     min_value=0.0,
                     step=0.5,
                     value=float(esercizio.get("ts_start") or 0.0),
-                    key=f"ts_start_{i}",
+                    key=f"ts_start_{uid}",
                 )
             with colonna_finish:
                 ts_finish = st.number_input(
@@ -254,7 +376,7 @@ def main():
                     min_value=0.0,
                     step=0.5,
                     value=float(esercizio.get("ts_finish") or 1.0),
-                    key=f"ts_finish_{i}",
+                    key=f"ts_finish_{uid}",
                 )
             st.session_state["esercizi"][i]["ts_start"] = ts_start
             st.session_state["esercizi"][i]["ts_finish"] = ts_finish
@@ -263,7 +385,7 @@ def main():
             if not timestamp_validi:
                 st.warning("Il timestamp FINISH deve essere maggiore del timestamp START.")
 
-            if st.button("🎬 Estrai frame", key=f"estrai_{i}"):
+            if st.button("🎬 Estrai frame", key=f"estrai_{uid}"):
                 if not video_url_finale:
                     st.error("Seleziona un video dai risultati di ricerca oppure incolla un URL.")
                 elif not timestamp_validi:
@@ -291,23 +413,27 @@ def main():
                 colonna_img_start, colonna_img_finish = st.columns(2)
                 with colonna_img_start:
                     st.image(frame_start, caption="START")
+                    with st.expander("✂️ Ritaglia START"):
+                        _ui_ritaglio_frame(frame_start, uid, "start")
                 with colonna_img_finish:
                     st.image(frame_finish, caption="FINISH")
+                    with st.expander("✂️ Ritaglia FINISH"):
+                        _ui_ritaglio_frame(frame_finish, uid, "finish")
 
             st.subheader("Dettagli esercizio")
-            nome_modificato = st.text_input("Nome esercizio", value=esercizio["nome"], key=f"nome_{i}")
+            nome_modificato = st.text_input("Nome esercizio", value=esercizio["nome"], key=f"nome_{uid}")
             spiegazione_modificata = st.text_area(
-                "Spiegazione", value=esercizio["spiegazione"], key=f"spiegazione_{i}"
+                "Spiegazione", value=esercizio["spiegazione"], key=f"spiegazione_{uid}"
             )
-            note_modificate = st.text_area("Note", value=esercizio["note"], key=f"note_{i}")
+            note_modificate = st.text_area("Note", value=esercizio["note"], key=f"note_{uid}")
             colonna_rip_edit, colonna_rec_edit = st.columns(2)
             with colonna_rip_edit:
                 ripetizioni_modificate = st.text_input(
-                    "Ripetizioni", value=esercizio["ripetizioni"], key=f"ripetizioni_{i}"
+                    "Ripetizioni", value=esercizio["ripetizioni"], key=f"ripetizioni_{uid}"
                 )
             with colonna_rec_edit:
                 recupero_modificato = st.text_input(
-                    "Recupero", value=esercizio["recupero"], key=f"recupero_{i}"
+                    "Recupero", value=esercizio["recupero"], key=f"recupero_{uid}"
                 )
 
             st.session_state["esercizi"][i].update(
@@ -320,11 +446,26 @@ def main():
                 }
             )
 
-            if st.button("🗑️ Rimuovi esercizio", key=f"rimuovi_{i}"):
-                indice_da_rimuovere = i
+            st.markdown("---")
+            colonna_su, colonna_giu, colonna_rimuovi = st.columns(3)
+            with colonna_su:
+                if st.button("⬆️ Sposta su", key=f"su_{uid}", disabled=(i == 0)):
+                    scambio = (i, i - 1)
+            with colonna_giu:
+                if st.button("⬇️ Sposta giù", key=f"giu_{uid}", disabled=(i == numero_esercizi - 1)):
+                    scambio = (i, i + 1)
+            with colonna_rimuovi:
+                if st.button("🗑️ Rimuovi esercizio", key=f"rimuovi_{uid}"):
+                    indice_da_rimuovere = i
 
     if indice_da_rimuovere is not None:
         del st.session_state["esercizi"][indice_da_rimuovere]
+        st.rerun()
+
+    if scambio is not None:
+        indice_a, indice_b = scambio
+        lista_esercizi = st.session_state["esercizi"]
+        lista_esercizi[indice_a], lista_esercizi[indice_b] = lista_esercizi[indice_b], lista_esercizi[indice_a]
         st.rerun()
 
     # --- Riepilogo e generazione documento --------------------------------

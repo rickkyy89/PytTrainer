@@ -19,6 +19,11 @@ Il flusso di lavoro tipico è:
 4. Genera il Google Doc: verrà creato un documento A4 con un modulo per
    ciascun esercizio pronto (cioè con entrambi i fotogrammi estratti).
 
+In qualsiasi momento puoi salvare la scheda su CSV (o scaricarla) dalla
+sidebar per riprendere il lavoro più tardi, riordinare gli esercizi con le
+frecce su/giù, e ritagliare (crop) i fotogrammi START/FINISH direttamente
+dall'anteprima, con possibilità di ripristinare l'originale.
+
 L'app funziona interamente in locale: i video non vengono mai scaricati per
 intero, viene solo letto lo stream necessario a estrarre i due fotogrammi.
 

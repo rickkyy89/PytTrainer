@@ -19,6 +19,7 @@ i moduli Python del progetto.
 | `percorso_stato_per_titolo(titolo)` → `str` | `google_docs_helper.py` | Percorso convenzionale del file `*.state.json` di una scheda |
 | `update_exercise_media(doc_id, nome_esercizio, video_url, ...)` → `dict` | `google_docs_helper.py` | Sostituisce mirata mente i frame di UN esercizio già nel documento |
 | `get_credentials_manual_flow(auth_code=None)` | `google_docs_helper.py` | OAuth headless: prima chiamata dà l'URL, seconda con `auth_code` completa il login |
+| `crop_frame(path, sinistra_pct, alto_pct, destra_pct, basso_pct)` | `video_helper.py` | Ritaglia un frame estratto (percentuali per lato, sovrascrive il file) |
 
 ## 1. Installazione (una sola volta)
 

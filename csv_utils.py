@@ -12,6 +12,7 @@ timestamp.
 
 from __future__ import annotations
 
+import io
 import re
 
 import pandas as pd
@@ -129,13 +130,14 @@ def parse_esercizi_csv(file_like) -> list[dict]:
     return esercizi
 
 
-def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
+def _dataframe_da_esercizi(esercizi: list[dict]) -> pd.DataFrame:
     """
-    Riscrive il CSV arricchito con tutte le 11 colonne (le 5 obbligatorie più
-    le 6 opzionali del manifest, nell'ordine di _COLONNE_CSV_COMPLETE). È il
-    "salvataggio" della scheda: un successivo parse_esercizi_csv(percorso)
-    restituisce gli stessi valori (round-trip). Le chiavi opzionali mancanti
-    o a None diventano celle vuote nel CSV.
+    Costruisce il DataFrame delle 11 colonne del manifest (le 5 obbligatorie
+    più le 6 opzionali, nell'ordine di _COLONNE_CSV_COMPLETE) a partire dalla
+    lista di dizionari esercizio. Le chiavi opzionali mancanti o a None
+    diventano celle vuote. Logica condivisa da scrivi_esercizi_csv() ed
+    esercizi_csv_bytes(), che differiscono solo per la destinazione (file su
+    disco o buffer in memoria).
     """
     righe = []
     for esercizio in esercizi:
@@ -154,5 +156,29 @@ def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
                 "FrameFinishPath": esercizio.get("frame_finish") or "",
             }
         )
-    df = pd.DataFrame(righe, columns=_COLONNE_CSV_COMPLETE)
+    return pd.DataFrame(righe, columns=_COLONNE_CSV_COMPLETE)
+
+
+def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
+    """
+    Riscrive il CSV arricchito con tutte le 11 colonne (le 5 obbligatorie più
+    le 6 opzionali del manifest, nell'ordine di _COLONNE_CSV_COMPLETE). È il
+    "salvataggio" della scheda: un successivo parse_esercizi_csv(percorso)
+    restituisce gli stessi valori (round-trip). Le chiavi opzionali mancanti
+    o a None diventano celle vuote nel CSV.
+    """
+    df = _dataframe_da_esercizi(esercizi)
     df.to_csv(percorso, index=False)
+
+
+def esercizi_csv_bytes(esercizi: list[dict]) -> bytes:
+    """
+    Genera in memoria (nessun file su disco) lo stesso CSV arricchito
+    prodotto da scrivi_esercizi_csv(), utile per il bottone di download
+    diretto dall'interfaccia Streamlit. Riusa _dataframe_da_esercizi() per
+    non duplicare la logica di costruzione delle colonne.
+    """
+    df = _dataframe_da_esercizi(esercizi)
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False)
+    return buffer.getvalue().encode("utf-8")
