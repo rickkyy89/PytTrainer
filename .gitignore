@@ -1,0 +1,10 @@
+credentials.json
+service_account.json
+token.json
+frames/
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.streamlit/secrets.toml
