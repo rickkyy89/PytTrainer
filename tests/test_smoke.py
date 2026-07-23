@@ -28,6 +28,7 @@ if str(RADICE_PROGETTO) not in sys.path:
 
 import csv_utils  # noqa: E402
 import google_docs_helper  # noqa: E402
+import scheda_file  # noqa: E402
 import video_helper  # noqa: E402
 from csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv, slugify  # noqa: E402
 from google_docs_helper import create_workout_document, update_exercise_media  # noqa: E402
@@ -62,6 +63,14 @@ def test_import_moduli_principali():
     assert hasattr(csv_utils, "parse_esercizi_csv")
     assert hasattr(csv_utils, "scrivi_esercizi_csv")
     assert hasattr(csv_utils, "esercizi_csv_bytes")
+    assert hasattr(scheda_file, "carica_scheda")
+    assert hasattr(scheda_file, "carica_scheda_da_file_like")
+    assert hasattr(scheda_file, "salva_scheda")
+    assert hasattr(scheda_file, "scheda_bytes")
+    assert hasattr(scheda_file, "cartella_lavoro_per_bundle")
+    assert hasattr(scheda_file, "cartella_frames")
+    assert hasattr(scheda_file, "percorso_stato")
+    assert hasattr(scheda_file, "SchedaFileError")
 
 
 def test_app_py_sintatticamente_valido():

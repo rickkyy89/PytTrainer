@@ -729,6 +729,7 @@ def update_exercise_media(
     state_path: str | None = None,
     docs_service=None,
     drive_service=None,
+    output_dir: str = "frames",
 ) -> dict:
     """
     Sostituisce mirata mente i due frame (START/FINISH) di un esercizio già
@@ -743,7 +744,9 @@ def update_exercise_media(
     l'esercizio: lo stato non conserva il video precedentemente usato (solo
     l'ancoraggio nel documento), quindi video_url va sempre indicato
     esplicitamente qui; se ts_start/ts_finish non sono indicati si applica
-    l'euristica 10%/50% sulla durata ottenuta con get_video_info().
+    l'euristica 10%/50% sulla durata ottenuta con get_video_info(). I nuovi
+    frame vengono scritti in output_dir (per una scheda a bundle passare
+    scheda_file.cartella_frames(cartella_lavoro)).
 
     Restituisce {"document_id", "esercizio", "frame_start", "frame_finish"}.
     """
@@ -789,7 +792,7 @@ def update_exercise_media(
             ts_finish = durata * 0.50
 
     percorso_start, percorso_finish = video_helper.extract_start_finish_frames(
-        video_url, ts_start, ts_finish, exercise_name
+        video_url, ts_start, ts_finish, exercise_name, output_dir
     )
 
     file_id_caricati: list[str] = []

@@ -3,6 +3,9 @@ service_account.json
 token.json
 frames/
 *.state.json
+*.scheda
+*.scheda.tmp
+*.scheda.work/
 venv/
 .venv/
 __pycache__/

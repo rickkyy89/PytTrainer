@@ -11,8 +11,18 @@ import uuid
 import streamlit as st
 from PIL import Image
 
-from csv_utils import COLONNE_ATTESE, esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv
+from csv_utils import COLONNE_ATTESE, esercizi_csv_bytes, parse_esercizi_csv
 from google_docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
+from scheda_file import (
+    SchedaFileError,
+    carica_scheda,
+    carica_scheda_da_file_like,
+    cartella_frames,
+    cartella_lavoro_per_bundle,
+    percorso_stato,
+    salva_scheda,
+    scheda_bytes,
+)
 from video_helper import (
     FrameExtractionError,
     VideoSearchError,
@@ -137,27 +147,37 @@ def main():
         )
 
         st.markdown("---")
-        st.subheader("💾 Salvataggio scheda")
-        percorso_csv = st.text_input("Percorso file CSV", value="scheda.csv", key="percorso_csv")
+        st.subheader("💾 File scheda")
+        percorso_scheda = st.text_input(
+            "Percorso file scheda (.scheda)", value="scheda.scheda", key="percorso_scheda"
+        )
+        # Cartella di lavoro (cache di estrazione) del bundle corrente: è la
+        # destinazione dei frame estratti e dello stato di ripresa del Doc.
+        cartella_lavoro = cartella_lavoro_per_bundle(percorso_scheda)
+        st.session_state["cartella_lavoro"] = cartella_lavoro
         colonna_salva, colonna_carica = st.columns(2)
         with colonna_salva:
-            if st.button("💾 Salva su CSV"):
+            if st.button("💾 Salva scheda"):
                 try:
-                    scrivi_esercizi_csv(st.session_state["esercizi"], percorso_csv)
+                    salva_scheda(
+                        st.session_state["esercizi"],
+                        percorso_scheda,
+                        state_path=percorso_stato(cartella_lavoro),
+                    )
                 except Exception as errore:
-                    st.error(f"Errore durante il salvataggio del CSV: {errore}")
+                    st.error(f"Errore durante il salvataggio della scheda: {errore}")
                 else:
                     n = len(st.session_state["esercizi"])
-                    st.success(f"Scheda salvata in '{percorso_csv}' ({n} esercizi).")
+                    st.success(f"Scheda salvata in '{percorso_scheda}' ({n} esercizi).")
         with colonna_carica:
-            if st.button("📂 Carica da CSV"):
-                if os.path.exists(percorso_csv):
+            if st.button("📂 Carica scheda"):
+                if os.path.exists(percorso_scheda):
                     try:
-                        esercizi_caricati = parse_esercizi_csv(percorso_csv)
-                    except ValueError as errore:
+                        esercizi_caricati, _ = carica_scheda(percorso_scheda, cartella_lavoro)
+                    except (SchedaFileError, ValueError) as errore:
                         st.error(str(errore))
-                    except Exception as errore:  # errori generici di parsing pandas
-                        st.error(f"Errore durante la lettura del CSV: {errore}")
+                    except Exception as errore:  # errori generici di lettura/parsing
+                        st.error(f"Errore durante la lettura della scheda: {errore}")
                     else:
                         st.session_state["esercizi"] = [
                             _nuovo_esercizio(
@@ -177,11 +197,19 @@ def main():
                         ]
                         st.rerun()
                 else:
-                    st.warning(f"Il file '{percorso_csv}' non esiste.")
+                    st.warning(f"Il file '{percorso_scheda}' non esiste.")
         st.download_button(
-            "⬇️ Scarica CSV",
+            "⬇️ Scarica scheda (.scheda)",
+            data=scheda_bytes(
+                st.session_state["esercizi"], state_path=percorso_stato(cartella_lavoro)
+            ),
+            file_name=os.path.basename(percorso_scheda) or "scheda.scheda",
+            mime="application/zip",
+        )
+        st.download_button(
+            "⬇️ Esporta solo CSV",
             data=esercizi_csv_bytes(st.session_state["esercizi"]),
-            file_name=os.path.basename(percorso_csv) or "scheda.csv",
+            file_name="scheda.csv",
             mime="text/csv",
         )
 
@@ -214,7 +242,7 @@ def main():
     st.header("Esercizi della scheda")
 
     # --- Tab di inserimento -----------------------------------------------
-    tab_manuale, tab_csv = st.tabs(["➕ Inserimento manuale", "📄 Carica CSV"])
+    tab_manuale, tab_csv = st.tabs(["➕ Inserimento manuale", "📄 Importa scheda/CSV"])
 
     with tab_manuale:
         with st.form("form_inserimento_manuale", clear_on_submit=True):
@@ -252,14 +280,24 @@ def main():
                     mime="text/csv",
                 )
 
-        file_caricato = st.file_uploader("Carica file CSV", type=["csv"], key="csv_uploader")
+        file_caricato = st.file_uploader(
+            "Carica file scheda (.scheda) o CSV",
+            type=["scheda", "zip", "csv"],
+            key="csv_uploader",
+        )
         if file_caricato is not None:
+            estensione = os.path.splitext(file_caricato.name)[1].lower()
             try:
-                esercizi_importati = parse_esercizi_csv(file_caricato)
-            except ValueError as errore:
+                if estensione in (".scheda", ".zip"):
+                    esercizi_importati = carica_scheda_da_file_like(
+                        file_caricato, st.session_state["cartella_lavoro"]
+                    )
+                else:
+                    esercizi_importati = parse_esercizi_csv(file_caricato)
+            except (SchedaFileError, ValueError) as errore:
                 st.error(str(errore))
-            except Exception as errore:  # errori generici di parsing pandas
-                st.error(f"Errore durante la lettura del CSV: {errore}")
+            except Exception as errore:  # errori generici di lettura/parsing
+                st.error(f"Errore durante la lettura del file: {errore}")
             else:
                 st.success(f"Trovati {len(esercizi_importati)} esercizi nel file.")
                 st.dataframe(esercizi_importati, use_container_width=True)
@@ -398,6 +436,7 @@ def main():
                                 ts_start,
                                 ts_finish,
                                 esercizio["nome"] or f"esercizio_{i + 1}",
+                                output_dir=cartella_frames(st.session_state["cartella_lavoro"]),
                             )
                         st.session_state["esercizi"][i]["frame_start"] = percorso_start
                         st.session_state["esercizi"][i]["frame_finish"] = percorso_finish
@@ -487,7 +526,10 @@ def main():
     if st.button("📄 Genera Google Doc", type="primary", disabled=genera_disabilitato):
         try:
             with st.spinner("Generazione del documento su Google Docs in corso..."):
-                risultato = create_workout_document(esercizi_pronti, titolo_scheda)
+                stato_scheda = percorso_stato(st.session_state["cartella_lavoro"])
+                risultato = create_workout_document(
+                    esercizi_pronti, titolo_scheda, state_path=stato_scheda
+                )
             st.success(f"Documento generato con successo! [Apri il documento]({risultato['url']})")
         except GoogleAuthError as errore:
             st.error(str(errore))
@@ -495,6 +537,15 @@ def main():
             st.error(str(errore))
         except Exception as errore:
             st.error(f"Errore imprevisto durante la generazione del documento: {errore}")
+        else:
+            # La scheda viene risalvata subito così il bundle contiene anche lo
+            # stato di ripresa appena aggiornato (documento autocontenuto).
+            try:
+                salva_scheda(
+                    st.session_state["esercizi"], percorso_scheda, state_path=stato_scheda
+                )
+            except Exception as errore:
+                st.warning(f"Documento creato, ma salvataggio della scheda fallito: {errore}")
 
 
 if __name__ == "__main__":
