@@ -12,7 +12,6 @@ import re
 import subprocess
 
 import yt_dlp
-from PIL import Image
 from yt_dlp.utils import DownloadError
 
 from csv_utils import slugify
@@ -23,7 +22,15 @@ class VideoSearchError(Exception):
 
 
 class FrameExtractionError(Exception):
-    """Sollevata quando ffmpeg non riesce a estrarre un frame dallo stream."""
+    """Sollevata quando il backend di estrazione (ffmpeg o nativo) non riesce a
+    estrarre un frame dallo stream."""
+
+
+# Backend di estrazione frame attivo: None significa "usa ffmpeg" (default
+# desktop). Su Android non esiste ffmpeg: imposta_backend_frame() permette di
+# iniettare un'implementazione nativa (es. basata su MediaMetadataRetriever)
+# senza toccare la firma pubblica di extract_frame().
+_BACKEND_FRAME = None
 
 
 def search_youtube(query: str, max_results: int = 3) -> list[dict]:
@@ -70,17 +77,23 @@ def search_youtube(query: str, max_results: int = 3) -> list[dict]:
     return risultati
 
 
-def get_stream_url(video_url: str) -> str:
+def get_stream_url(video_url: str, formato: str | None = None) -> str:
     """
     Risolve l'URL diretto dello stream video (senza scaricarlo) per poterlo
-    passare a ffmpeg. Restituisce l'URL del miglior formato mp4 disponibile
-    fino a 720p, con fallback a formati alternativi.
+    passare al backend di estrazione frame. Restituisce l'URL del formato
+    richiesto (stringa di selezione yt-dlp); se 'formato' è None usa il
+    default storico: miglior mp4 fino a 720p, con fallback a formati
+    alternativi. Il resto della risoluzione (info["url"], requested_formats,
+    formats al contrario) resta invariato indipendentemente dal formato
+    richiesto.
     """
+    if formato is None:
+        formato = "best[ext=mp4][height<=720]/best[height<=720]/best"
     opzioni = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+        "format": formato,
     }
     try:
         with yt_dlp.YoutubeDL(opzioni) as ydl:
@@ -111,10 +124,12 @@ def get_stream_url(video_url: str) -> str:
     )
 
 
-def extract_frame(stream_url: str, timestamp_seconds: float, output_path: str) -> str:
+def _extract_frame_ffmpeg(stream_url: str, timestamp_seconds: float, output_path: str) -> str:
     """
     Estrae un singolo frame dallo stream all'istante indicato usando ffmpeg,
     scaricando solo i byte necessari grazie al seek rapido (-ss prima di -i).
+    Backend di default (desktop); su Android viene sostituito da un backend
+    nativo tramite imposta_backend_frame() perché ffmpeg non è disponibile.
     """
     comando = [
         "ffmpeg",
@@ -143,6 +158,70 @@ def extract_frame(stream_url: str, timestamp_seconds: float, output_path: str) -
         ultime_righe = "\n".join(stderr_text.strip().splitlines()[-10:])
         raise FrameExtractionError(
             f"ffmpeg non è riuscito a estrarre il frame al secondo {timestamp_seconds}: {ultime_righe}"
+        )
+    return output_path
+
+
+def imposta_backend_frame(funzione) -> None:
+    """
+    Sostituisce il backend usato da extract_frame() per estrarre un frame
+    dallo stream. 'funzione' deve avere la firma
+    funzione(stream_url, timestamp_seconds, output_path) -> str (stesso
+    contratto di _extract_frame_ffmpeg: scrive il frame in output_path e ne
+    restituisce il percorso). Passare None ripristina il backend ffmpeg di
+    default.
+
+    Punto di innesto per Android (via Chaquopy): lì non esiste ffmpeg, quindi
+    l'app inietta qui un'implementazione nativa basata su
+    MediaMetadataRetriever, mantenendo invariata la firma pubblica di
+    extract_frame() e di conseguenza tutta l'orchestrazione a monte
+    (extract_start_finish_frames, scegli_ed_estrai).
+    """
+    global _BACKEND_FRAME
+    _BACKEND_FRAME = funzione
+
+
+def backend_frame_attivo():
+    """
+    Restituisce il backend di estrazione frame attualmente attivo (None se è
+    in uso il default ffmpeg). Utile ai test per verificare/ripristinare lo
+    stato tra un test e l'altro.
+    """
+    return _BACKEND_FRAME
+
+
+def extract_frame(stream_url: str, timestamp_seconds: float, output_path: str) -> str:
+    """
+    Estrae un singolo frame dallo stream all'istante indicato, delegando al
+    backend attivo (ffmpeg di default, oppure quello iniettato con
+    imposta_backend_frame() — es. il backend nativo Android). La firma
+    pubblica resta invariata indipendentemente dal backend in uso, così
+    extract_start_finish_frames() e il retry con ri-risoluzione dello stream
+    continuano a funzionare identici.
+
+    Qualsiasi eccezione sollevata dal backend che non sia già
+    FrameExtractionError viene riavvolta in FrameExtractionError. Dopo la
+    chiamata si verifica comunque che il file prodotto esista e non sia
+    vuoto, indipendentemente dal fatto che il backend l'abbia già controllato
+    o meno.
+    """
+    if _BACKEND_FRAME is None:
+        return _extract_frame_ffmpeg(stream_url, timestamp_seconds, output_path)
+
+    try:
+        _BACKEND_FRAME(stream_url, timestamp_seconds, output_path)
+    except FrameExtractionError:
+        raise
+    except Exception as exc:
+        raise FrameExtractionError(
+            f"Il backend di estrazione frame ha fallito al secondo {timestamp_seconds}: {exc}"
+        ) from exc
+
+    file_ok = os.path.exists(output_path) and os.path.getsize(output_path) > 0
+    if not file_ok:
+        raise FrameExtractionError(
+            f"Il backend di estrazione frame non ha prodotto un file valido al secondo "
+            f"{timestamp_seconds}."
         )
     return output_path
 
@@ -450,7 +529,14 @@ def crop_frame(
     Se output_path non è indicato, sovrascrive image_path. Le immagini con
     canale alpha vengono convertite in RGB prima del salvataggio (il formato
     JPEG non lo supporta). Restituisce il percorso del file scritto.
+
+    Import di Pillow volutamente locale (non in cima al modulo): così
+    video_helper resta importabile anche in ambienti dove Pillow non è
+    installato (es. Android/Chaquopy, dove il ritaglio non è usato), mentre
+    box_ritaglio() — pura matematica — non ne ha comunque mai avuto bisogno.
     """
+    from PIL import Image
+
     output_path = output_path or image_path
     with Image.open(image_path) as immagine:
         box = box_ritaglio(immagine.size, sinistra_pct, alto_pct, destra_pct, basso_pct)

@@ -8,14 +8,17 @@ scelta di video, timestamp e frame estratti per ciascun esercizio. Se le
 colonne opzionali sono assenti (o vuote), il comportamento resta identico a
 quello di un CSV "minimo": ricerca automatica del video ed euristica sui
 timestamp.
+
+Implementato con il modulo 'csv' della libreria standard (niente pandas):
+sotto Chaquopy (Android) pandas è il pacchetto più pesante e fragile da
+impacchettare, e qui serve solo per un CSV di 11 colonne.
 """
 
 from __future__ import annotations
 
+import csv
 import io
 import re
-
-import pandas as pd
 
 COLONNE_ATTESE = {"Nome", "Spiegazione", "Note", "Ripetizioni", "Recupero"}
 
@@ -54,7 +57,7 @@ def _timestamp_o_none(valore, nome_colonna: str) -> float | None:
     vuota/assente. Solleva ValueError con messaggio chiaro se il valore non è
     numerico.
     """
-    if valore is None or (isinstance(valore, float) and pd.isna(valore)):
+    if valore is None:
         return None
     testo = str(valore).strip()
     if not testo:
@@ -68,6 +71,35 @@ def _timestamp_o_none(valore, nome_colonna: str) -> float | None:
         ) from exc
 
 
+def _apri_testo(file_like):
+    """
+    Normalizza i tre casi d'uso accettati da parse_esercizi_csv() in un
+    file-like testuale pronto per csv.DictReader, più un flag che indica se
+    va chiuso da noi (solo quando lo abbiamo aperto/avvolto qui):
+
+      - percorso stringa: apre il file su disco (utf-8-sig, per tollerare un
+        eventuale BOM iniziale; newline="" come raccomandato dal modulo csv);
+      - file-like binario (es. io.BytesIO, come lo passa
+        scheda_file._estrai_da_zip leggendo il manifest dallo zip): lo
+        avvolge in un TextIOWrapper con la stessa codifica;
+      - file-like già testuale (es. io.StringIO, o un file aperto in
+        modalità testo): usato così com'è, senza aprirlo né chiuderlo noi.
+
+    Restituisce (file_testo, va_chiuso).
+    """
+    if isinstance(file_like, str):
+        return open(file_like, "r", encoding="utf-8-sig", newline=""), True
+
+    contenuto = file_like.read(0) if hasattr(file_like, "read") else b""
+    # read(0) restituisce un oggetto dello stesso tipo (str o bytes) prodotto
+    # dalle letture successive, senza consumare il file: ci basta per capire
+    # se è binario, senza dover riavvolgere lo stream con seek(0).
+    if isinstance(contenuto, bytes):
+        return io.TextIOWrapper(file_like, encoding="utf-8-sig", newline=""), True
+
+    return file_like, False
+
+
 def parse_esercizi_csv(file_like) -> list[dict]:
     """
     Legge un CSV di esercizi (file-like o percorso) e restituisce una lista
@@ -77,67 +109,74 @@ def parse_esercizi_csv(file_like) -> list[dict]:
     default ""), ts_start / ts_finish (float o None), frame_start /
     frame_finish (str o None).
 
+    Accetta un percorso stringa, un file-like testuale o un file-like
+    binario (es. io.BytesIO, come usato da scheda_file per leggere il
+    manifest direttamente dallo zip del bundle .scheda).
+
     Solleva ValueError con un messaggio chiaro se le colonne obbligatorie non
     sono tutte presenti nel file, oppure se un timestamp non è numerico.
     """
-    df = pd.read_csv(file_like)
+    file_testo, va_chiuso = _apri_testo(file_like)
+    try:
+        lettore = csv.DictReader(file_testo)
+        colonne_presenti = set(lettore.fieldnames or [])
+        colonne_mancanti = COLONNE_ATTESE - colonne_presenti
+        if colonne_mancanti:
+            raise ValueError(
+                "Il file CSV non contiene le colonne richieste. "
+                f"Colonne mancanti: {sorted(colonne_mancanti)}. "
+                f"Colonne attese: {sorted(COLONNE_ATTESE)}."
+            )
 
-    colonne_presenti = set(df.columns)
-    colonne_mancanti = COLONNE_ATTESE - colonne_presenti
-    if colonne_mancanti:
-        raise ValueError(
-            "Il file CSV non contiene le colonne richieste. "
-            f"Colonne mancanti: {sorted(colonne_mancanti)}. "
-            f"Colonne attese: {sorted(COLONNE_ATTESE)}."
-        )
-
-    # I valori mancanti (NaN) diventano stringhe vuote per evitare problemi a
-    # valle (rendering UI, generazione documento). I timestamp sono esclusi
-    # da questo riempimento perché gestiti a parte (serve distinguere
-    # "assente" da un eventuale "0").
-    colonne_timestamp = {"TimestampStart", "TimestampFinish"}
-    colonne_da_riempire = [colonna for colonna in df.columns if colonna not in colonne_timestamp]
-    df[colonne_da_riempire] = df[colonne_da_riempire].fillna("")
-
-    esercizi = []
-    for _, riga in df.iterrows():
-        esercizio = {
-            "nome": str(riga["Nome"]).strip(),
-            "spiegazione": str(riga["Spiegazione"]).strip(),
-            "note": str(riga["Note"]).strip(),
-            "ripetizioni": str(riga["Ripetizioni"]).strip(),
-            "recupero": str(riga["Recupero"]).strip(),
-            "gruppo": str(riga["Gruppo"]).strip() if "Gruppo" in df.columns else "",
-            "video_url": str(riga["VideoURL"]).strip() if "VideoURL" in df.columns else "",
-            "ts_start": (
-                _timestamp_o_none(riga["TimestampStart"], "TimestampStart")
-                if "TimestampStart" in df.columns
-                else None
-            ),
-            "ts_finish": (
-                _timestamp_o_none(riga["TimestampFinish"], "TimestampFinish")
-                if "TimestampFinish" in df.columns
-                else None
-            ),
-            "frame_start": (
-                (str(riga["FrameStartPath"]).strip() or None) if "FrameStartPath" in df.columns else None
-            ),
-            "frame_finish": (
-                (str(riga["FrameFinishPath"]).strip() or None) if "FrameFinishPath" in df.columns else None
-            ),
-        }
-        esercizi.append(esercizio)
-    return esercizi
+        esercizi = []
+        for riga in lettore:
+            esercizio = {
+                "nome": (riga.get("Nome") or "").strip(),
+                "spiegazione": (riga.get("Spiegazione") or "").strip(),
+                "note": (riga.get("Note") or "").strip(),
+                "ripetizioni": (riga.get("Ripetizioni") or "").strip(),
+                "recupero": (riga.get("Recupero") or "").strip(),
+                "gruppo": (riga.get("Gruppo") or "").strip() if "Gruppo" in colonne_presenti else "",
+                "video_url": (
+                    (riga.get("VideoURL") or "").strip() if "VideoURL" in colonne_presenti else ""
+                ),
+                "ts_start": (
+                    _timestamp_o_none(riga.get("TimestampStart"), "TimestampStart")
+                    if "TimestampStart" in colonne_presenti
+                    else None
+                ),
+                "ts_finish": (
+                    _timestamp_o_none(riga.get("TimestampFinish"), "TimestampFinish")
+                    if "TimestampFinish" in colonne_presenti
+                    else None
+                ),
+                "frame_start": (
+                    ((riga.get("FrameStartPath") or "").strip() or None)
+                    if "FrameStartPath" in colonne_presenti
+                    else None
+                ),
+                "frame_finish": (
+                    ((riga.get("FrameFinishPath") or "").strip() or None)
+                    if "FrameFinishPath" in colonne_presenti
+                    else None
+                ),
+            }
+            esercizi.append(esercizio)
+        return esercizi
+    finally:
+        if va_chiuso:
+            file_testo.close()
 
 
-def _dataframe_da_esercizi(esercizi: list[dict]) -> pd.DataFrame:
+def _righe_da_esercizi(esercizi: list[dict]) -> list[dict]:
     """
-    Costruisce il DataFrame delle 11 colonne del manifest (le 5 obbligatorie
-    più le 6 opzionali, nell'ordine di _COLONNE_CSV_COMPLETE) a partire dalla
-    lista di dizionari esercizio. Le chiavi opzionali mancanti o a None
-    diventano celle vuote. Logica condivisa da scrivi_esercizi_csv() ed
-    esercizi_csv_bytes(), che differiscono solo per la destinazione (file su
-    disco o buffer in memoria).
+    Costruisce le righe (dizionari colonna -> valore) delle 11 colonne del
+    manifest (le 5 obbligatorie più le 6 opzionali, nell'ordine di
+    _COLONNE_CSV_COMPLETE) a partire dalla lista di dizionari esercizio. Le
+    chiavi opzionali mancanti o a None diventano celle vuote. Logica
+    condivisa da scrivi_esercizi_csv() ed esercizi_csv_bytes(), che
+    differiscono solo per la destinazione (file su disco o buffer in
+    memoria).
     """
     righe = []
     for esercizio in esercizi:
@@ -156,7 +195,7 @@ def _dataframe_da_esercizi(esercizi: list[dict]) -> pd.DataFrame:
                 "FrameFinishPath": esercizio.get("frame_finish") or "",
             }
         )
-    return pd.DataFrame(righe, columns=_COLONNE_CSV_COMPLETE)
+    return righe
 
 
 def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
@@ -167,18 +206,23 @@ def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
     restituisce gli stessi valori (round-trip). Le chiavi opzionali mancanti
     o a None diventano celle vuote nel CSV.
     """
-    df = _dataframe_da_esercizi(esercizi)
-    df.to_csv(percorso, index=False)
+    righe = _righe_da_esercizi(esercizi)
+    with open(percorso, "w", encoding="utf-8", newline="") as file_csv:
+        scrittore = csv.DictWriter(file_csv, fieldnames=_COLONNE_CSV_COMPLETE, lineterminator="\n")
+        scrittore.writeheader()
+        scrittore.writerows(righe)
 
 
 def esercizi_csv_bytes(esercizi: list[dict]) -> bytes:
     """
     Genera in memoria (nessun file su disco) lo stesso CSV arricchito
     prodotto da scrivi_esercizi_csv(), utile per il bottone di download
-    diretto dall'interfaccia Streamlit. Riusa _dataframe_da_esercizi() per
-    non duplicare la logica di costruzione delle colonne.
+    diretto dall'interfaccia Streamlit. Riusa _righe_da_esercizi() per non
+    duplicare la logica di costruzione delle colonne.
     """
-    df = _dataframe_da_esercizi(esercizi)
-    buffer = io.StringIO()
-    df.to_csv(buffer, index=False)
+    righe = _righe_da_esercizi(esercizi)
+    buffer = io.StringIO(newline="")
+    scrittore = csv.DictWriter(buffer, fieldnames=_COLONNE_CSV_COMPLETE, lineterminator="\n")
+    scrittore.writeheader()
+    scrittore.writerows(righe)
     return buffer.getvalue().encode("utf-8")

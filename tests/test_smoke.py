@@ -34,11 +34,29 @@ from csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_cs
 from google_docs_helper import create_workout_document, update_exercise_media  # noqa: E402
 from video_helper import (  # noqa: E402
     FrameExtractionError,
+    backend_frame_attivo,
     box_ritaglio,
     crop_frame,
     extract_frame,
+    extract_start_finish_frames,
     filtra_risultati_pertinenti,
+    get_stream_url,
+    imposta_backend_frame,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ripristina_backend_frame_ffmpeg():
+    """
+    Autouse: garantisce che imposta_backend_frame(None) (backend ffmpeg di
+    default) sia ripristinato dopo ogni test, anche se un test fallisce a
+    metà. _BACKEND_FRAME è uno stato di modulo globale: senza questo
+    ripristino, un test che inietta un backend fittizio contaminerebbe i
+    test successivi (es. test_extract_frame_da_video_sintetico, che si
+    aspetta il vero ffmpeg).
+    """
+    yield
+    imposta_backend_frame(None)
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +182,34 @@ def test_parse_esercizi_csv_11_colonne_valori_letti():
     assert esercizio["ts_finish"] == 24.5
     assert esercizio["frame_start"] == "frames/squat_start.jpg"
     assert esercizio["frame_finish"] == "frames/squat_finish.jpg"
+
+
+def test_parse_esercizi_csv_da_bytesio():
+    """Caso d'uso reale di scheda_file._estrai_da_zip: il manifest viene letto
+    da un io.BytesIO (contenuto binario del membro zip), non da testo."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    esercizi = parse_esercizi_csv(io.BytesIO(csv_testo.encode("utf-8")))
+
+    assert len(esercizi) == 1
+    assert esercizi[0]["nome"] == "Squat"
+    assert esercizi[0]["ripetizioni"] == "3x12"
+
+
+def test_parse_esercizi_csv_tollera_bom():
+    """Un CSV con BOM UTF-8 iniziale (es. esportato da Excel) deve essere
+    letto correttamente, senza che il BOM finisca appiccicato a 'Nome'."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    dati_con_bom = b"\xef\xbb\xbf" + csv_testo.encode("utf-8")
+    esercizi = parse_esercizi_csv(io.BytesIO(dati_con_bom))
+
+    assert len(esercizi) == 1
+    assert esercizi[0]["nome"] == "Squat"
 
 
 def test_parse_esercizi_csv_timestamp_non_numerico():
@@ -461,6 +507,145 @@ def test_crop_frame_percentuali_non_valide(tmp_path):
 
     with pytest.raises(ValueError):
         crop_frame(str(percorso_originale), sinistra_pct=45, destra_pct=45)
+
+
+# ---------------------------------------------------------------------------
+# Test del backend di estrazione frame sostituibile (innesto Android)
+# ---------------------------------------------------------------------------
+
+def _scrivi_jpeg_finto(percorso):
+    """Scrive in 'percorso' un file con i soli magic bytes JPEG, sufficiente
+    per i controlli 'file non vuoto' di extract_frame()."""
+    with open(percorso, "wb") as file_immagine:
+        file_immagine.write(b"\xff\xd8\xff\xe0finto_jpeg")
+
+
+def test_imposta_backend_frame_sostituisce_ffmpeg(tmp_path, monkeypatch):
+    chiamate = []
+
+    def _backend_finto(stream_url, timestamp_seconds, output_path):
+        chiamate.append((stream_url, timestamp_seconds, output_path))
+        _scrivi_jpeg_finto(output_path)
+        return output_path
+
+    assert backend_frame_attivo() is None
+    imposta_backend_frame(_backend_finto)
+    assert backend_frame_attivo() is _backend_finto
+
+    output_path = tmp_path / "out.jpg"
+    risultato = extract_frame("https://stream.fittizio", 12.0, str(output_path))
+
+    assert risultato == str(output_path)
+    assert output_path.exists()
+    assert chiamate == [("https://stream.fittizio", 12.0, str(output_path))]
+
+    # extract_start_finish_frames deve usare lo stesso backend end-to-end,
+    # producendo i due file con i nomi convenzionali <slug>_start/_finish.jpg.
+    monkeypatch.setattr(video_helper, "get_stream_url", lambda video_url, formato=None: "https://stream.fittizio")
+
+    percorso_start, percorso_finish = extract_start_finish_frames(
+        "https://youtu.be/finto", 5.0, 20.0, "Squat", output_dir=str(tmp_path / "frames")
+    )
+
+    assert os.path.basename(percorso_start) == "squat_start.jpg"
+    assert os.path.basename(percorso_finish) == "squat_finish.jpg"
+    assert os.path.exists(percorso_start)
+    assert os.path.exists(percorso_finish)
+
+
+def test_backend_frame_errore_diventa_frame_extraction_error(tmp_path):
+    def _backend_che_fallisce(stream_url, timestamp_seconds, output_path):
+        raise RuntimeError("errore nativo Android fittizio")
+
+    imposta_backend_frame(_backend_che_fallisce)
+
+    output_path = tmp_path / "out.jpg"
+    with pytest.raises(FrameExtractionError):
+        extract_frame("https://stream.fittizio", 3.0, str(output_path))
+
+
+def test_backend_frame_file_vuoto_fallisce(tmp_path):
+    def _backend_file_vuoto(stream_url, timestamp_seconds, output_path):
+        # Crea il file ma senza scriverci nulla dentro: dev'essere trattato
+        # come fallimento esattamente come per il backend ffmpeg.
+        open(output_path, "wb").close()
+        return output_path
+
+    imposta_backend_frame(_backend_file_vuoto)
+
+    output_path = tmp_path / "out.jpg"
+    with pytest.raises(FrameExtractionError):
+        extract_frame("https://stream.fittizio", 3.0, str(output_path))
+
+
+# ---------------------------------------------------------------------------
+# Test di get_stream_url con formato personalizzato
+# ---------------------------------------------------------------------------
+
+class _FakeYoutubeDLFormato:
+    """Sostituto minimale di yt_dlp.YoutubeDL che registra le opzioni ricevute
+    e restituisce un url fittizio, per verificare quale 'format' viene passato."""
+
+    opzioni_ricevute = []
+
+    def __init__(self, opzioni):
+        type(self).opzioni_ricevute.append(opzioni)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def extract_info(self, video_url, download=False):
+        return {"url": "https://stream.fittizio/video"}
+
+
+def test_get_stream_url_formato_personalizzato(monkeypatch):
+    _FakeYoutubeDLFormato.opzioni_ricevute = []
+    monkeypatch.setattr(video_helper.yt_dlp, "YoutubeDL", _FakeYoutubeDLFormato)
+
+    get_stream_url("https://youtu.be/abc", formato="worst[ext=mp4]")
+    assert _FakeYoutubeDLFormato.opzioni_ricevute[-1]["format"] == "worst[ext=mp4]"
+
+    get_stream_url("https://youtu.be/abc")
+    assert (
+        _FakeYoutubeDLFormato.opzioni_ricevute[-1]["format"]
+        == "best[ext=mp4][height<=720]/best[height<=720]/best"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test di importabilità di video_helper senza Pillow installato
+# ---------------------------------------------------------------------------
+
+def test_video_helper_importabile_senza_pillow():
+    """
+    Pillow non è disponibile su Chaquopy: video_helper deve restare
+    importabile (import PIL spostato dentro crop_frame) e box_ritaglio(),
+    che è pura matematica, deve funzionare comunque. Ripristina sys.modules
+    e il modulo video_helper reimportato al termine del test.
+    """
+    import importlib
+
+    moduli_pil_originali = {
+        nome: modulo for nome, modulo in sys.modules.items() if nome == "PIL" or nome.startswith("PIL.")
+    }
+    for nome in list(moduli_pil_originali):
+        del sys.modules[nome]
+
+    try:
+        # Un valore None in sys.modules forza ImportError su "import PIL" /
+        # "from PIL import ...", simulando l'assenza del pacchetto.
+        sys.modules["PIL"] = None
+        modulo_ricaricato = importlib.reload(video_helper)
+        assert modulo_ricaricato.box_ritaglio((200, 100), 10, 20, 5, 25) == (20, 20, 190, 75)
+    finally:
+        for nome in list(sys.modules):
+            if nome == "PIL" or nome.startswith("PIL."):
+                del sys.modules[nome]
+        sys.modules.update(moduli_pil_originali)
+        importlib.reload(video_helper)
 
 
 # ---------------------------------------------------------------------------
