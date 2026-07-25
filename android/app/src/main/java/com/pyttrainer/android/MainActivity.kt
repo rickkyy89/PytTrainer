@@ -1,54 +1,55 @@
 package com.pyttrainer.android
 
+import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import com.pyttrainer.android.python.EsitoAvvio
-import com.pyttrainer.android.python.PythonBridge
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
+import com.pyttrainer.android.nav.Rotta
+import com.pyttrainer.android.ui.documento.GeneraDocumentoScreen
+import com.pyttrainer.android.ui.esercizio.EsercizioScreen
+import com.pyttrainer.android.ui.player.PlayerScreen
+import com.pyttrainer.android.ui.ritaglio.RitaglioScreen
+import com.pyttrainer.android.ui.scheda.SchedaScreen
+import com.pyttrainer.android.ui.scheda.SchedaViewModel
 import com.pyttrainer.android.ui.theme.PytTrainerTheme
-import kotlinx.coroutines.launch
 
 /**
- * Activity unica di questa fase: ospita solo la schermata di verifica del
- * cablaggio Chaquopy (versione Python, esito registrazione del backend nativo
- * di estrazione frame, ricerca YouTube di prova). Le schermate vere
- * (creazione/apertura scheda, scelta video, generazione documento, ...)
- * arrivano nelle fasi successive.
+ * Activity unica dell'app (Fase 3/4/6): ospita il NavHost con le rotte
+ * tipizzate definite in [Rotta]. [SchedaViewModel] è creato una sola volta
+ * qui, scoped all'Activity (sopravvive alla navigazione e alle rotazioni),
+ * ed è l'unica sorgente di verità della lista esercizi: ogni schermata di
+ * dettaglio (Esercizio, Ritaglio) legge/scrive attraverso di esso, mai una
+ * copia propria.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Uri di un .scheda aperto da un'altra app (vedi gli intent-filter VIEW
+        // nel manifest): se presente, va caricato subito all'avvio.
+        val uriSchedaCondivisa = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
         setContent {
             PytTrainerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SchermataVerificaCablaggio()
+                    PytTrainerApp(uriSchedaIniziale = uriSchedaCondivisa)
                 }
             }
         }
@@ -56,85 +57,67 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SchermataVerificaCablaggio() {
-    var versionePython by remember { mutableStateOf("in caricamento…") }
-    var ricercaInCorso by remember { mutableStateOf(false) }
-    var risultatoRicercaGrezzo by remember { mutableStateOf<String?>(null) }
-    val ambitoCoroutine = rememberCoroutineScope()
-    val nomeEsercizioProva = stringResource(R.string.verifica_ricerca_esercizio_prova)
+private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
+    val contesto = LocalContext.current
+    val schedaViewModel: SchedaViewModel = viewModel(
+        factory = ViewModelProvider.AndroidViewModelFactory.getInstance(contesto.applicationContext as Application),
+    )
+    val statoScheda by schedaViewModel.stato.collectAsState()
+    val navController = rememberNavController()
 
-    // Eseguita una sola volta all'ingresso nella schermata: dimostra che una
-    // chiamata Python "semplice" (nessun argomento) funziona subito, senza
-    // interazione dell'utente.
-    LaunchedEffect(Unit) {
-        versionePython = PythonBridge.versionePython()
-            .getOrElse { errore -> "Errore: ${errore.message}" }
+    LaunchedEffect(uriSchedaIniziale) {
+        uriSchedaIniziale?.let(schedaViewModel::apriScheda)
     }
 
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.verifica_titolo),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
+    NavHost(navController = navController, startDestination = Rotta.Scheda) {
+        composable<Rotta.Scheda> {
+            SchedaScreen(
+                viewModel = schedaViewModel,
+                onEsercizioClick = { uid -> navController.navigate(Rotta.Esercizio(uid)) },
+                onGeneraDocumentoClick = { navController.navigate(Rotta.GeneraDocumento) },
             )
+        }
 
-            HorizontalDivider()
-
-            Text(
-                text = stringResource(R.string.verifica_versione_python_label),
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(text = versionePython, style = MaterialTheme.typography.bodyMedium)
-
-            HorizontalDivider()
-
-            Text(
-                text = stringResource(R.string.verifica_backend_frame_label),
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(text = EsitoAvvio.rispostaRegistrazioneBackend, style = MaterialTheme.typography.bodyMedium)
-
-            HorizontalDivider()
-
-            Button(
-                onClick = {
-                    ricercaInCorso = true
-                    risultatoRicercaGrezzo = null
-                    ambitoCoroutine.launch {
-                        risultatoRicercaGrezzo = PythonBridge.chiamaGrezza(
-                            "cerca_video",
-                            nomeEsercizioProva,
-                            3,
-                        )
-                        ricercaInCorso = false
-                    }
-                },
-                enabled = !ricercaInCorso,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = stringResource(R.string.verifica_pulsante_ricerca))
-            }
-
-            if (ricercaInCorso) {
-                Text(text = stringResource(R.string.verifica_ricerca_in_corso))
-                CircularProgressIndicator()
-            }
-
-            risultatoRicercaGrezzo?.let { grezzo ->
-                Text(
-                    text = stringResource(R.string.verifica_json_grezzo_label),
-                    style = MaterialTheme.typography.labelLarge,
+        composable<Rotta.Esercizio> { backStackEntry ->
+            val rotta: Rotta.Esercizio = backStackEntry.toRoute()
+            val esercizio = statoScheda.esercizi.firstOrNull { it.uid == rotta.uid }
+            if (esercizio == null) {
+                // L'esercizio è sparito dalla lista (rimosso altrove) mentre questa
+                // schermata era sullo stack: non c'è nulla da mostrare, si torna indietro.
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                EsercizioScreen(
+                    esercizioIniziale = esercizio,
+                    cartellaFrames = statoScheda.cartellaFrames,
+                    onIndietro = { navController.popBackStack() },
+                    onSalva = { aggiornato, persistiCheckpoint ->
+                        schedaViewModel.aggiornaEsercizio(aggiornato, persistiCheckpoint)
+                    },
+                    onRitagliaClick = { tipo, percorso ->
+                        navController.navigate(Rotta.Ritaglio(rotta.uid, tipo, percorso))
+                    },
+                    onPlayerClick = { url -> navController.navigate(Rotta.Player(url)) },
                 )
-                Text(text = grezzo, style = MaterialTheme.typography.bodySmall)
             }
+        }
+
+        composable<Rotta.Ritaglio> { backStackEntry ->
+            val rotta: Rotta.Ritaglio = backStackEntry.toRoute()
+            RitaglioScreen(
+                percorso = rotta.percorso,
+                tipo = rotta.tipo,
+                onIndietro = { navController.popBackStack() },
+                onFrameModificato = { schedaViewModel.persistiCheckpointDopoRitaglio() },
+            )
+        }
+
+        composable<Rotta.GeneraDocumento> {
+            GeneraDocumentoScreen(onIndietro = { navController.popBackStack() })
+        }
+
+        composable<Rotta.Player> { backStackEntry ->
+            val rotta: Rotta.Player = backStackEntry.toRoute()
+            PlayerScreen(url = rotta.url, onIndietro = { navController.popBackStack() })
         }
     }
 }

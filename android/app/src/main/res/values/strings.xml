@@ -2,17 +2,103 @@
 <resources>
     <string name="app_name">PytTrainer</string>
 
-    <!-- Schermata di verifica del cablaggio Chaquopy (fase 2): NON è ancora
-         l'interfaccia definitiva, serve solo a dimostrare che Python è
-         raggiungibile da Kotlin e viceversa. -->
-    <string name="verifica_titolo">Verifica cablaggio Python</string>
-    <string name="verifica_versione_python_label">Versione Python (Chaquopy)</string>
-    <string name="verifica_backend_frame_label">Backend estrazione frame nativo</string>
-    <string name="verifica_backend_frame_ok">registrato correttamente</string>
-    <string name="verifica_backend_frame_ko">registrazione fallita</string>
-    <string name="verifica_pulsante_ricerca">Cerca un video di prova su YouTube</string>
-    <string name="verifica_ricerca_in_corso">Ricerca in corso…</string>
-    <string name="verifica_ricerca_esercizio_prova">Squat a corpo libero</string>
-    <string name="verifica_json_grezzo_label">JSON grezzo (cerca_video)</string>
-    <string name="verifica_errore_generico">Errore: %1$s</string>
+    <!-- Comuni a più schermate -->
+    <string name="azione_indietro">Indietro</string>
+    <string name="azione_conferma">Conferma</string>
+    <string name="azione_annulla">Annulla</string>
+    <string name="errore_sconosciuto">Errore sconosciuto.</string>
+
+    <!-- SchedaScreen (Fase 3): schermata principale, equivalente della sidebar
+         + lista esercizi dell'app Streamlit desktop. -->
+    <string name="scheda_titolo_label">Titolo scheda</string>
+    <string name="scheda_menu_content_description">Menu scheda</string>
+    <string name="scheda_menu_apri">Apri .scheda</string>
+    <string name="scheda_menu_salva">Salva</string>
+    <string name="scheda_menu_salva_come">Salva come</string>
+    <string name="scheda_menu_importa_csv">Importa CSV</string>
+    <string name="scheda_menu_esporta_csv">Esporta CSV</string>
+    <string name="scheda_menu_svuota">Svuota lista</string>
+    <string name="scheda_fab_aggiungi_desc">Aggiungi esercizio</string>
+    <string name="scheda_contatore_pronti">Esercizi pronti %1$d / %2$d</string>
+    <string name="scheda_lista_vuota">Nessun esercizio nella scheda. Aggiungine uno con il pulsante \"+\".</string>
+    <string name="scheda_google_non_connesso">Google non connesso</string>
+    <string name="scheda_google_connesso">Google connesso</string>
+    <string name="scheda_pulsante_genera_documento">Genera Google Doc</string>
+    <string name="scheda_svuota_conferma_titolo">Svuotare la lista?</string>
+    <string name="scheda_svuota_conferma_testo">Tutti gli esercizi inseriti finora verranno rimossi dalla lista. Il file .scheda già salvato non viene toccato.</string>
+    <string name="scheda_nome_file_label">File: %1$s</string>
+    <string name="scheda_nome_file_nessuno">Nessun file scelto (scheda non salvata)</string>
+    <string name="scheda_esercizio_rimosso_azione">Annulla</string>
+    <string name="scheda_esercizio_rimosso_messaggio">\"%1$s\" rimosso.</string>
+
+    <!-- Righe della lista esercizi -->
+    <string name="riga_esercizio_pronto_desc">Pronto: frame START e FINISH presenti</string>
+    <string name="riga_esercizio_non_pronto_desc">Non pronto: manca almeno un frame</string>
+    <string name="riga_esercizio_trascina_desc">Trascina per riordinare</string>
+    <string name="riga_esercizio_rimuovi_desc">Rimuovi esercizio</string>
+    <string name="riga_esercizio_senza_nome">Esercizio senza nome</string>
+
+    <!-- Dialog import CSV -->
+    <string name="import_csv_anteprima_titolo">Esercizi trovati nel CSV</string>
+    <string name="import_csv_anteprima_conteggio">%1$d esercizi pronti per l\'importazione</string>
+    <string name="import_csv_conferma">Importa</string>
+
+    <!-- Dialog inserimento manuale -->
+    <string name="aggiungi_esercizio_titolo">Nuovo esercizio</string>
+    <string name="campo_nome">Nome esercizio</string>
+    <string name="campo_nome_obbligatorio">Il nome dell\'esercizio è obbligatorio.</string>
+    <string name="campo_spiegazione">Spiegazione</string>
+    <string name="campo_note">Note</string>
+    <string name="campo_ripetizioni">Ripetizioni (es. 3x12)</string>
+    <string name="campo_recupero">Recupero (es. 90 SEC)</string>
+    <string name="campo_gruppo">Gruppo (opzionale)</string>
+
+    <!-- EsercizioScreen (Fase 4): dettaglio di un esercizio. -->
+    <string name="esercizio_titolo_dettaglio">Dettaglio esercizio</string>
+    <string name="esercizio_pulsante_salva_desc">Salva modifiche</string>
+    <string name="esercizio_sezione_dettagli">Dettagli esercizio</string>
+    <string name="esercizio_sezione_ricerca">Ricerca video YouTube</string>
+    <string name="esercizio_pulsante_cerca">Cerca su YouTube</string>
+    <string name="esercizio_ricerca_in_corso">Ricerca in corso…</string>
+    <string name="esercizio_nessun_risultato">Nessun video trovato per questo esercizio.</string>
+    <string name="esercizio_nome_vuoto_per_ricerca">Inserisci prima un nome per l\'esercizio.</string>
+    <string name="esercizio_video_scartati_titolo">Video scartati (%1$d)</string>
+    <string name="esercizio_url_manuale_label">URL YouTube manuale (ha la precedenza sulla selezione)</string>
+    <string name="esercizio_sezione_timestamp">Timestamp ed estrazione frame</string>
+    <string name="esercizio_ts_start_label">Timestamp START (sec)</string>
+    <string name="esercizio_ts_finish_label">Timestamp FINISH (sec)</string>
+    <string name="esercizio_ts_errore">Il timestamp FINISH deve essere maggiore del timestamp START.</string>
+    <string name="esercizio_pulsante_estrai">Estrai automaticamente</string>
+    <string name="esercizio_estrazione_in_corso">Estrazione in corso… può richiedere qualche secondo.</string>
+    <string name="esercizio_estrazione_ok">Frame estratti con successo.</string>
+    <string name="esercizio_estrazione_senza_video">Nessun video utilizzabile trovato: vedi il log delle scelte.</string>
+    <string name="esercizio_log_titolo">Log delle scelte video</string>
+    <string name="esercizio_frame_start_label">START</string>
+    <string name="esercizio_frame_finish_label">FINISH</string>
+    <string name="esercizio_frame_assente">Frame non ancora estratto</string>
+    <string name="esercizio_pulsante_ritaglia_desc">Ritaglia</string>
+    <string name="esercizio_pulsante_player">Apri nel player</string>
+    <string name="esercizio_cartella_non_pronta">Cartella di lavoro non ancora pronta: riprova tra un istante.</string>
+
+    <!-- RitaglioScreen (Fase 6) -->
+    <string name="ritaglio_titolo">Ritaglio frame</string>
+    <string name="ritaglio_slider_sinistra">Sinistra</string>
+    <string name="ritaglio_slider_alto">Alto</string>
+    <string name="ritaglio_slider_destra">Destra</string>
+    <string name="ritaglio_slider_basso">Basso</string>
+    <string name="ritaglio_errore_somma_orizzontale">Sinistra + Destra deve restare sotto 90.</string>
+    <string name="ritaglio_errore_somma_verticale">Alto + Basso deve restare sotto 90.</string>
+    <string name="ritaglio_pulsante_applica">Applica ritaglio</string>
+    <string name="ritaglio_pulsante_ripristina">Ripristina originale</string>
+    <string name="ritaglio_applicato">Ritaglio applicato.</string>
+    <string name="ritaglio_ripristinato">Originale ripristinato.</string>
+    <string name="ritaglio_anteprima_desc">Anteprima del ritaglio</string>
+
+    <!-- GeneraDocumentoScreen (segnaposto: la generazione vera arriva in una fase successiva) -->
+    <string name="genera_documento_titolo">Genera Google Doc</string>
+    <string name="genera_documento_placeholder">La generazione del documento su Google Docs arriva in una fase successiva. Da qui potrai avviarla una volta collegato l\'accesso Google.</string>
+
+    <!-- PlayerScreen (segnaposto: il player video vero arriva in una fase successiva) -->
+    <string name="player_titolo">Player video</string>
+    <string name="player_placeholder">Il player video integrato (ExoPlayer) arriva in una fase successiva. URL: %1$s</string>
 </resources>

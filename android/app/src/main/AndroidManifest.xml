@@ -25,6 +25,33 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Apertura di un file .scheda condiviso da un'altra app (Drive, file
+                 manager, email, ...). I content provider spesso non espongono
+                 l'estensione del file nel path dell'Uri content://, quindi il modo
+                 affidabile di intercettarli è per mimeType (application/zip: un
+                 .scheda è tecnicamente uno zip; application/octet-stream: il
+                 fallback più comune per estensioni sconosciute). Il terzo filtro
+                 copre invece il caso, più raro ma ancora in giro, di un Uri
+                 file:// con estensione nel path. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.scheda" />
+            </intent-filter>
         </activity>
 
     </application>
