@@ -198,6 +198,25 @@ def test_parse_esercizi_csv_da_bytesio():
     assert esercizi[0]["ripetizioni"] == "3x12"
 
 
+def test_parse_esercizi_csv_non_consuma_ne_chiude_il_file_like():
+    """app.py passa a parse_esercizi_csv l'oggetto di st.file_uploader, che
+    Streamlit riusa a ogni rerun: leggerlo non deve né chiuderlo né lasciarlo
+    a EOF, altrimenti la seconda lettura fallisce o vede un file vuoto."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    caricato = io.BytesIO(csv_testo.encode("utf-8"))
+
+    primo = parse_esercizi_csv(caricato)
+    assert not caricato.closed
+    secondo = parse_esercizi_csv(caricato)
+
+    assert primo == secondo
+    assert len(secondo) == 1
+    assert secondo[0]["nome"] == "Squat"
+
+
 def test_parse_esercizi_csv_tollera_bom():
     """Un CSV con BOM UTF-8 iniziale (es. esportato da Excel) deve essere
     letto correttamente, senza che il BOM finisca appiccicato a 'Nome'."""
@@ -626,26 +645,31 @@ def test_video_helper_importabile_senza_pillow():
     che è pura matematica, deve funzionare comunque. Ripristina sys.modules
     e il modulo video_helper reimportato al termine del test.
     """
-    import importlib
+    # Volutamente in un sottoprocesso: simulare l'assenza di PIL nel processo
+    # dei test richiederebbe di ricaricare video_helper, e il reload rimpiazza
+    # le classi del modulo (FrameExtractionError & co.) con oggetti nuovi,
+    # diversi da quelli importati in cima a questo file. Ne risulterebbero
+    # fallimenti dipendenti dall'ordine di esecuzione dei test. Un processo
+    # separato isola tutto senza toccare lo stato globale di questo.
+    programma = (
+        "import sys\n"
+        # Un valore None in sys.modules forza ImportError su "from PIL import ...",
+        # simulando l'assenza del pacchetto.
+        "sys.modules['PIL'] = None\n"
+        "import video_helper\n"
+        "assert video_helper.box_ritaglio((200, 100), 10, 20, 5, 25) == (20, 20, 190, 75)\n"
+        "print('ok')\n"
+    )
+    risultato = subprocess.run(
+        [sys.executable, "-c", programma],
+        cwd=str(RADICE_PROGETTO),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
 
-    moduli_pil_originali = {
-        nome: modulo for nome, modulo in sys.modules.items() if nome == "PIL" or nome.startswith("PIL.")
-    }
-    for nome in list(moduli_pil_originali):
-        del sys.modules[nome]
-
-    try:
-        # Un valore None in sys.modules forza ImportError su "import PIL" /
-        # "from PIL import ...", simulando l'assenza del pacchetto.
-        sys.modules["PIL"] = None
-        modulo_ricaricato = importlib.reload(video_helper)
-        assert modulo_ricaricato.box_ritaglio((200, 100), 10, 20, 5, 25) == (20, 20, 190, 75)
-    finally:
-        for nome in list(sys.modules):
-            if nome == "PIL" or nome.startswith("PIL."):
-                del sys.modules[nome]
-        sys.modules.update(moduli_pil_originali)
-        importlib.reload(video_helper)
+    assert risultato.returncode == 0, risultato.stderr.decode("utf-8", errors="ignore")
+    assert risultato.stdout.decode("utf-8", errors="ignore").strip().endswith("ok")
 
 
 # ---------------------------------------------------------------------------

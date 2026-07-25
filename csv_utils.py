@@ -75,29 +75,44 @@ def _apri_testo(file_like):
     """
     Normalizza i tre casi d'uso accettati da parse_esercizi_csv() in un
     file-like testuale pronto per csv.DictReader, più un flag che indica se
-    va chiuso da noi (solo quando lo abbiamo aperto/avvolto qui):
+    va chiuso da noi:
 
       - percorso stringa: apre il file su disco (utf-8-sig, per tollerare un
         eventuale BOM iniziale; newline="" come raccomandato dal modulo csv);
       - file-like binario (es. io.BytesIO, come lo passa
-        scheda_file._estrai_da_zip leggendo il manifest dallo zip): lo
-        avvolge in un TextIOWrapper con la stessa codifica;
-      - file-like già testuale (es. io.StringIO, o un file aperto in
-        modalità testo): usato così com'è, senza aprirlo né chiuderlo noi.
+        scheda_file._estrai_da_zip leggendo il manifest dallo zip) o testuale
+        (io.StringIO, un file aperto in modalità testo, o l'oggetto restituito
+        da st.file_uploader): ne legge il contenuto e lo travasa in una
+        StringIO nostra.
+
+    Il travaso è voluto: avvolgere un file-like altrui in un TextIOWrapper
+    significherebbe chiudere anche lo stream sottostante quando chiudiamo il
+    wrapper, e app.py passa qui direttamente l'oggetto di st.file_uploader,
+    che Streamlit riusa a ogni rerun. Un CSV manifest è piccolo, quindi
+    leggerlo tutto in memoria non è un problema.
+
+    Se lo stream è riavvolgibile viene riportato all'inizio prima di leggere:
+    senza questo, una seconda chiamata sullo stesso oggetto (di nuovo: i
+    rerun di Streamlit) leggerebbe da EOF e vedrebbe un file vuoto.
 
     Restituisce (file_testo, va_chiuso).
     """
     if isinstance(file_like, str):
         return open(file_like, "r", encoding="utf-8-sig", newline=""), True
 
-    contenuto = file_like.read(0) if hasattr(file_like, "read") else b""
-    # read(0) restituisce un oggetto dello stesso tipo (str o bytes) prodotto
-    # dalle letture successive, senza consumare il file: ci basta per capire
-    # se è binario, senza dover riavvolgere lo stream con seek(0).
-    if isinstance(contenuto, bytes):
-        return io.TextIOWrapper(file_like, encoding="utf-8-sig", newline=""), True
+    if hasattr(file_like, "seek") and getattr(file_like, "seekable", lambda: True)():
+        file_like.seek(0)
 
-    return file_like, False
+    contenuto = file_like.read()
+    if isinstance(contenuto, bytes):
+        contenuto = contenuto.decode("utf-8-sig")
+    else:
+        # Un file-like testuale aperto senza utf-8-sig può conservare il BOM
+        # come primo carattere: lo togliamo per non ritrovarlo nel nome della
+        # prima colonna dell'intestazione.
+        contenuto = contenuto.lstrip("\ufeff")
+
+    return io.StringIO(contenuto, newline=""), True
 
 
 def parse_esercizi_csv(file_like) -> list[dict]:
