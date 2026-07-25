@@ -37,6 +37,8 @@ data class EsercizioUiState(
     val ricercaInCorso: Boolean = false,
     val estrazioneInCorso: Boolean = false,
     val logEstrazione: List<String> = emptyList(),
+    /** Correzione mirata (Fase 7): sostituzione dei soli frame di questo esercizio in un documento già generato. */
+    val correzioneInCorso: Boolean = false,
 ) {
     private val tsStartValore: Double? get() = tsStartTesto.trim().toDoubleOrNull()
     private val tsFinishValore: Double? get() = tsFinishTesto.trim().toDoubleOrNull()
@@ -66,6 +68,7 @@ data class EsercizioTesti(
     val estrazioneOk: String,
     val estrazioneSenzaVideo: String,
     val erroreGenerico: String,
+    val correzioneOk: String,
 )
 
 /**
@@ -185,6 +188,99 @@ class EsercizioViewModel(
                 onFailure = { errore -> _eventi.tryEmit(EventoUi.Errore(errore.message ?: testi.erroreGenerico)) },
             )
             _stato.update { it.copy(estrazioneInCorso = false) }
+        }
+    }
+
+    /**
+     * Riallinea SOLO i campi media (video/timestamp/frame) della bozza
+     * locale a quelli di [sorgente], lasciando intatti eventuali campi
+     * testuali non ancora salvati (nome, spiegazione, ...). Usata quando si
+     * torna dal player video (Fase 5): a differenza di autoEstrai() (che
+     * passa da Python e riceve indietro l'intero esercizio), la cattura nel
+     * player scrive le proprie modifiche direttamente in SchedaViewModel
+     * (round-trip più corto), quindi qui serve solo un resync mirato. No-op
+     * se [sorgente] non porta nulla di nuovo (evita di far "sfarfallare" i
+     * timestamp testuali a ogni ricomposizione).
+     */
+    fun sincronizzaMediaEsterni(sorgente: Esercizio) {
+        _stato.update { stato ->
+            val bozza = stato.bozza
+            if (bozza.videoUrl == sorgente.videoUrl &&
+                bozza.tsStart == sorgente.tsStart &&
+                bozza.tsFinish == sorgente.tsFinish &&
+                bozza.frameStart == sorgente.frameStart &&
+                bozza.frameFinish == sorgente.frameFinish
+            ) {
+                stato
+            } else {
+                stato.copy(
+                    bozza = bozza.copy(
+                        videoUrl = sorgente.videoUrl,
+                        tsStart = sorgente.tsStart,
+                        tsFinish = sorgente.tsFinish,
+                        frameStart = sorgente.frameStart,
+                        frameFinish = sorgente.frameFinish,
+                    ),
+                    tsStartTesto = sorgente.tsStart?.toString() ?: "",
+                    tsFinishTesto = sorgente.tsFinish?.toString() ?: "",
+                )
+            }
+        }
+    }
+
+    /**
+     * Correzione mirata (Fase 7): sostituisce SOLO i due frame di questo
+     * esercizio in un documento Google Docs già generato, tramite
+     * PythonBridge.aggiornaMedia — senza rigenerare il documento. Richiede
+     * un [docId] (documento già esistente, vedi SchedaUiState.docId) e uno
+     * [statePath] valido (lo stato scritto da create_workout_document).
+     * [accessToken] è una funzione sospesa invece di una stringa perché il
+     * token va sempre richiesto fresco al momento della chiamata (vedi
+     * GestoreAccessoGoogle.tokenFresco).
+     */
+    fun correzioneMirata(
+        docId: String,
+        statePath: String,
+        outputDir: String,
+        nuovoVideoUrl: String,
+        nuovoTsStart: Double?,
+        nuovoTsFinish: Double?,
+        accessToken: suspend () -> String,
+        onCorrezioneCompletata: (Esercizio, persistiCheckpoint: Boolean) -> Unit,
+    ) {
+        viewModelScope.launch {
+            _stato.update { it.copy(correzioneInCorso = true) }
+            val token = try {
+                accessToken()
+            } catch (eccezione: Exception) {
+                _eventi.tryEmit(EventoUi.Errore(eccezione.message ?: testi.erroreGenerico))
+                _stato.update { it.copy(correzioneInCorso = false) }
+                return@launch
+            }
+            PythonBridge.aggiornaMedia(
+                docId, _stato.value.bozza.nome, nuovoVideoUrl, nuovoTsStart, nuovoTsFinish, token, statePath, outputDir,
+            ).fold(
+                onSuccess = { risultato ->
+                    val aggiornato = _stato.value.bozza.copy(
+                        videoUrl = nuovoVideoUrl,
+                        tsStart = nuovoTsStart,
+                        tsFinish = nuovoTsFinish,
+                        frameStart = risultato.frameStart,
+                        frameFinish = risultato.frameFinish,
+                    )
+                    _stato.update {
+                        it.copy(
+                            bozza = aggiornato,
+                            tsStartTesto = nuovoTsStart?.toString() ?: "",
+                            tsFinishTesto = nuovoTsFinish?.toString() ?: "",
+                        )
+                    }
+                    _eventi.tryEmit(EventoUi.Info(testi.correzioneOk))
+                    onCorrezioneCompletata(aggiornato, true)
+                },
+                onFailure = { errore -> _eventi.tryEmit(EventoUi.Errore(errore.message ?: testi.erroreGenerico)) },
+            )
+            _stato.update { it.copy(correzioneInCorso = false) }
         }
     }
 

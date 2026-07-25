@@ -18,6 +18,7 @@
     <string name="scheda_menu_importa_csv">Importa CSV</string>
     <string name="scheda_menu_esporta_csv">Esporta CSV</string>
     <string name="scheda_menu_svuota">Svuota lista</string>
+    <string name="scheda_menu_impostazioni">Impostazioni</string>
     <string name="scheda_fab_aggiungi_desc">Aggiungi esercizio</string>
     <string name="scheda_contatore_pronti">Esercizi pronti %1$d / %2$d</string>
     <string name="scheda_lista_vuota">Nessun esercizio nella scheda. Aggiungine uno con il pulsante \"+\".</string>
@@ -79,6 +80,9 @@
     <string name="esercizio_pulsante_ritaglia_desc">Ritaglia</string>
     <string name="esercizio_pulsante_player">Apri nel player</string>
     <string name="esercizio_cartella_non_pronta">Cartella di lavoro non ancora pronta: riprova tra un istante.</string>
+    <string name="esercizio_pulsante_correzione_mirata">Correggi video/timestamp nel documento</string>
+    <string name="esercizio_correzione_in_corso">Correzione in corso…</string>
+    <string name="esercizio_correzione_ok">Frame del documento aggiornati.</string>
 
     <!-- RitaglioScreen (Fase 6) -->
     <string name="ritaglio_titolo">Ritaglio frame</string>
@@ -94,11 +98,50 @@
     <string name="ritaglio_ripristinato">Originale ripristinato.</string>
     <string name="ritaglio_anteprima_desc">Anteprima del ritaglio</string>
 
-    <!-- GeneraDocumentoScreen (segnaposto: la generazione vera arriva in una fase successiva) -->
+    <!-- GeneraDocumentoScreen (Fase 7): generazione del Google Doc in background. -->
     <string name="genera_documento_titolo">Genera Google Doc</string>
-    <string name="genera_documento_placeholder">La generazione del documento su Google Docs arriva in una fase successiva. Da qui potrai avviarla una volta collegato l\'accesso Google.</string>
+    <string name="genera_documento_contatore">Esercizi pronti %1$d / %2$d</string>
+    <string name="genera_documento_vai_a_impostazioni">Vai in Impostazioni per accedere con Google</string>
+    <string name="genera_documento_avanzamento">%1$d / %2$d esercizi inseriti</string>
+    <string name="genera_documento_completata">Documento generato con successo.</string>
+    <string name="genera_documento_apri_documento">Apri il documento</string>
+    <string name="genera_documento_nessun_esercizio_pronto">Nessun esercizio pronto (mancano frame START/FINISH).</string>
+    <string name="genera_documento_google_non_connesso">Accedi con Google prima di generare il documento.</string>
 
-    <!-- PlayerScreen (segnaposto: il player video vero arriva in una fase successiva) -->
+    <!-- Notifica di avanzamento del worker di generazione (Fase 7) -->
+    <string name="notifica_canale_generazione_nome">Generazione scheda Google Docs</string>
+    <string name="notifica_generazione_titolo">Generazione del documento in corso</string>
+    <string name="notifica_generazione_testo">%1$d / %2$d esercizi inseriti</string>
+
+    <!-- PlayerScreen (Fase 5): player video integrato con cattura fotogrammi. -->
     <string name="player_titolo">Player video</string>
-    <string name="player_placeholder">Il player video integrato (ExoPlayer) arriva in una fase successiva. URL: %1$s</string>
+    <string name="player_stream_errore">Impossibile riprodurre il video: prova a ri-risolvere lo stream.</string>
+    <string name="player_riprova">Riprova</string>
+    <string name="player_play_pausa">Play/pausa</string>
+    <string name="player_indietro_1s">Indietro 1 secondo</string>
+    <string name="player_avanti_1s">Avanti 1 secondo</string>
+    <string name="player_indietro_5s">Indietro 5 secondi</string>
+    <string name="player_avanti_5s">Avanti 5 secondi</string>
+    <string name="player_fotogramma_indietro">◀ 1 fotogramma</string>
+    <string name="player_fotogramma_avanti">1 fotogramma ▶</string>
+    <string name="player_cattura_start">Cattura START</string>
+    <string name="player_cattura_finish">Cattura FINISH</string>
+    <string name="player_cattura_in_corso">Cattura del fotogramma in corso…</string>
+    <string name="player_cattura_ok">Fotogramma catturato.</string>
+    <string name="player_cattura_fallita">Impossibile catturare il fotogramma: riprova.</string>
+    <string name="player_conferma">Conferma</string>
+
+    <!-- Foglio di correzione mirata (Fase 7, da EsercizioScreen) -->
+    <string name="correzione_mirata_titolo">Correggi video e timestamp</string>
+    <string name="correzione_mirata_spiegazione">Sostituisce solo i due fotogrammi di questo esercizio nel documento già generato, senza rigenerarlo. Se i timestamp sono lasciati vuoti vengono stimati automaticamente dalla durata del video.</string>
+
+    <!-- ImpostazioniScreen (Fase 7): accesso Google, package name e impronta SHA-1. -->
+    <string name="impostazioni_titolo">Impostazioni</string>
+    <string name="impostazioni_sezione_google">Accesso Google</string>
+    <string name="impostazioni_accedi">Accedi con Google</string>
+    <string name="impostazioni_esci">Esci</string>
+    <string name="impostazioni_sezione_configurazione_oauth">Configurazione OAuth</string>
+    <string name="impostazioni_configurazione_oauth_spiegazione">Dati da registrare in Google Cloud Console come client OAuth di tipo \"Android\" (documents + drive.file, redirect com.pyttrainer.android:/oauth2redirect).</string>
+    <string name="impostazioni_package_name">Nome del pacchetto</string>
+    <string name="impostazioni_impronta_sha1">Impronta SHA-1 (keystore di debug)</string>
 </resources>

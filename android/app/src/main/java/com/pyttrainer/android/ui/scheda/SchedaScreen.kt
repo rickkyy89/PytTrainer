@@ -2,6 +2,7 @@ package com.pyttrainer.android.ui.scheda
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,6 +62,7 @@ fun SchedaScreen(
     viewModel: SchedaViewModel,
     onEsercizioClick: (String) -> Unit,
     onGeneraDocumentoClick: () -> Unit,
+    onImpostazioniClick: () -> Unit,
 ) {
     val stato by viewModel.stato.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -161,6 +163,13 @@ fun SchedaScreen(
                                     dialogSvuotaAperto = true
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.scheda_menu_impostazioni)) },
+                                onClick = {
+                                    menuAperto = false
+                                    onImpostazioniClick()
+                                },
+                            )
                         }
                     },
                 )
@@ -192,7 +201,10 @@ fun SchedaScreen(
             )
 
             Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable(onClick = onImpostazioniClick),
+            ) {
                 Icon(
                     imageVector = if (stato.statoGoogleConnesso) Icons.Default.CloudDone else Icons.Default.CloudOff,
                     contentDescription = null,

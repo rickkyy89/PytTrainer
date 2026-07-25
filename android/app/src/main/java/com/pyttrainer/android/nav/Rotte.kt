@@ -30,11 +30,32 @@ sealed interface Rotta {
     @Serializable
     data class Ritaglio(val uid: String, val tipo: String, val percorso: String) : Rotta
 
-    /** Segnaposto: la generazione vera del Google Doc arriva in una fase successiva. */
+    /** Generazione del Google Doc (Fase 7): titolo/esercizi/cartellaLavoro letti da [SchedaViewModel]. */
     @Serializable
     data object GeneraDocumento : Rotta
 
-    /** Segnaposto: il player video vero arriva in una fase successiva. */
+    /**
+     * Player video (Fase 5): guarda [url] e cattura i fotogrammi START/FINISH
+     * per l'esercizio [uid]/[nomeEsercizio]. [cartellaLavoro] serve a
+     * PythonBridge.percorsoFrame per calcolare la destinazione dei frame
+     * catturati (mai ricalcolata in Kotlin). Gli iniziali (frame già
+     * presenti, timestamp già scelti) sono passati come stringhe — vuota =
+     * assente — così la rotta resta interamente fatta di tipi primitivi
+     * serializzabili senza dover marcare campi nullable.
+     */
     @Serializable
-    data class Player(val url: String) : Rotta
+    data class Player(
+        val uid: String,
+        val url: String,
+        val nomeEsercizio: String,
+        val cartellaLavoro: String,
+        val frameStartIniziale: String = "",
+        val frameFinishIniziale: String = "",
+        val tsStartIniziale: String = "",
+        val tsFinishIniziale: String = "",
+    ) : Rotta
+
+    /** Accesso Google, package name e impronta SHA-1 per la configurazione OAuth (Fase 7). */
+    @Serializable
+    data object Impostazioni : Rotta
 }

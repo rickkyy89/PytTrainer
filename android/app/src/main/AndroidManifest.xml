@@ -1,11 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Ricerca YouTube (yt-dlp), estrazione stream, chiamate alle API Google
          Docs/Drive: l'app parla sempre e solo con host HTTPS, quindi non
          serve android:usesCleartextTraffic. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Notifica di avanzamento della generazione del documento (Fase 7,
+         GenerazioneDocumentoWorker): POST_NOTIFICATIONS va richiesto anche a
+         runtime su Android 13+ (vedi GeneraDocumentoScreen), le due
+         FOREGROUND_SERVICE* sono necessarie perché WorkManager esegua il
+         worker con setForeground() come servizio in primo piano. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".PytTrainerApplication"
@@ -53,6 +63,18 @@
                 <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.scheda" />
             </intent-filter>
         </activity>
+
+        <!-- WorkManager esegue GenerazioneDocumentoWorker.setForeground() tramite
+             questo servizio di sistema: su Android 14+ va dichiarato esplicitamente
+             il foregroundServiceType (WorkManager non lo aggiunge più da sé a
+             partire da targetSdk 34), coerente con ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+             usato in GenerazioneDocumentoWorker.creaInfoPrimoPiano(). tools:node="merge"
+             perché il manifest di androidx.work dichiara già questo servizio: qui
+             aggiungiamo solo l'attributo mancante, non lo ridichiariamo da zero. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
     </application>
 

@@ -12,3 +12,17 @@ fun formattaDurata(secondi: Double?): String {
     val resto = totali % 60
     return "%02d:%02d".format(minuti, resto)
 }
+
+/**
+ * Orologio della posizione corrente del player video (Fase 5), in
+ * mm:ss.SSS: a differenza di [formattaDurata] serve la precisione al
+ * millisecondo per poter fermarsi sul fotogramma esatto di un movimento
+ * veloce.
+ */
+fun formattaPosizioneMillisecondi(posizioneMs: Long): String {
+    val totali = posizioneMs.coerceAtLeast(0)
+    val minuti = totali / 60_000
+    val secondi = (totali % 60_000) / 1_000
+    val millisecondi = totali % 1_000
+    return "%02d:%02d.%03d".format(minuti, secondi, millisecondi)
+}

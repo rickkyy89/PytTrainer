@@ -37,6 +37,13 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+
+        // Consumato dal manifest di net.openid:appauth (RedirectUriReceiverActivity,
+        // intent-filter con data android:scheme="${appAuthRedirectScheme}"): deve
+        // combaciare con lo schema usato in GestoreAccessoGoogle (redirect URI
+        // "com.pyttrainer.android:/oauth2redirect") e con quanto registrato come
+        // client OAuth "Android" in Google Cloud Console (Fase 7).
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.pyttrainer.android"
     }
 
     // Keystore di debug condiviso (committato in android/keystore/debug.keystore):
@@ -174,6 +181,7 @@ chaquopy {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)

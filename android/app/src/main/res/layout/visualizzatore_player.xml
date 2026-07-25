@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    PlayerView con surface_type="texture_view": è un attributo letto solo in
+    fase di inflate da XML (PlayerView non espone un setter equivalente a
+    runtime), e serve perché a differenza di una SurfaceView una TextureView
+    è una View normale di cui si possono leggere i pixel con getBitmap() —
+    necessario per il ripiego "quel che si vede" quando MediaMetadataRetriever
+    non riesce a decodificare un frame su uno stream adattivo (vedi
+    PlayerViewModel.cattura / PlayerScreen).
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/visualizzatore_player"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:use_controller="false"
+    app:surface_type="texture_view" />

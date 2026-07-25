@@ -22,9 +22,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.pyttrainer.android.dati.Esercizio
 import com.pyttrainer.android.nav.Rotta
 import com.pyttrainer.android.ui.documento.GeneraDocumentoScreen
 import com.pyttrainer.android.ui.esercizio.EsercizioScreen
+import com.pyttrainer.android.ui.impostazioni.ImpostazioniScreen
 import com.pyttrainer.android.ui.player.PlayerScreen
 import com.pyttrainer.android.ui.ritaglio.RitaglioScreen
 import com.pyttrainer.android.ui.scheda.SchedaScreen
@@ -75,6 +77,7 @@ private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
                 viewModel = schedaViewModel,
                 onEsercizioClick = { uid -> navController.navigate(Rotta.Esercizio(uid)) },
                 onGeneraDocumentoClick = { navController.navigate(Rotta.GeneraDocumento) },
+                onImpostazioniClick = { navController.navigate(Rotta.Impostazioni) },
             )
         }
 
@@ -89,6 +92,8 @@ private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
                 EsercizioScreen(
                     esercizioIniziale = esercizio,
                     cartellaFrames = statoScheda.cartellaFrames,
+                    docId = statoScheda.docId,
+                    percorsoStato = statoScheda.percorsoStato,
                     onIndietro = { navController.popBackStack() },
                     onSalva = { aggiornato, persistiCheckpoint ->
                         schedaViewModel.aggiornaEsercizio(aggiornato, persistiCheckpoint)
@@ -96,7 +101,20 @@ private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
                     onRitagliaClick = { tipo, percorso ->
                         navController.navigate(Rotta.Ritaglio(rotta.uid, tipo, percorso))
                     },
-                    onPlayerClick = { url -> navController.navigate(Rotta.Player(url)) },
+                    onPlayerClick = { bozza ->
+                        navController.navigate(
+                            Rotta.Player(
+                                uid = rotta.uid,
+                                url = bozza.videoUrl,
+                                nomeEsercizio = bozza.nome,
+                                cartellaLavoro = statoScheda.cartellaLavoro ?: "",
+                                frameStartIniziale = bozza.frameStart ?: "",
+                                frameFinishIniziale = bozza.frameFinish ?: "",
+                                tsStartIniziale = bozza.tsStart?.toString() ?: "",
+                                tsFinishIniziale = bozza.tsFinish?.toString() ?: "",
+                            )
+                        )
+                    },
                 )
             }
         }
@@ -112,12 +130,47 @@ private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
         }
 
         composable<Rotta.GeneraDocumento> {
-            GeneraDocumentoScreen(onIndietro = { navController.popBackStack() })
+            GeneraDocumentoScreen(
+                esercizi = statoScheda.esercizi,
+                titolo = statoScheda.titolo,
+                cartellaLavoro = statoScheda.cartellaLavoro,
+                onIndietro = { navController.popBackStack() },
+                onImpostazioniClick = { navController.navigate(Rotta.Impostazioni) },
+                onGenerazioneCompletata = { schedaViewModel.gestisciGenerazioneCompletata() },
+            )
         }
 
         composable<Rotta.Player> { backStackEntry ->
             val rotta: Rotta.Player = backStackEntry.toRoute()
-            PlayerScreen(url = rotta.url, onIndietro = { navController.popBackStack() })
+            PlayerScreen(
+                url = rotta.url,
+                nomeEsercizio = rotta.nomeEsercizio,
+                cartellaLavoro = rotta.cartellaLavoro,
+                frameStartIniziale = rotta.frameStartIniziale.ifBlank { null },
+                frameFinishIniziale = rotta.frameFinishIniziale.ifBlank { null },
+                tsStartIniziale = rotta.tsStartIniziale.toDoubleOrNull(),
+                tsFinishIniziale = rotta.tsFinishIniziale.toDoubleOrNull(),
+                onIndietro = { navController.popBackStack() },
+                onConferma = { videoUrl, tsStart, tsFinish, frameStart, frameFinish ->
+                    val base: Esercizio? = statoScheda.esercizi.firstOrNull { it.uid == rotta.uid }
+                    if (base != null) {
+                        val aggiornato = base.copy(
+                            nome = rotta.nomeEsercizio,
+                            videoUrl = videoUrl,
+                            tsStart = tsStart,
+                            tsFinish = tsFinish,
+                            frameStart = frameStart,
+                            frameFinish = frameFinish,
+                        )
+                        schedaViewModel.aggiornaEsercizio(aggiornato, persistiCheckpoint = true)
+                    }
+                    navController.popBackStack()
+                },
+            )
+        }
+
+        composable<Rotta.Impostazioni> {
+            ImpostazioniScreen(onIndietro = { navController.popBackStack() })
         }
     }
 }

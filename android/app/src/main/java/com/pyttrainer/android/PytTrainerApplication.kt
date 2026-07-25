@@ -3,6 +3,8 @@ package com.pyttrainer.android
 import android.app.Application
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.pyttrainer.android.auth.GestoreAccessoGoogle
+import com.pyttrainer.android.lavoro.GenerazioneDocumentoWorker
 import com.pyttrainer.android.python.EsitoAvvio
 import com.pyttrainer.android.python.PythonBridge
 import com.pyttrainer.android.video.EstrattoreFrameNativo
@@ -12,7 +14,10 @@ import com.pyttrainer.android.video.EstrattoreFrameNativo
  * volta per l'intero processo e registra subito il backend nativo di
  * estrazione frame (sostituisce ffmpeg, assente su Android), così ogni
  * schermata dell'app può usare [PythonBridge] senza doversi preoccupare
- * dell'inizializzazione.
+ * dell'inizializzazione. Inizializza anche [GestoreAccessoGoogle] (AuthState
+ * condiviso tra le schermate e GenerazioneDocumentoWorker) e crea il canale
+ * di notifica usato dal worker di generazione (Fase 7): un canale va sempre
+ * creato PRIMA che qualcosa possa chiamare setForeground() con quell'id.
  */
 class PytTrainerApplication : Application() {
 
@@ -31,5 +36,8 @@ class PytTrainerApplication : Application() {
         // solo per mostrarlo nella schermata di verifica del cablaggio.
         EsitoAvvio.rispostaRegistrazioneBackend =
             PythonBridge.registraBackendFrameNativo(EstrattoreFrameNativo())
+
+        GestoreAccessoGoogle.inizializza(this)
+        GenerazioneDocumentoWorker.creaCanaleNotifica(this)
     }
 }

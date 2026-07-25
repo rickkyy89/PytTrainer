@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pyttrainer.android.auth.GestoreAccessoGoogle
 import com.pyttrainer.android.dati.ArchivioSchede
 import com.pyttrainer.android.dati.Esercizio
 import com.pyttrainer.android.python.PythonBridge
@@ -27,6 +28,10 @@ data class SchedaUiState(
     val caricamento: Boolean = false,
     val cartellaLavoro: String? = null,
     val cartellaFrames: String? = null,
+    /** Percorso di state.json nel bundle: richiesto da PythonBridge.aggiornaMedia (Fase 7). */
+    val percorsoStato: String? = null,
+    /** Id del documento Google già generato per questa scheda, o null se non ancora generato (Fase 7). */
+    val docId: String? = null,
     val statoGoogleConnesso: Boolean = false,
     val anteprimaImportCsv: List<Esercizio>? = null,
 ) {
@@ -62,6 +67,11 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
 
     init {
         viewModelScope.launch { ricalcolaCartellaLavoro() }
+        viewModelScope.launch {
+            GestoreAccessoGoogle.stato.collect { accesso ->
+                _stato.update { it.copy(statoGoogleConnesso = accesso.connesso) }
+            }
+        }
     }
 
     private fun percorsoBozza(): File =
@@ -79,6 +89,31 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
         val frames = PythonBridge.cartellaFrames(cartella)
             .getOrElse { emettiErrore(it.message); return }
         _stato.update { it.copy(cartellaLavoro = cartella, cartellaFrames = frames) }
+        aggiornaStatoGenerazione(cartella)
+    }
+
+    /**
+     * Rilegge state.json (se esiste) per sapere se questa scheda ha già un
+     * documento Google generato: [SchedaUiState.docId] abilita il pulsante
+     * di correzione mirata in EsercizioScreen. Chiamata dopo apertura,
+     * cambio di cartella di lavoro e al termine di una generazione.
+     */
+    private suspend fun aggiornaStatoGenerazione(cartellaLavoro: String) {
+        val percorsoStato = PythonBridge.percorsoStato(cartellaLavoro).getOrNull() ?: return
+        val stato = PythonBridge.statoGenerazione(percorsoStato).getOrNull()
+        _stato.update { it.copy(percorsoStato = percorsoStato, docId = stato?.docId) }
+    }
+
+    /**
+     * Da chiamare quando GeneraDocumentoScreen segnala una generazione
+     * riuscita: risalva il bundle con lo state.json aggiornato (esattamente
+     * come fa app.py dopo la generazione, vedi CLAUDE.md) e rilegge docId
+     * per abilitare la correzione mirata.
+     */
+    fun gestisciGenerazioneCompletata() {
+        persistiCheckpointSeDisponibile()
+        val cartella = _stato.value.cartellaLavoro ?: return
+        viewModelScope.launch { aggiornaStatoGenerazione(cartella) }
     }
 
     private fun emettiErrore(messaggio: String?) {
@@ -128,6 +163,7 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
                         cartellaFrames = frames,
                     )
                 }
+                aggiornaStatoGenerazione(risultato.cartellaLavoro)
                 emettiInfo("Scheda caricata: ${risultato.esercizi.size} esercizi.")
             } finally {
                 impostaCaricamento(false)

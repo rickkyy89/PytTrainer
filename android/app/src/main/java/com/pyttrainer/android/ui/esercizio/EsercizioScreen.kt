@@ -22,9 +22,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +34,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -40,10 +43,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -53,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pyttrainer.android.R
+import com.pyttrainer.android.auth.GestoreAccessoGoogle
 import com.pyttrainer.android.dati.Esercizio
 import com.pyttrainer.android.dati.VideoYoutube
 import com.pyttrainer.android.ui.comune.EventoUi
@@ -73,10 +80,14 @@ import androidx.compose.runtime.collectAsState
 fun EsercizioScreen(
     esercizioIniziale: Esercizio,
     cartellaFrames: String?,
+    /** Id del documento Google già generato per questa scheda, o null: abilita la correzione mirata (Fase 7). */
+    docId: String?,
+    /** Percorso di state.json nel bundle: richiesto da PythonBridge.aggiornaMedia. */
+    percorsoStato: String?,
     onIndietro: () -> Unit,
     onSalva: (Esercizio, persistiCheckpoint: Boolean) -> Unit,
     onRitagliaClick: (tipo: String, percorso: String) -> Unit,
-    onPlayerClick: (String) -> Unit,
+    onPlayerClick: (Esercizio) -> Unit,
 ) {
     val testi = EsercizioTesti(
         nomeVuoto = stringResource(R.string.esercizio_nome_vuoto_per_ricerca),
@@ -86,6 +97,7 @@ fun EsercizioScreen(
         estrazioneOk = stringResource(R.string.esercizio_estrazione_ok),
         estrazioneSenzaVideo = stringResource(R.string.esercizio_estrazione_senza_video),
         erroreGenerico = stringResource(R.string.errore_sconosciuto),
+        correzioneOk = stringResource(R.string.esercizio_correzione_ok),
     )
     val viewModel: EsercizioViewModel = viewModel(
         key = esercizioIniziale.uid,
@@ -93,6 +105,7 @@ fun EsercizioScreen(
     )
     val stato by viewModel.stato.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var foglioCorrezioneAperto by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
         viewModel.eventi.collect { evento ->
@@ -102,6 +115,16 @@ fun EsercizioScreen(
                 is EventoUi.EsercizioRimosso -> Unit // non emesso da questo schermo
             }
         }
+    }
+
+    // Riallinea i campi media della bozza locale ogni volta che quelli in
+    // SchedaViewModel cambiano per una via che non passa da questo schermo
+    // (cattura nel player, correzione mirata): esercizioIniziale è
+    // ricalcolato fresco a ogni ricomposizione da MainActivity, ma il
+    // ViewModel esiste già (stessa voce di backstack) quindi il suo
+    // costruttore/factory non viene richiamato. Vedi EsercizioViewModel.sincronizzaMediaEsterni.
+    LaunchedEffect(esercizioIniziale) {
+        viewModel.sincronizzaMediaEsterni(esercizioIniziale)
     }
 
     Scaffold(
@@ -309,7 +332,7 @@ fun EsercizioScreen(
             }
 
             OutlinedButton(
-                onClick = { onPlayerClick(stato.bozza.videoUrl) },
+                onClick = { onPlayerClick(stato.bozza) },
                 enabled = stato.bozza.videoUrl.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -318,7 +341,125 @@ fun EsercizioScreen(
                 Text(stringResource(R.string.esercizio_pulsante_player))
             }
 
+            // --- Correzione mirata (Fase 7) ---------------------------------------
+            // Visibile solo se esiste già un documento generato per questa scheda:
+            // sostituisce i due frame di QUESTO esercizio nel documento senza
+            // rigenerarlo (PythonBridge.aggiornaMedia).
+            if (docId != null && percorsoStato != null) {
+                OutlinedButton(
+                    onClick = { foglioCorrezioneAperto = true },
+                    enabled = !stato.correzioneInCorso,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.esercizio_pulsante_correzione_mirata))
+                }
+                if (stato.correzioneInCorso) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        Text(stringResource(R.string.esercizio_correzione_in_corso))
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+
+    if (foglioCorrezioneAperto && docId != null && percorsoStato != null) {
+        CorrezioneMirataBottomSheet(
+            videoUrlIniziale = stato.bozza.videoUrl,
+            cartellaFrames = cartellaFrames,
+            onAnnulla = { foglioCorrezioneAperto = false },
+            onConferma = { nuovoUrl, nuovoTsStart, nuovoTsFinish ->
+                viewModel.correzioneMirata(
+                    docId = docId,
+                    statePath = percorsoStato,
+                    outputDir = cartellaFrames ?: "",
+                    nuovoVideoUrl = nuovoUrl,
+                    nuovoTsStart = nuovoTsStart,
+                    nuovoTsFinish = nuovoTsFinish,
+                    accessToken = GestoreAccessoGoogle::tokenFresco,
+                    onCorrezioneCompletata = onSalva,
+                )
+                foglioCorrezioneAperto = false
+            },
+        )
+    }
+}
+
+/**
+ * Foglio modale di correzione mirata (Fase 7): nuovo URL video e/o nuovi
+ * timestamp per QUESTO esercizio, senza toccare gli altri campi né gli
+ * altri esercizi del documento già generato.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CorrezioneMirataBottomSheet(
+    videoUrlIniziale: String,
+    cartellaFrames: String?,
+    onAnnulla: () -> Unit,
+    onConferma: (videoUrl: String, tsStart: Double?, tsFinish: Double?) -> Unit,
+) {
+    var url by remember { mutableStateOf(videoUrlIniziale) }
+    var tsStartTesto by remember { mutableStateOf("") }
+    var tsFinishTesto by remember { mutableStateOf("") }
+    val statoFoglio = rememberModalBottomSheetState()
+
+    ModalBottomSheet(onDismissRequest = onAnnulla, sheetState = statoFoglio) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(stringResource(R.string.correzione_mirata_titolo), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.correzione_mirata_spiegazione),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text(stringResource(R.string.esercizio_url_manuale_label)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = tsStartTesto,
+                    onValueChange = { tsStartTesto = it },
+                    label = { Text(stringResource(R.string.esercizio_ts_start_label)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = tsFinishTesto,
+                    onValueChange = { tsFinishTesto = it },
+                    label = { Text(stringResource(R.string.esercizio_ts_finish_label)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = onAnnulla, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.azione_annulla))
+                }
+                Button(
+                    onClick = {
+                        onConferma(url, tsStartTesto.trim().toDoubleOrNull(), tsFinishTesto.trim().toDoubleOrNull())
+                    },
+                    enabled = url.isNotBlank() && cartellaFrames != null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(stringResource(R.string.azione_conferma))
+                }
+            }
         }
     }
 }
