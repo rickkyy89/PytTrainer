@@ -12,3 +12,15 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .streamlit/secrets.toml
+
+# --- Android (progetto Gradle in android/) ---------------------------------
+# Attenzione: NESSUNA regola *.keystore qui. android/keystore/debug.keystore
+# è il keystore di debug CONDIVISO (build locale e CI devono firmare con la
+# stessa impronta SHA-1): va committato di proposito, non è un segreto.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+.idea/
+*.iml

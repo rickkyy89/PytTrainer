@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PytTrainer</string>
+
+    <!-- Schermata di verifica del cablaggio Chaquopy (fase 2): NON è ancora
+         l'interfaccia definitiva, serve solo a dimostrare che Python è
+         raggiungibile da Kotlin e viceversa. -->
+    <string name="verifica_titolo">Verifica cablaggio Python</string>
+    <string name="verifica_versione_python_label">Versione Python (Chaquopy)</string>
+    <string name="verifica_backend_frame_label">Backend estrazione frame nativo</string>
+    <string name="verifica_backend_frame_ok">registrato correttamente</string>
+    <string name="verifica_backend_frame_ko">registrazione fallita</string>
+    <string name="verifica_pulsante_ricerca">Cerca un video di prova su YouTube</string>
+    <string name="verifica_ricerca_in_corso">Ricerca in corso…</string>
+    <string name="verifica_ricerca_esercizio_prova">Squat a corpo libero</string>
+    <string name="verifica_json_grezzo_label">JSON grezzo (cerca_video)</string>
+    <string name="verifica_errore_generico">Errore: %1$s</string>
+</resources>
