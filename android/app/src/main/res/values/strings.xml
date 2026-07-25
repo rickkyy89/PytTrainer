@@ -144,4 +144,6 @@
     <string name="impostazioni_configurazione_oauth_spiegazione">Dati da registrare in Google Cloud Console come client OAuth di tipo \"Android\" (documents + drive.file, redirect com.pyttrainer.android:/oauth2redirect).</string>
     <string name="impostazioni_package_name">Nome del pacchetto</string>
     <string name="impostazioni_impronta_sha1">Impronta SHA-1 (keystore di debug)</string>
+    <string name="impostazioni_oauth_non_configurato_titolo">Client OAuth non configurato</string>
+    <string name="impostazioni_oauth_non_configurato_testo">Per accedere con Google serve un client ID OAuth di tipo \"Android\" creato su Google Cloud Console con i dati qui sotto. Incollalo in pyttrainer.oauth.clientId, in android/gradle.properties oppure in android/local.properties. Istruzioni complete in android/README.md, sezione \"Configurazione dell\'accesso Google\".</string>
 </resources>

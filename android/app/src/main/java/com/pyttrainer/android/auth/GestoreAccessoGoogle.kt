@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.pyttrainer.android.BuildConfig
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,11 +65,25 @@ object GestoreAccessoGoogle {
      * "com.pyttrainer.android" e impronta SHA-1 del keystore di debug
      * committato ("59:50:55:5A:D7:D4:FB:B1:43:02:8F:D5:88:25:A4:31:89:5A:A0:86",
      * vedi ImpostazioniScreen). NON è automatizzabile (richiede l'account
-     * Google Cloud dell'utente): finché non viene sostituito con il client
-     * ID reale, avviaAccesso() apre comunque il browser ma Google rifiuta la
-     * richiesta con un errore di configurazione.
+     * Google Cloud dell'utente): il valore vive fuori dal sorgente Kotlin, in
+     * BuildConfig.CLIENT_ID_OAUTH (generato da app/build.gradle.kts a partire
+     * da pyttrainer.oauth.clientId in gradle.properties o local.properties,
+     * vedi android/README.md). Finché resta vuoto, [avviaAccesso] non apre
+     * nemmeno il browser: fallisce subito con un messaggio chiaro (vedi
+     * [clientIdConfigurato]) invece di far arrivare all'utente un errore di
+     * configurazione da Google poco comprensibile.
      */
-    private const val CLIENT_ID = "INSERISCI_QUI_IL_CLIENT_ID_OAUTH_ANDROID.apps.googleusercontent.com"
+    private val CLIENT_ID = BuildConfig.CLIENT_ID_OAUTH
+
+    /** Messaggio mostrato/sollevato quando manca il client ID OAuth (vedi [avviaAccesso]). */
+    const val MESSAGGIO_CLIENT_ID_NON_CONFIGURATO =
+        "Client OAuth non configurato: imposta pyttrainer.oauth.clientId in " +
+            "android/gradle.properties (o android/local.properties) con il client ID " +
+            "\"Android\" creato su Google Cloud Console. Istruzioni in android/README.md, " +
+            "sezione \"Configurazione dell'accesso Google\"."
+
+    /** True se un client ID OAuth è stato configurato in fase di build (vedi [MESSAGGIO_CLIENT_ID_NON_CONFIGURATO]). */
+    fun clientIdConfigurato(): Boolean = CLIENT_ID.isNotBlank()
 
     // Deve corrispondere esattamente a manifestPlaceholders["appAuthRedirectScheme"]
     // in app/build.gradle.kts (senza quello, l'intent-filter di
@@ -132,8 +147,16 @@ object GestoreAccessoGoogle {
         _stato.value = StatoAccessoGoogle(connesso = authState.isAuthorized)
     }
 
-    /** Intent di login da lanciare con un ActivityResultLauncher (vedi ImpostazioniScreen). */
+    /**
+     * Intent di login da lanciare con un ActivityResultLauncher (vedi
+     * ImpostazioniScreen). Solleva IllegalStateException con
+     * [MESSAGGIO_CLIENT_ID_NON_CONFIGURATO] se manca il client ID OAuth,
+     * SENZA aprire il browser: niente crash, il chiamante mostra il
+     * messaggio (es. in una Snackbar) esattamente come farebbe con un
+     * qualunque altro errore di accesso.
+     */
     fun avviaAccesso(lanciatore: androidx.activity.result.ActivityResultLauncher<Intent>) {
+        check(clientIdConfigurato()) { MESSAGGIO_CLIENT_ID_NON_CONFIGURATO }
         val richiesta = AuthorizationRequest.Builder(
             CONFIGURAZIONE_SERVIZIO, CLIENT_ID, ResponseTypeValues.CODE, REDIRECT_URI,
         )

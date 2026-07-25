@@ -24,12 +24,16 @@ ricompatta tutto in modo atomico.
 | `salva_scheda(esercizi, percorso, state_path=None)` | `scheda_file.py` | Riscrive il `.scheda` (manifest + frames esistenti + stato se presente), scrittura atomica |
 | `cartella_frames(cartella_lavoro)` → `str` | `scheda_file.py` | Cartella dei frame del bundle: è l'`output_dir` da passare a `scegli_ed_estrai` / `extract_start_finish_frames` |
 | `percorso_stato(cartella_lavoro)` → `str` | `scheda_file.py` | Percorso dello `state.json` del bundle: è lo `state_path` da passare a `create_workout_document` / `update_exercise_media` |
+| `percorso_backup_frame(percorso_frame)` → `str` | `scheda_file.py` | Percorso convenzionale del backup pre-ritaglio di un frame (`<frame>_orig.jpg`); usato da desktop, bundle e bridge Android per restare allineati su un'unica convenzione |
 | `scheda_bytes(esercizi, state_path=None)` → `bytes` | `scheda_file.py` | Stesso archivio di `salva_scheda` ma in memoria (download da UI) |
 | `parse_esercizi_csv(file)` → `list[dict]` | `csv_utils.py` | Legge/valida un CSV manifest nudo (solleva `ValueError` se malformato) — utile per creare una scheda da un CSV |
 | `search_youtube(nome, max_results=3)` → `list[dict]` | `video_helper.py` | Risultati con `id`, `title`, `duration`, `webpage_url` |
+| `get_stream_url(video_url, formato=None)` → `str` | `video_helper.py` | Risolve l'URL diretto dello stream (senza scaricare); `formato` è una stringa di selezione yt-dlp, default best mp4 ≤720p — l'app Android passa un formato muxato dedicato |
 | `extract_start_finish_frames(url, ts_start, ts_finish, nome, output_dir)` → `(path_start, path_finish)` | `video_helper.py` | Estrae i 2 frame in `output_dir` senza scaricare il video |
 | `get_video_info(url)` → `{"duration", "title"}` | `video_helper.py` | Info di un video puntuale (senza download), per l'euristica timestamp |
 | `scegli_ed_estrai(esercizio, output_dir="frames", logger=print)` → `dict` | `video_helper.py` | Orchestrazione: rispetta VideoURL/timestamp/frame già nel manifest, altrimenti cerca+filtra+estrae |
+| `imposta_backend_frame(funzione)` | `video_helper.py` | Sostituisce il backend di estrazione frame usato da `extract_frame()` (default: ffmpeg). `funzione(stream_url, timestamp_seconds, output_path) -> str`; `None` ripristina ffmpeg. Punto di innesto usato dall'app Android per iniettare un backend nativo (`MediaMetadataRetriever`, niente ffmpeg sul telefono) |
+| `backend_frame_attivo()` | `video_helper.py` | Backend di estrazione frame attualmente attivo (`None` = ffmpeg di default); utile per verificare/ripristinare lo stato nei test |
 | `create_workout_document(esercizi, titolo, state_path=None, ...)` → `{"document_id", "url", "esercizi_inseriti"}` | `google_docs_helper.py` | Genera (o riprende) il Google Doc A4 raggruppato per sezioni |
 | `update_exercise_media(doc_id, nome_esercizio, video_url, ..., output_dir=...)` → `dict` | `google_docs_helper.py` | Sostituisce mirata mente i frame di UN esercizio già nel documento |
 | `get_credentials_manual_flow(auth_code=None)` | `google_docs_helper.py` | OAuth headless: prima chiamata dà l'URL, seconda con `auth_code` completa il login |
@@ -146,6 +150,35 @@ Se `get_credentials()` non può aprire un browser locale, usa
 ## 4. Uso manuale alternativo
 
 `streamlit run app.py` — l'utente sceglie video e timestamp dall'interfaccia.
+
+## 5. App Android
+
+Esiste anche un'app Android nativa (`android/`, guida completa in
+`android/README.md`): stesse funzioni, più ricerca e visione del video
+dentro l'app per catturare i fotogrammi START/FINISH fotogramma per
+fotogramma. Non è una riscrittura: l'app incorpora un interprete Python
+(Chaquopy) ed esegue gli **stessi** `video_helper.py`, `scheda_file.py`,
+`csv_utils.py`, `google_docs_helper.py` di questa cartella, copiati a
+build-time dal task Gradle `copiaModuliPython` — nessuna copia da tenere
+allineata a mano. L'unica differenza di comportamento è l'estrazione dei
+frame: niente ffmpeg su Android, sostituito da un backend nativo
+(`MediaMetadataRetriever`, vedi `EstrattoreFrameNativo.kt`) iniettato in
+`video_helper` con `imposta_backend_frame()`.
+
+Il ponte verso Kotlin è `android/app/src/main/python/android_bridge.py`,
+l'unico file Python specifico di Android: ogni funzione pubblica riceve
+solo stringhe/numeri e restituisce sempre un envelope JSON, mai
+un'eccezione che attraversa il confine —
+`{"ok": true, "dati": ...}` oppure `{"ok": false, "codice": "...", "messaggio": "..."}`
+(codici: `VIDEO_SEARCH`, `FRAME`, `AUTH`, `DOCS`, `SCHEDA`, `VALORE`,
+`IGNOTO`). L'autenticazione Google lato Android non usa
+`get_credentials()`/`token.json` (aprirebbero un browser desktop): il
+login OAuth "Android" (AppAuth, PKCE) gira interamente in Kotlin
+(`GestoreAccessoGoogle.kt`), che passa al bridge solo un access token già
+fresco; il bridge costruisce da lì i servizi Google
+(`docs_service`/`drive_service`, vedi `_servizi_google_da_token`) e li
+inietta in `create_workout_document`/`update_exercise_media` — stesso
+codice, stessa logica di ripresa, credenziali diverse.
 
 ## Errori noti
 

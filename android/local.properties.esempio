@@ -1,0 +1,24 @@
+# Esempio di android/local.properties: file locale, NON tracciato da git
+# (vedi .gitignore), dove Android Studio scrive automaticamente "sdk.dir" e
+# dove puoi aggiungere le tue proprietà personali senza rischiare di
+# committarle per sbaglio.
+#
+# Se non vuoi modificare android/gradle.properties (file tracciato, quindi
+# visibile a chiunque legga il repository) per incollarci il tuo client ID
+# OAuth, copia questo file in "android/local.properties" (se non esiste già:
+# di norma lo crea Android Studio al primo Sync con "sdk.dir") e aggiungi la
+# riga sottostante con il tuo valore. android/app/build.gradle.kts legge
+# prima local.properties e solo se assente ricade su gradle.properties.
+#
+# Dove si ottiene: Google Cloud Console > API e servizi > Credenziali > Crea
+# credenziali > ID client OAuth > tipo "Android" (vedi android/README.md,
+# sezione "Configurazione dell'accesso Google"). È specifico del TUO
+# progetto Google Cloud: non un valore da condividere o riusare tra persone.
+
+pyttrainer.oauth.clientId=IL_TUO_CLIENT_ID.apps.googleusercontent.com
+
+# Nota: l'eventuale percorso esplicito dell'interprete Python di build (se
+# python3.11 non è nel PATH) NON si imposta qui, ma direttamente in
+# app/build.gradle.kts (blocco chaquopy.defaultConfig, riga "buildPython"
+# commentata e pronta) — vedi android/README.md, sezione "Prerequisiti".
+# Questo file (local.properties) non è letto da quel blocco.

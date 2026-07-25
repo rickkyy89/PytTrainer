@@ -191,6 +191,19 @@ due chiamate:
    copiato>)` completa il login e salva `token.json`, esattamente come dopo
    un login interattivo riuscito con `get_credentials()`.
 
+## Versione Android
+
+Esiste anche un'app Android nativa, in `android/`: stesse funzioni della
+versione desktop (scheda `.scheda`, ricerca YouTube, estrazione frame,
+generazione del Google Doc), più la ricerca e la **visione del video
+dentro l'app**, per catturare i fotogrammi START/FINISH scorrendo il video
+fotogramma per fotogramma nel punto esatto, invece di indovinare un
+timestamp da un player esterno. Il file `.scheda` è lo stesso identico
+formato di questa versione desktop: si può aprire su telefono una scheda
+creata dall'agente o dal PC, e viceversa, senza conversioni. Guida completa
+(setup, configurazione OAuth Android, uso, risoluzione dei problemi) in
+[`android/README.md`](android/README.md).
+
 ## Struttura del progetto
 
 ```
@@ -199,8 +212,10 @@ PytTrainer/
 ├── video_helper.py          # Ricerca YouTube + estrazione frame via ffmpeg
 ├── google_docs_helper.py    # Autenticazione e generazione del Google Doc
 ├── csv_utils.py             # Parsing/validazione del CSV esercizi
+├── scheda_file.py           # Gestione del file allenamento unico .scheda
 ├── requirements.txt         # Dipendenze Python
 ├── esercizi_example.csv     # CSV di esempio
+├── android/                 # App Android nativa (vedi android/README.md)
 ├── README.md
 ├── .gitignore
 └── tests/

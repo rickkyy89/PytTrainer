@@ -14,8 +14,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -108,11 +110,49 @@ fun ImpostazioniScreen(onIndietro: () -> Unit) {
                         }
                     } else {
                         Button(
-                            onClick = { GestoreAccessoGoogle.avviaAccesso(lanciatoreAccesso) },
+                            onClick = {
+                                try {
+                                    GestoreAccessoGoogle.avviaAccesso(lanciatoreAccesso)
+                                } catch (errore: IllegalStateException) {
+                                    ambitoCoroutine.launch {
+                                        snackbarHostState.showSnackbar(errore.message ?: "Accesso Google non configurato.")
+                                    }
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(stringResource(R.string.impostazioni_accedi))
                         }
+                    }
+                }
+            }
+
+            if (!GestoreAccessoGoogle.clientIdConfigurato()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.WarningAmber,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.impostazioni_oauth_non_configurato_titolo),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        Text(
+                            text = stringResource(R.string.impostazioni_oauth_non_configurato_testo),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
                     }
                 }
             }
@@ -131,8 +171,6 @@ fun ImpostazioniScreen(onIndietro: () -> Unit) {
                     RigaValoreCopiabile(
                         etichetta = stringResource(R.string.impostazioni_package_name),
                         // Fisso: android.defaultConfig.applicationId in app/build.gradle.kts.
-                        // (BuildConfig non è abilitato in questo modulo: niente buildFeatures.buildConfig
-                        // in più solo per una stringa già nota e fissa a build time.)
                         valore = "com.pyttrainer.android",
                     )
                     RigaValoreCopiabile(

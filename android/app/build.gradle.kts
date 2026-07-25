@@ -18,6 +18,23 @@ plugins {
 // install delle dipendenze in fase di build).
 val versionePython: String = providers.gradleProperty("pyttrainer.python.version").get()
 
+// Client ID OAuth "Android" (vedi ImpostazioniScreen/GestoreAccessoGoogle e
+// android/README.md): letto preferibilmente da android/local.properties (non
+// tracciato da git, comodo per non toccare mai un file committato) e, se
+// assente, da gradle.properties (pyttrainer.oauth.clientId, committato ma
+// vuoto di default). Nessuno dei due è obbligatorio: senza valore il
+// progetto compila comunque con una stringa vuota, e GestoreAccessoGoogle si
+// occupa di fallire in modo chiaro invece di crashare.
+val proprietaLocali = java.util.Properties().apply {
+    val fileLocale = rootProject.file("local.properties")
+    if (fileLocale.exists()) {
+        fileLocale.inputStream().use { load(it) }
+    }
+}
+val clientIdOAuthAndroid: String =
+    (proprietaLocali.getProperty("pyttrainer.oauth.clientId")?.takeIf { it.isNotBlank() }
+        ?: providers.gradleProperty("pyttrainer.oauth.clientId").getOrElse(""))
+
 android {
     namespace = "com.pyttrainer.android"
     compileSdk = 36
@@ -44,6 +61,10 @@ android {
         // "com.pyttrainer.android:/oauth2redirect") e con quanto registrato come
         // client OAuth "Android" in Google Cloud Console (Fase 7).
         manifestPlaceholders["appAuthRedirectScheme"] = "com.pyttrainer.android"
+
+        // Esposto a Kotlin come BuildConfig.CLIENT_ID_OAUTH (vedi GestoreAccessoGoogle):
+        // stringa vuota se non configurato, mai un crash a build time.
+        buildConfigField("String", "CLIENT_ID_OAUTH", "\"$clientIdOAuthAndroid\"")
     }
 
     // Keystore di debug condiviso (committato in android/keystore/debug.keystore):
@@ -77,6 +98,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // yt-dlp, google-api-python-client e Chaquopy stesso imbarcano più file
@@ -143,6 +165,14 @@ chaquopy {
         // Deve corrispondere esattamente alla versione dell'interprete Python
         // installato sulla macchina di build (vedi gradle.properties).
         version = versionePython
+
+        // Se python3.11 non è nel PATH di sistema (o non è quello di
+        // default), decommenta e adatta la riga sottostante con il percorso
+        // completo del tuo eseguibile: è la leva ufficiale di Chaquopy per
+        // indicare l'interprete di build (vedi android/README.md, sezione
+        // "Prerequisiti"). Lasciata commentata di proposito: un percorso
+        // specifico di questa macchina non deve restare nel file committato.
+        // buildPython("/percorso/completo/di/python3.11")
 
         pip {
             // Stesso set di dipendenze runtime di requirements.txt, MENO
