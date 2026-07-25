@@ -189,10 +189,23 @@ def carica_scheda_da_file_like(file_like, cartella_lavoro: str) -> list[dict]:
         raise SchedaFileError(f"Il file caricato non è un file .scheda valido: {exc}") from exc
 
 
-def _percorso_backup_frame(percorso_frame: str) -> str:
-    """Percorso convenzionale del backup pre-ritaglio di un frame (vedi app.py)."""
+def percorso_backup_frame(percorso_frame: str) -> str:
+    """
+    Percorso convenzionale del backup dell'originale non ritagliato di un
+    frame: accanto al frame, con suffisso '_orig.jpg'.
+
+    Vive qui perché la convenzione è condivisa da tutti i client: il bundle la
+    usa per includere anche l'originale nell'archivio, l'app Streamlit per
+    offrire il ripristino dopo un ritaglio, e il bridge Android per la stessa
+    ragione. Una sola definizione, così le tre implementazioni non possono
+    divergere.
+    """
     radice, _ = os.path.splitext(percorso_frame)
     return f"{radice}_orig.jpg"
+
+
+# Alias storico interno, mantenuto perché usato più sotto in questo modulo.
+_percorso_backup_frame = percorso_backup_frame
 
 
 def _scrivi_zip(esercizi: list[dict], destinazione, state_path: str | None) -> None:

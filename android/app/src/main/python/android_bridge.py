@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import shutil
 import sys
 
 import csv_utils
@@ -203,15 +204,45 @@ def auto_estrai(json_esercizio: str, output_dir: str) -> dict:
 @risposta_json
 def ritaglia(percorso: str, sinistra: float, alto: float, destra: float, basso: float) -> str:
     """
-    Ritaglia in place un frame già estratto. Richiede Pillow, volutamente
-    NON incluso tra le pip install di Chaquopy (vedi app/build.gradle.kts):
-    finché non verrà aggiunto, questa funzione restituirà un envelope di
-    errore IGNOTO (ImportError) invece di far crashare l'app - il ritaglio
-    "vero" è pensato per essere rifatto lato Kotlin con android.graphics.Bitmap
-    nelle fasi successive, usando box_ritaglio_json() qui sotto per calcolare
-    il box in pixel senza duplicare la formula.
+    Ritaglia in place un frame già estratto, riusando video_helper.crop_frame()
+    (quindi con la stessa matematica e la stessa qualità JPEG del desktop:
+    Pillow è installato anche qui, vedi app/build.gradle.kts).
+
+    Prima del primo ritaglio salva una copia dell'originale accanto al frame,
+    secondo la convenzione condivisa scheda_file.percorso_backup_frame(): è la
+    stessa cosa che fa l'app Streamlit, ed è ciò che permette a
+    ripristina_originale() di annullare il ritaglio e al bundle di conservare
+    anche la versione non ritagliata. Il backup si crea una sola volta, così
+    ritagli successivi restano annullabili fino all'immagine di partenza.
     """
+    if not os.path.exists(percorso):
+        raise ValueError(f"Il frame da ritagliare non esiste: {percorso}")
+
+    backup = scheda_file.percorso_backup_frame(percorso)
+    if not os.path.exists(backup):
+        shutil.copy2(percorso, backup)
     return video_helper.crop_frame(percorso, sinistra, alto, destra, basso)
+
+
+@risposta_json
+def ripristina_originale(percorso: str) -> str:
+    """
+    Riporta un frame ritagliato alla sua versione originale, ricopiando il
+    backup creato da ritaglia(). Solleva ValueError (-> codice VALORE) se non
+    esiste alcun backup, così l'interfaccia può disabilitare o spiegare il
+    comando invece di fallire in silenzio.
+    """
+    backup = scheda_file.percorso_backup_frame(percorso)
+    if not os.path.exists(backup):
+        raise ValueError("Nessun originale da ripristinare: questo frame non è mai stato ritagliato.")
+    shutil.copy2(backup, percorso)
+    return percorso
+
+
+@risposta_json
+def ha_backup_originale(percorso: str) -> bool:
+    """Indica se esiste il backup pre-ritaglio, per abilitare il comando di ripristino nell'interfaccia."""
+    return os.path.exists(scheda_file.percorso_backup_frame(percorso))
 
 
 @risposta_json

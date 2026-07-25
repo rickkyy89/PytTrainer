@@ -155,8 +155,12 @@ def test_errore_frame(monkeypatch, tmp_path):
 
     monkeypatch.setattr(video_helper, "crop_frame", _crop_che_fallisce)
 
-    percorso_finto = str(tmp_path / "frame.jpg")
-    risposta = _decodifica(android_bridge.ritaglia(percorso_finto, 5, 5, 5, 5))
+    # Il frame deve esistere davvero: ritaglia() ne salva una copia di backup
+    # prima di ritagliare, quindi su un percorso inesistente si fermerebbe
+    # prima di arrivare a crop_frame (ed è quel che verifica il test qui sotto).
+    percorso_frame = tmp_path / "frame.jpg"
+    percorso_frame.write_bytes(b"contenuto finto")
+    risposta = _decodifica(android_bridge.ritaglia(str(percorso_frame), 5, 5, 5, 5))
 
     assert risposta["ok"] is False
     assert risposta["codice"] == "FRAME"
@@ -223,3 +227,41 @@ def test_errore_ignoto(monkeypatch):
     assert risposta["ok"] is False
     assert risposta["codice"] == "IGNOTO"
     assert "Errore imprevisto" in risposta["messaggio"]
+
+
+def test_ritaglia_backup_e_ripristino(tmp_path):
+    """
+    Il ritaglio dal telefono deve comportarsi come quello dell'app Streamlit:
+    salvare una sola volta l'originale accanto al frame (convenzione
+    scheda_file.percorso_backup_frame) e poter tornare indietro.
+    """
+    from PIL import Image
+
+    percorso = str(tmp_path / "esercizio_start.jpg")
+    Image.new("RGB", (200, 100), "red").save(percorso)
+
+    assert _decodifica(android_bridge.ha_backup_originale(percorso))["dati"] is False
+
+    senza_backup = _decodifica(android_bridge.ripristina_originale(percorso))
+    assert senza_backup["ok"] is False
+    assert senza_backup["codice"] == "VALORE"
+
+    assert _decodifica(android_bridge.ritaglia(percorso, 10, 20, 5, 25))["ok"] is True
+    with Image.open(percorso) as ritagliata:
+        assert ritagliata.size == (170, 55)
+    assert _decodifica(android_bridge.ha_backup_originale(percorso))["dati"] is True
+
+    # Un secondo ritaglio non deve sovrascrivere il backup: si deve poter
+    # tornare all'immagine di partenza, non a quella già ritagliata una volta.
+    assert _decodifica(android_bridge.ritaglia(percorso, 10, 10, 10, 10))["ok"] is True
+    assert _decodifica(android_bridge.ripristina_originale(percorso))["ok"] is True
+    with Image.open(percorso) as ripristinata:
+        assert ripristinata.size == (200, 100)
+
+
+def test_ritaglia_frame_inesistente(tmp_path):
+    risposta = _decodifica(android_bridge.ritaglia(str(tmp_path / "assente.jpg"), 5, 5, 5, 5))
+
+    assert risposta["ok"] is False
+    assert risposta["codice"] == "VALORE"
+    assert "non esiste" in risposta["messaggio"]

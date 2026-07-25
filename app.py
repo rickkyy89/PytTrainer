@@ -19,6 +19,7 @@ from scheda_file import (
     carica_scheda_da_file_like,
     cartella_frames,
     cartella_lavoro_per_bundle,
+    percorso_backup_frame,
     percorso_stato,
     salva_scheda,
     scheda_bytes,
@@ -76,10 +77,10 @@ def _formatta_durata(secondi):
     return f"{minuti:02d}:{resto:02d}"
 
 
-def _percorso_backup_frame(percorso_frame):
-    """Percorso convenzionale del backup dell'originale non ritagliato di un frame."""
-    radice, _ = os.path.splitext(percorso_frame)
-    return f"{radice}_orig.jpg"
+# La convenzione del backup pre-ritaglio ('<nome>_orig.jpg') vive in
+# scheda_file, che la usa per includere anche l'originale nel bundle: qui la
+# riusiamo invece di ridefinirla, così le due non possono divergere.
+_percorso_backup_frame = percorso_backup_frame
 
 
 def _ui_ritaglio_frame(percorso_frame, uid, suffisso):

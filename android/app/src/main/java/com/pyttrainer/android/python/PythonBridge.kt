@@ -200,15 +200,26 @@ object PythonBridge {
         }
 
     /**
-     * Ritaglio "vero" via Pillow: pip install("pillow") NON è tra le
-     * dipendenze Chaquopy (vedi app/build.gradle.kts), quindi finché non
-     * verrà aggiunta questa chiamata fallisce con ErroreScheda.Ignoto
-     * (ImportError lato Python). Il ritaglio effettivo su Android è pensato
-     * per essere fatto con android.graphics.Bitmap usando boxRitaglio() qui
-     * sotto per calcolare il box in pixel senza duplicare la formula.
+     * Ritaglia il frame in place riusando video_helper.crop_frame() (Pillow è
+     * tra le dipendenze Chaquopy): stessa matematica e stessa qualità JPEG
+     * del desktop, invece di riscrivere il ritaglio con android.graphics.Bitmap
+     * e rischiare immagini diverse tra PC e telefono.
+     *
+     * Al primo ritaglio salva l'originale accanto al frame, così
+     * [ripristinaOriginale] può annullare l'operazione. Per l'anteprima live
+     * mentre l'utente muove gli slider usa invece [boxRitaglio], che è pura
+     * matematica e non tocca il file.
      */
     suspend fun ritaglia(percorso: String, sinistra: Double, alto: Double, destra: Double, basso: Double): Result<String> =
         chiama("ritaglia", percorso, sinistra, alto, destra, basso) { it.jsonPrimitive.content }
+
+    /** Riporta il frame all'originale salvato prima del primo ritaglio. */
+    suspend fun ripristinaOriginale(percorso: String): Result<String> =
+        chiama("ripristina_originale", percorso) { it.jsonPrimitive.content }
+
+    /** Indica se esiste l'originale pre-ritaglio, per abilitare il comando di ripristino. */
+    suspend fun haBackupOriginale(percorso: String): Result<Boolean> =
+        chiama("ha_backup_originale", percorso) { it.jsonPrimitive.boolean }
 
     /** Box di ritaglio in pixel [sinistra, alto, destra, basso], pura matematica (nessuna dipendenza Pillow). */
     suspend fun boxRitaglio(

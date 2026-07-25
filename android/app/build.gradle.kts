@@ -139,12 +139,7 @@ chaquopy {
 
         pip {
             // Stesso set di dipendenze runtime di requirements.txt, MENO
-            // streamlit (l'UI Android è nativa, non Streamlit) e MENO pillow
-            // (non serve: il ritaglio dei frame su Android è pensato per
-            // essere fatto lato Kotlin con android.graphics.Bitmap; la
-            // funzione ritaglia() del bridge resta comunque presente e
-            // restituirà un errore IGNOTO leggibile finché/se non si deciderà
-            // di installare pillow anche qui).
+            // streamlit (qui l'interfaccia è nativa).
             //
             // Versioni fissate per una build riproducibile: yt-dlp pubblica
             // release molto frequenti, quindi la pin va aggiornata di tanto
@@ -154,7 +149,17 @@ chaquopy {
             install("google-api-python-client==2.149.0")
             install("google-auth==2.35.0")
             install("google-auth-httplib2==0.2.0")
+            // google-auth-oauthlib serve anche se l'OAuth lo gestisce Kotlin:
+            // google_docs_helper importa InstalledAppFlow a livello di modulo.
             install("google-auth-oauthlib==1.2.1")
+            // Pillow serve al ritaglio dei frame: riusando video_helper.crop_frame()
+            // il risultato è identico a quello del desktop (stessa matematica,
+            // stessa qualità JPEG), invece di riscrivere il ritaglio in Kotlin e
+            // rischiare immagini diverse tra PC e telefono. È un pacchetto
+            // nativo: Chaquopy lo prende dal proprio repository di wheel
+            // precompilate, quindi va lasciato SENZA versione fissata (una pin
+            // che quel repository non ha farebbe fallire la build).
+            install("Pillow")
         }
     }
 
