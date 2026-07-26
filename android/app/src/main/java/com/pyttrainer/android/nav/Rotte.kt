@@ -39,7 +39,12 @@ sealed interface Rotta {
     @Serializable
     data object GeneraDocumento : Rotta
 
-    /** Segnaposto: il player video vero arriva in una fase successiva. */
+    /**
+     * Anteprima del video con media3/ExoPlayer. [url] è la PAGINA YouTube
+     * dell'esercizio (esercizio.video_url), non uno stream diretto: la
+     * risoluzione tramite yt-dlp avviene in PlayerViewModel, così la rotta
+     * resta stabile anche quando lo stream scade.
+     */
     @Serializable
     data class Player(val url: String) : Rotta
 }

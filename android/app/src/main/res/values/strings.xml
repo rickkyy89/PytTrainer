@@ -126,7 +126,12 @@
     <string name="genera_documento_pulsante_apri">Apri il documento</string>
     <string name="genera_documento_esercizi_inseriti_titolo">Esercizi inseriti in questa esecuzione</string>
 
-    <!-- PlayerScreen (segnaposto: il player video vero arriva in una fase successiva) -->
+    <!-- PlayerScreen: anteprima del video con media3/ExoPlayer -->
     <string name="player_titolo">Player video</string>
-    <string name="player_placeholder">Il player video integrato (ExoPlayer) arriva in una fase successiva. URL: %1$s</string>
+    <string name="player_risoluzione_in_corso">Risoluzione dello stream video…</string>
+    <string name="player_descrizione">Anteprima del video dimostrativo</string>
+    <string name="player_posizione">Posizione: %1$s</string>
+    <string name="player_suggerimento_timestamp">Metti in pausa sul fotogramma che ti interessa e riporta i secondi nei campi Timestamp START/FINISH del dettaglio esercizio.</string>
+    <string name="player_pulsante_riprova">Riprova</string>
+    <string name="player_errore_riproduzione">Riproduzione non riuscita: %1$s</string>
 </resources>
