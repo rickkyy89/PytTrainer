@@ -80,7 +80,16 @@ class GestoreAccessoGoogle(contesto: Context) {
             // un altro device, o prima di una disinstallazione) otterrebbe
             // altrimenti un access token senza refresh token, e dovrebbe
             // rifare login ogni ora invece che una volta sola.
-            .setAdditionalParameters(mapOf("access_type" to "offline", "prompt" to "consent"))
+            //
+            // I due parametri NON si impostano allo stesso modo: "prompt" è
+            // un parametro standard OpenID Connect, e AppAuth lo considera
+            // riservato: passarlo tra gli additional parameters fa fallire
+            // setAdditionalParameters() con IllegalArgumentException ("use
+            // the builder method instead") già alla costruzione della
+            // richiesta. "access_type" è invece un'estensione specifica di
+            // Google, che AppAuth non conosce e lascia passare.
+            .setPrompt(AuthorizationRequest.Prompt.CONSENT)
+            .setAdditionalParameters(mapOf("access_type" to "offline"))
             .build()
         return servizio.getAuthorizationRequestIntent(richiesta)
     }
