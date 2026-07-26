@@ -1218,3 +1218,63 @@ def test_richieste_cella_destra_stila_tutti_i_campi_compilati():
         r["updateTextStyle"]["range"]["endIndex"] > r["updateTextStyle"]["range"]["startIndex"]
         for r in stili
     )
+
+
+def _testo_cella_destra(esercizio: dict) -> str:
+    return "".join(testo for testo, _ in google_docs_helper._segmenti_cella_destra(esercizio))
+
+
+def test_cella_destra_layout_invariato_con_tutti_i_campi():
+    """
+    Guardia sul layout: con la scheda compilata per intero il testo della cella
+    deve restare esattamente quello di sempre (stesse etichette, stessa
+    spaziatura). Serve a garantire che l'omissione delle etichette sui campi
+    vuoti non abbia cambiato l'aspetto delle schede complete.
+    """
+    esercizio = {
+        "nome": "Squat",
+        "spiegazione": "Piega le ginocchia.",
+        "note": "Schiena neutra.",
+        "ripetizioni": "3x12",
+        "recupero": "90 SEC",
+    }
+
+    atteso = (
+        "SQUAT"
+        "\n\n" "SPIEGAZIONE & NOTE"
+        "\n" "Piega le ginocchia."
+        "\n" "NOTE: " "Schiena neutra."
+        "\n\n" "RIPETIZIONI"
+        "\n" "3x12"
+        "\n" "RECUPERO"
+        "\n" "90 SEC"
+    )
+    assert _testo_cella_destra(esercizio) == atteso
+
+
+def test_cella_destra_omette_le_etichette_dei_campi_vuoti():
+    """Un'etichetta senza valore sotto è rumore nel documento stampato: non va inserita."""
+    solo_nome = {"nome": "Squat", "spiegazione": "", "note": "", "ripetizioni": "", "recupero": ""}
+
+    testo = _testo_cella_destra(solo_nome)
+
+    assert testo == "SQUAT"
+    for etichetta in ("SPIEGAZIONE", "NOTE:", "RIPETIZIONI", "RECUPERO"):
+        assert etichetta not in testo
+
+
+def test_cella_destra_mostra_solo_le_sezioni_valorizzate():
+    """Caso misto: senza spiegazione/note resta il blocco ripetizioni+recupero, ben staccato dal nome."""
+    parziale = {"nome": "Squat", "spiegazione": "", "note": "", "ripetizioni": "3x12", "recupero": "90 SEC"}
+
+    testo = _testo_cella_destra(parziale)
+
+    assert testo == "SQUAT\n\nRIPETIZIONI\n3x12\nRECUPERO\n90 SEC"
+    assert "SPIEGAZIONE" not in testo and "NOTE:" not in testo
+
+
+def test_cella_destra_note_senza_spiegazione_mantiene_intestazione():
+    """L'intestazione copre entrambi i campi: con le sole note deve comunque comparire."""
+    solo_note = {"nome": "Squat", "spiegazione": "", "note": "Schiena neutra.", "ripetizioni": "", "recupero": ""}
+
+    assert _testo_cella_destra(solo_note) == "SQUAT\n\nSPIEGAZIONE & NOTE\nNOTE: Schiena neutra."

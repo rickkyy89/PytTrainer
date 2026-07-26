@@ -245,6 +245,13 @@ def _segmenti_cella_destra(esercizio: dict) -> list[tuple[str, dict]]:
     """
     Costruisce la lista di segmenti (testo, stile) che compongono il contenuto
     testuale della cella destra del modulo esercizio.
+
+    Ogni etichetta ("SPIEGAZIONE & NOTE", "NOTE:", "RIPETIZIONI", "RECUPERO")
+    compare SOLO se il campo corrispondente è valorizzato: un'etichetta seguita
+    dal nulla è rumore nel documento stampato, e la scheda finirebbe con voci
+    che sembrano dimenticate invece che semplicemente non applicabili.
+    Con tutti i campi compilati la sequenza è identica a prima (stessa
+    spaziatura), quindi le schede complete non cambiano aspetto.
     """
     nome = str(esercizio.get("nome", "")).upper()
     spiegazione = str(esercizio.get("spiegazione", ""))
@@ -252,24 +259,40 @@ def _segmenti_cella_destra(esercizio: dict) -> list[tuple[str, dict]]:
     ripetizioni = str(esercizio.get("ripetizioni", ""))
     recupero = str(esercizio.get("recupero", ""))
 
-    return [
-        (nome, {"bold": True, "size": 16}),
-        ("\n\n", {}),
-        ("SPIEGAZIONE & NOTE", {"bold": True, "size": 9}),
-        ("\n", {}),
-        (spiegazione, {"size": 9}),
-        ("\n", {}),
-        ("NOTE: ", {"bold": True, "size": 9}),
-        (note, {"size": 9}),
-        ("\n\n", {}),
-        ("RIPETIZIONI", {"bold": True, "size": 9}),
-        ("\n", {}),
-        (ripetizioni, {"bold": True, "size": 14, "color": COLORE_TEAL}),
-        ("\n", {}),
-        ("RECUPERO", {"bold": True, "size": 9}),
-        ("\n", {}),
-        (recupero, {"bold": True, "size": 14, "color": COLORE_TEAL}),
-    ]
+    stile_etichetta = {"bold": True, "size": 9}
+    stile_corpo = {"size": 9}
+    stile_valore = {"bold": True, "size": 14, "color": COLORE_TEAL}
+
+    segmenti: list[tuple[str, dict]] = [(nome, {"bold": True, "size": 16})]
+
+    # L'intestazione "SPIEGAZIONE & NOTE" copre entrambi i campi: si mostra se
+    # almeno uno dei due c'è.
+    if spiegazione or note:
+        segmenti += [("\n\n", {}), ("SPIEGAZIONE & NOTE", stile_etichetta)]
+        if spiegazione:
+            segmenti += [("\n", {}), (spiegazione, stile_corpo)]
+        if note:
+            segmenti += [("\n", {}), ("NOTE: ", stile_etichetta), (note, stile_corpo)]
+
+    if ripetizioni:
+        segmenti += [
+            ("\n\n", {}),
+            ("RIPETIZIONI", stile_etichetta),
+            ("\n", {}),
+            (ripetizioni, stile_valore),
+        ]
+
+    if recupero:
+        # Dopo il blocco ripetizioni basta un a-capo singolo (i due blocchi sono
+        # una coppia); se invece RECUPERO apre la sezione, serve lo stacco doppio.
+        segmenti += [
+            ("\n" if ripetizioni else "\n\n", {}),
+            ("RECUPERO", stile_etichetta),
+            ("\n", {}),
+            (recupero, stile_valore),
+        ]
+
+    return segmenti
 
 
 def _richieste_cella_destra(right_start: int, esercizio: dict) -> list[dict]:

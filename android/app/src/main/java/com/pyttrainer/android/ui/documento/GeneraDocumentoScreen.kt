@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -162,10 +163,24 @@ fun GeneraDocumentoScreen(
             // --- Riepilogo -------------------------------------------------------
             Text(stringResource(R.string.genera_documento_sezione_riepilogo), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.genera_documento_riepilogo_titolo, stato.titolo))
-            Text(stringResource(R.string.genera_documento_riepilogo_conteggio, stato.eserciziPronti, stato.eserciziTotali))
+            Text(
+                pluralStringResource(
+                    R.plurals.genera_documento_riepilogo_conteggio,
+                    // La forma singolare/plurale segue il NUMERO DI PRONTI (il
+                    // soggetto della frase), non il totale: "1 esercizio pronto
+                    // su 3 verrà inserito".
+                    stato.eserciziPronti,
+                    stato.eserciziPronti,
+                    stato.eserciziTotali,
+                )
+            )
             if (stato.eserciziEsclusi > 0) {
                 Text(
-                    text = stringResource(R.string.genera_documento_esercizi_esclusi, stato.eserciziEsclusi),
+                    text = pluralStringResource(
+                        R.plurals.genera_documento_esercizi_esclusi,
+                        stato.eserciziEsclusi,
+                        stato.eserciziEsclusi,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
