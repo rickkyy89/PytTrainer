@@ -95,8 +95,19 @@ fun SchedaScreen(
     val apriSchedaLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::apriScheda)
     }
+    // Il tipo MIME NON è "application/zip" pur essendo il bundle uno zip:
+    // DocumentsUI aggiunge al nome l'estensione che corrisponde al MIME
+    // dichiarato, quindi il file finiva salvato come "....scheda.zip" invece
+    // che "....scheda", contro la convenzione del progetto (un allenamento =
+    // un solo file .scheda, vedi CLAUDE.md). Con un MIME che Android non
+    // conosce non viene aggiunta alcuna estensione e il nome resta quello
+    // proposto. Non complica la riapertura: qui si sceglie il file con un
+    // filtro "*/*", e un .scheda arrivato da un'altra app viene comunque
+    // riconosciuto dagli intent-filter del manifest (i provider deducono il
+    // MIME dall'estensione, che per ".scheda" è sconosciuta e diventa
+    // application/octet-stream, già previsto).
     val salvaComeLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip")
+        ActivityResultContracts.CreateDocument("application/x-scheda")
     ) { uri -> uri?.let(viewModel::salvaCome) }
     val importaCsvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importaCsvAnteprima)
