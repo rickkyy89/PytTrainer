@@ -288,7 +288,15 @@ def _richieste_cella_destra(right_start: int, esercizio: dict) -> list[dict]:
     offset = 0
     for testo, stile in segmenti:
         lunghezza = len(testo)
-        if stile:
+        # Il controllo sulla lunghezza NON è ridondante: spiegazione, note,
+        # ripetizioni e recupero sono campi del manifest che possono benissimo
+        # essere vuoti, e un segmento vuoto non ha caratteri da stilare.
+        # Chiedere a Docs uno updateTextStyle su un range di lunghezza zero fa
+        # fallire l'INTERO batchUpdate con "Invalid requests[N].updateTextStyle:
+        # The range should not be empty."; siccome il popolamento della cella è
+        # un unico batch atomico, l'esercizio resterebbe con la sua tabella
+        # creata ma completamente vuota.
+        if stile and lunghezza > 0:
             inizio = right_start + offset
             fine = inizio + lunghezza
             richieste.append(_richiesta_stile_testo(inizio, fine, stile))

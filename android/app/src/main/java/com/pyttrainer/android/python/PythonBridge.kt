@@ -117,6 +117,13 @@ object PythonBridge {
                 val codice = busta["codice"]?.jsonPrimitive?.contentOrNull ?: "IGNOTO"
                 val messaggio = busta["messaggio"]?.jsonPrimitive?.contentOrNull
                     ?: "Errore sconosciuto restituito dal modulo Python."
+                // Un errore restituito da Python nell'envelope NON è un'eccezione,
+                // quindi senza questa riga non lascerebbe alcuna traccia: l'unico
+                // posto in cui comparirebbe è una Snackbar che sparisce dopo pochi
+                // secondi. Per operazioni lunghe (generazione del documento, che
+                // dura minuti) è facilissimo perdersela, e senza log non resta
+                // nulla da diagnosticare.
+                Log.w(TAG, "'$nomeFunzione' ha restituito un errore [$codice]: $messaggio")
                 Result.failure(ErroreScheda.daCodice(codice, messaggio))
             }
         } catch (eccezione: Exception) {

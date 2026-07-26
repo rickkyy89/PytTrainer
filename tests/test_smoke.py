@@ -1166,3 +1166,55 @@ def test_get_credentials_manual_flow_restituisce_url_autorizzazione(tmp_path, mo
         google_docs_helper.get_credentials_manual_flow()
 
     assert "https://" in str(errore.value)
+
+
+def test_richieste_cella_destra_salta_lo_stile_sui_campi_vuoti():
+    """
+    Un esercizio con campi opzionali vuoti non deve produrre updateTextStyle su
+    range di lunghezza zero: Google Docs risponde 400 ("The range should not be
+    empty") e rifiuta l'INTERO batchUpdate, lasciando la tabella dell'esercizio
+    creata ma vuota. Regressione osservata sull'app Android con un esercizio in
+    cui era compilato solo il nome.
+    """
+    esercizio_minimo = {
+        "nome": "Squat",
+        "spiegazione": "",
+        "note": "",
+        "ripetizioni": "",
+        "recupero": "",
+    }
+
+    richieste = google_docs_helper._richieste_cella_destra(1, esercizio_minimo)
+
+    range_vuoti = [
+        richiesta
+        for richiesta in richieste
+        if "updateTextStyle" in richiesta
+        and richiesta["updateTextStyle"]["range"]["startIndex"]
+        >= richiesta["updateTextStyle"]["range"]["endIndex"]
+    ]
+    assert range_vuoti == [], f"updateTextStyle con range vuoto: {range_vuoti}"
+
+    # I campi compilati devono comunque essere stilati: qui solo il nome.
+    assert any("updateTextStyle" in richiesta for richiesta in richieste)
+
+
+def test_richieste_cella_destra_stila_tutti_i_campi_compilati():
+    """Controprova: con tutti i campi valorizzati nessun segmento stilato viene perso."""
+    esercizio_completo = {
+        "nome": "Squat",
+        "spiegazione": "Piega le ginocchia.",
+        "note": "Schiena neutra.",
+        "ripetizioni": "3x12",
+        "recupero": "90 SEC",
+    }
+
+    richieste = google_docs_helper._richieste_cella_destra(1, esercizio_completo)
+    stili = [r for r in richieste if "updateTextStyle" in r]
+
+    # 9 segmenti con stile in _segmenti_cella_destra quando sono tutti pieni.
+    assert len(stili) == 9
+    assert all(
+        r["updateTextStyle"]["range"]["endIndex"] > r["updateTextStyle"]["range"]["startIndex"]
+        for r in stili
+    )
