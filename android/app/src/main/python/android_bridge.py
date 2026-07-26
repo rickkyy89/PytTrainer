@@ -201,6 +201,25 @@ def auto_estrai(json_esercizio: str, output_dir: str) -> dict:
     return {"esercizio": esercizio, "log": log}
 
 
+def _copia_contenuto(sorgente: str, destinazione: str) -> None:
+    """
+    Copia SOLO i byte del file, non i metadati.
+
+    shutil.copy2() (usata dall'app desktop) copia anche permessi e timestamp,
+    e per farlo chiama os.chmod() sulla destinazione: sullo storage privato di
+    un'app Android quella chiamata fallisce con "[Errno 13] Permission denied",
+    anche se la cartella è dell'app stessa e la copia dei dati è appena
+    riuscita. Il risultato era il peggiore possibile: il backup finiva sul
+    disco completo e integro, ma l'eccezione arrivava PRIMA del ritaglio, che
+    quindi non veniva mai eseguito (e il tentativo successivo, trovando il
+    backup già presente, sembrava funzionare: un fallimento solo al primo
+    tentativo, difficilissimo da riprodurre a mente).
+
+    Di un backup ci interessa il contenuto, non i permessi: copyfile basta.
+    """
+    shutil.copyfile(sorgente, destinazione)
+
+
 @risposta_json
 def ritaglia(percorso: str, sinistra: float, alto: float, destra: float, basso: float) -> str:
     """
@@ -220,7 +239,7 @@ def ritaglia(percorso: str, sinistra: float, alto: float, destra: float, basso: 
 
     backup = scheda_file.percorso_backup_frame(percorso)
     if not os.path.exists(backup):
-        shutil.copy2(percorso, backup)
+        _copia_contenuto(percorso, backup)
     return video_helper.crop_frame(percorso, sinistra, alto, destra, basso)
 
 
@@ -235,7 +254,7 @@ def ripristina_originale(percorso: str) -> str:
     backup = scheda_file.percorso_backup_frame(percorso)
     if not os.path.exists(backup):
         raise ValueError("Nessun originale da ripristinare: questo frame non è mai stato ritagliato.")
-    shutil.copy2(backup, percorso)
+    _copia_contenuto(backup, percorso)
     return percorso
 
 

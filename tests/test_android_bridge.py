@@ -265,3 +265,39 @@ def test_ritaglia_frame_inesistente(tmp_path):
     assert risposta["ok"] is False
     assert risposta["codice"] == "VALORE"
     assert "non esiste" in risposta["messaggio"]
+
+
+def test_ritaglia_e_ripristina_senza_poter_cambiare_i_metadati(tmp_path, monkeypatch):
+    """
+    Regressione osservata sul device: sullo storage privato di un'app Android
+    os.chmod() sulla destinazione di una copia fallisce con EPERM, anche se la
+    cartella è dell'app stessa. shutil.copy2() lo chiama sempre (copia anche
+    permessi e timestamp), quindi il backup finiva sul disco integro ma
+    l'eccezione arrivava prima del ritaglio, che non veniva mai eseguito.
+
+    Qui os.chmod e os.utime sono resi indisponibili per simulare quel vincolo:
+    ritaglio e ripristino devono funzionare lo stesso, perché di un backup
+    conta il contenuto, non i metadati.
+    """
+    import os as modulo_os
+
+    from PIL import Image
+
+    def _vietato(*_argomenti, **_parametri):
+        raise PermissionError(13, "Permission denied")
+
+    percorso = str(tmp_path / "esercizio_start.jpg")
+    Image.new("RGB", (200, 100), "blue").save(percorso)
+
+    monkeypatch.setattr(modulo_os, "chmod", _vietato)
+    monkeypatch.setattr(modulo_os, "utime", _vietato)
+
+    ritaglio = _decodifica(android_bridge.ritaglia(percorso, 10, 20, 5, 25))
+    assert ritaglio["ok"] is True, ritaglio
+    with Image.open(percorso) as ritagliata:
+        assert ritagliata.size == (170, 55)
+
+    ripristino = _decodifica(android_bridge.ripristina_originale(percorso))
+    assert ripristino["ok"] is True, ripristino
+    with Image.open(percorso) as ripristinata:
+        assert ripristinata.size == (200, 100)
