@@ -18,6 +18,14 @@ plugins {
 // install delle dipendenze in fase di build).
 val versionePython: String = providers.gradleProperty("pyttrainer.python.version").get()
 
+// Schema dell'URI di redirect OAuth registrato da AppAuth nel manifest (la
+// libreria dichiara la propria RedirectUriReceiverActivity con il placeholder
+// ${appAuthRedirectScheme}: senza un valore il manifest merger fallisce).
+// Configurabile da gradle.properties o local.properties, vedi il commento
+// accanto a pyttrainer.oauth.redirectScheme in gradle.properties.
+val schemaRedirectOAuth: String =
+    providers.gradleProperty("pyttrainer.oauth.redirectScheme").get()
+
 android {
     namespace = "com.pyttrainer.android"
     compileSdk = 36
@@ -30,6 +38,10 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Consumato dal manifest di AppAuth (net.openid:appauth): è lo schema
+        // dell'URI su cui Google rimanda il browser a fine login.
+        manifestPlaceholders["appAuthRedirectScheme"] = schemaRedirectOAuth
 
         // Python 3.11 supporta ancora le ABI a 32 bit, ma le omettiamo: nessun
         // device recente le richiede e ogni ABI in più appesantisce l'APK con
@@ -127,7 +139,12 @@ val copiaModuliPython by tasks.registering(Sync::class) {
 // Qualunque task il cui nome contenga "Python" (quelli generati dal plugin
 // Chaquopy: extractPython..., pipInstall..., ecc.) deve prima trovare i
 // moduli condivisi già copiati nella cartella generata.
-tasks.matching { it.name.contains("Python") }.configureEach {
+//
+// L'esclusione di copiaModuliPython stesso NON è cosmetica: anche il suo nome
+// contiene "Python", quindi senza il filtro il task dipenderebbe da sé stesso
+// e Gradle fallirebbe subito con "Circular dependency between the following
+// tasks: :app:copiaModuliPython".
+tasks.matching { it.name.contains("Python") && it.name != copiaModuliPython.name }.configureEach {
     dependsOn(copiaModuliPython)
 }
 
@@ -145,7 +162,11 @@ chaquopy {
             // release molto frequenti, quindi la pin va aggiornata di tanto
             // in tanto (yt-dlp smette di funzionare quando YouTube cambia il
             // proprio player interno).
-            install("yt-dlp==2025.06.30")
+            // Aggiornata il 2026-07-25: con la 2025.06.30 YouTube rispondeva
+            // "The following content is not available on this app" a ogni
+            // estrazione di informazioni (la ricerca invece funzionava
+            // ancora), rendendo impossibile estrarre i frame.
+            install("yt-dlp==2026.7.4")
             install("google-api-python-client==2.149.0")
             install("google-auth==2.35.0")
             install("google-auth-httplib2==0.2.0")
