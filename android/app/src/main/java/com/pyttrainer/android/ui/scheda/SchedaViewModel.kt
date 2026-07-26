@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pyttrainer.android.auth.GestoreAccessoGoogle
 import com.pyttrainer.android.dati.ArchivioSchede
 import com.pyttrainer.android.dati.Esercizio
 import com.pyttrainer.android.python.PythonBridge
@@ -45,6 +46,15 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
 
     private val archivio = ArchivioSchede(applicazione.applicationContext)
 
+    /**
+     * Unica istanza per tutta la vita di questo ViewModel (Activity-scoped,
+     * sopravvive alla navigazione tra schermate): GeneraDocumentoScreen la
+     * riceve da qui invece di crearne una propria, così un login fatto da lì
+     * si riflette subito nell'icona nuvola di [SchedaScreen] e viceversa
+     * (vedi [statoGoogleConnesso] sotto). Chiusa in [onCleared].
+     */
+    val gestoreAccessoGoogle = GestoreAccessoGoogle(applicazione.applicationContext)
+
     private val _stato = MutableStateFlow(SchedaUiState())
     val stato: StateFlow<SchedaUiState> = _stato.asStateFlow()
 
@@ -62,6 +72,16 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
 
     init {
         viewModelScope.launch { ricalcolaCartellaLavoro() }
+        viewModelScope.launch {
+            gestoreAccessoGoogle.connesso.collect { valore ->
+                _stato.update { it.copy(statoGoogleConnesso = valore) }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        gestoreAccessoGoogle.chiudi()
     }
 
     private fun percorsoBozza(): File =
@@ -339,4 +359,13 @@ class SchedaViewModel(applicazione: Application) : AndroidViewModel(applicazione
 
     /** Punto d'ingresso pubblico per i checkpoint dopo il ritaglio di un frame (Fase 6). */
     fun persistiCheckpointDopoRitaglio() = persistiCheckpointSeDisponibile()
+
+    /**
+     * Punto d'ingresso pubblico per il checkpoint dopo la generazione del
+     * documento: create_workout_document() scrive un nuovo state.json nella
+     * cartella di lavoro ad ogni esercizio inserito, e questo lo riporta
+     * dentro il bundle .scheda, altrimenti la ripresa dopo interruzione
+     * (CLAUDE.md) non funzionerebbe al prossimo caricamento.
+     */
+    fun persistiCheckpointDopoGenerazione() = persistiCheckpointSeDisponibile()
 }

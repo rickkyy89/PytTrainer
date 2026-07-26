@@ -18,13 +18,38 @@ plugins {
 // install delle dipendenze in fase di build).
 val versionePython: String = providers.gradleProperty("pyttrainer.python.version").get()
 
+// Client ID OAuth "Android" (Google Cloud Console), vedi il commento in
+// gradle.properties per come crearlo. Vuoto finché non è stato creato: in tal
+// caso GestoreAccessoGoogle.configurato() torna false e la UI lo spiega
+// invece di aprire un login destinato a fallire.
+val clientIdOAuth: String =
+    providers.gradleProperty("pyttrainer.oauth.clientId").getOrElse("")
+
 // Schema dell'URI di redirect OAuth registrato da AppAuth nel manifest (la
 // libreria dichiara la propria RedirectUriReceiverActivity con il placeholder
 // ${appAuthRedirectScheme}: senza un valore il manifest merger fallisce).
-// Configurabile da gradle.properties o local.properties, vedi il commento
-// accanto a pyttrainer.oauth.redirectScheme in gradle.properties.
-val schemaRedirectOAuth: String =
+//
+// DERIVATO dal client ID invece di essere configurato separatamente: un
+// client ID Android "123-abc.apps.googleusercontent.com" corrisponde SEMPRE
+// allo schema invertito "com.googleusercontent.apps.123-abc" (è una
+// convenzione fissa di Google, non un'euristica). Tenere le due proprietà
+// indipendenti è una fonte classica di disallineamento silenzioso: si
+// aggiorna il client ID e ci si scorda dello schema, il login fallisce con
+// redirect_uri_mismatch e il messaggio di Google non lascia capire perché.
+val schemaRedirectOAuth: String = if (clientIdOAuth.isNotBlank()) {
+    "com.googleusercontent.apps.${clientIdOAuth.substringBefore(".apps.googleusercontent.com")}"
+} else {
+    // Nessun client ancora configurato: resta il segnaposto storico (vedi
+    // gradle.properties), che permette comunque di compilare.
     providers.gradleProperty("pyttrainer.oauth.redirectScheme").get()
+}
+
+// URI di redirect completo per AuthorizationRequest (AppAuth vuole l'URI
+// intero, non solo lo schema): il path "/oauth2redirect" è arbitrario ma
+// deve combaciare tra qui e la configurazione del client su Google Cloud
+// Console solo per lo SCHEMA (Google non valida il path per i client
+// "Android", solo lo schema custom).
+val redirectUriOAuth: String = "$schemaRedirectOAuth:/oauth2redirect"
 
 android {
     namespace = "com.pyttrainer.android"
@@ -42,6 +67,12 @@ android {
         // Consumato dal manifest di AppAuth (net.openid:appauth): è lo schema
         // dell'URI su cui Google rimanda il browser a fine login.
         manifestPlaceholders["appAuthRedirectScheme"] = schemaRedirectOAuth
+
+        // Esposti a runtime per GestoreAccessoGoogle: niente file di
+        // configurazione separato da leggere/parsare, il valore Gradle
+        // diventa direttamente una costante Kotlin generata.
+        buildConfigField("String", "OAUTH_CLIENT_ID", "\"$clientIdOAuth\"")
+        buildConfigField("String", "OAUTH_REDIRECT_URI", "\"$redirectUriOAuth\"")
 
         // Python 3.11 supporta ancora le ABI a 32 bit, ma le omettiamo: nessun
         // device recente le richiede e ogni ABI in più appesantisce l'APK con
@@ -82,6 +113,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // per OAUTH_CLIENT_ID/OAUTH_REDIRECT_URI in BuildConfig.
     }
 
     // yt-dlp, google-api-python-client e Chaquopy stesso imbarcano più file

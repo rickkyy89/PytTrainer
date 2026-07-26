@@ -94,9 +94,27 @@
     <string name="ritaglio_ripristinato">Originale ripristinato.</string>
     <string name="ritaglio_anteprima_desc">Anteprima del ritaglio</string>
 
-    <!-- GeneraDocumentoScreen (segnaposto: la generazione vera arriva in una fase successiva) -->
+    <!-- GeneraDocumentoScreen: accesso Google (AppAuth) e generazione del documento su Google Docs. -->
     <string name="genera_documento_titolo">Genera Google Doc</string>
-    <string name="genera_documento_placeholder">La generazione del documento su Google Docs arriva in una fase successiva. Da qui potrai avviarla una volta collegato l\'accesso Google.</string>
+    <string name="genera_documento_sezione_account">Account Google</string>
+    <string name="genera_documento_non_configurato">Manca ancora la configurazione del client OAuth in questa build: va creato un client OAuth di tipo \"Android\" su Google Cloud Console e il suo ID va inserito come pyttrainer.oauth.clientId in gradle.properties (o local.properties). Finché non viene fatto, l\'accesso Google non è disponibile.</string>
+    <string name="genera_documento_connesso">Account Google collegato</string>
+    <string name="genera_documento_non_connesso">Nessun account Google collegato</string>
+    <string name="genera_documento_pulsante_collega">Collega account Google</string>
+    <string name="genera_documento_pulsante_disconnetti">Disconnetti</string>
+    <string name="genera_documento_accesso_completato">Account Google collegato.</string>
+    <string name="genera_documento_disconnesso">Account Google disconnesso.</string>
+    <string name="genera_documento_sezione_riepilogo">Riepilogo</string>
+    <string name="genera_documento_riepilogo_titolo">Titolo: %1$s</string>
+    <string name="genera_documento_riepilogo_conteggio">%1$d esercizi pronti su %2$d verranno inseriti nel documento</string>
+    <string name="genera_documento_esercizi_esclusi">%1$d esercizi esclusi: mancano ancora i frame START e/o FINISH</string>
+    <string name="genera_documento_nessun_esercizio_pronto">Nessun esercizio pronto: estrai prima i frame START e FINISH di almeno un esercizio.</string>
+    <string name="genera_documento_ripresa_avviso">Esiste già un documento generato in precedenza per questa scheda: la generazione riprenderà da lì, aggiungendo solo gli esercizi mancanti.</string>
+    <string name="genera_documento_pulsante_genera">Genera documento</string>
+    <string name="genera_documento_generazione_in_corso">Generazione in corso: può richiedere alcuni minuti, ogni esercizio carica due immagini su Drive.</string>
+    <string name="genera_documento_risultato_titolo">Documento generato</string>
+    <string name="genera_documento_pulsante_apri">Apri il documento</string>
+    <string name="genera_documento_esercizi_inseriti_titolo">Esercizi inseriti in questa esecuzione</string>
 
     <!-- PlayerScreen (segnaposto: il player video vero arriva in una fase successiva) -->
     <string name="player_titolo">Player video</string>

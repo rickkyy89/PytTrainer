@@ -30,7 +30,12 @@ sealed interface Rotta {
     @Serializable
     data class Ritaglio(val uid: String, val tipo: String, val percorso: String) : Rotta
 
-    /** Segnaposto: la generazione vera del Google Doc arriva in una fase successiva. */
+    /**
+     * Generazione del Google Doc (accesso Google via AppAuth + PythonBridge.generaDocumento).
+     * Nessun parametro: esercizi/titolo/cartella di lavoro vengono letti da
+     * [com.pyttrainer.android.ui.scheda.SchedaViewModel] al momento della
+     * navigazione (vedi MainActivity), non serializzati nella rotta.
+     */
     @Serializable
     data object GeneraDocumento : Rotta
 

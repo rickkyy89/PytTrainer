@@ -112,7 +112,14 @@ private fun PytTrainerApp(uriSchedaIniziale: Uri? = null) {
         }
 
         composable<Rotta.GeneraDocumento> {
-            GeneraDocumentoScreen(onIndietro = { navController.popBackStack() })
+            GeneraDocumentoScreen(
+                esercizi = statoScheda.esercizi,
+                titolo = statoScheda.titolo,
+                cartellaLavoro = statoScheda.cartellaLavoro,
+                gestoreAccessoGoogle = schedaViewModel.gestoreAccessoGoogle,
+                onIndietro = { navController.popBackStack() },
+                onDocumentoGenerato = { schedaViewModel.persistiCheckpointDopoGenerazione() },
+            )
         }
 
         composable<Rotta.Player> { backStackEntry ->
