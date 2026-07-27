@@ -1,0 +1,29 @@
+name: Python
+
+# Suite di test del progetto desktop (Streamlit + moduli condivisi con
+# Android). Gira su ogni push e ogni pull request: veloce (nessuna rete reale
+# nei test, vedi tests/) e non richiede l'SDK Android.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repository
+        uses: actions/checkout@v4
+
+      - name: Imposta Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installa ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Installa le dipendenze
+        run: pip install -r requirements-dev.txt
+
+      - name: Esegui i test
+        run: pytest tests/ -v

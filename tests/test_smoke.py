@@ -34,11 +34,29 @@ from csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_cs
 from google_docs_helper import create_workout_document, update_exercise_media  # noqa: E402
 from video_helper import (  # noqa: E402
     FrameExtractionError,
+    backend_frame_attivo,
     box_ritaglio,
     crop_frame,
     extract_frame,
+    extract_start_finish_frames,
     filtra_risultati_pertinenti,
+    get_stream_url,
+    imposta_backend_frame,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ripristina_backend_frame_ffmpeg():
+    """
+    Autouse: garantisce che imposta_backend_frame(None) (backend ffmpeg di
+    default) sia ripristinato dopo ogni test, anche se un test fallisce a
+    metà. _BACKEND_FRAME è uno stato di modulo globale: senza questo
+    ripristino, un test che inietta un backend fittizio contaminerebbe i
+    test successivi (es. test_extract_frame_da_video_sintetico, che si
+    aspetta il vero ffmpeg).
+    """
+    yield
+    imposta_backend_frame(None)
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +182,53 @@ def test_parse_esercizi_csv_11_colonne_valori_letti():
     assert esercizio["ts_finish"] == 24.5
     assert esercizio["frame_start"] == "frames/squat_start.jpg"
     assert esercizio["frame_finish"] == "frames/squat_finish.jpg"
+
+
+def test_parse_esercizi_csv_da_bytesio():
+    """Caso d'uso reale di scheda_file._estrai_da_zip: il manifest viene letto
+    da un io.BytesIO (contenuto binario del membro zip), non da testo."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    esercizi = parse_esercizi_csv(io.BytesIO(csv_testo.encode("utf-8")))
+
+    assert len(esercizi) == 1
+    assert esercizi[0]["nome"] == "Squat"
+    assert esercizi[0]["ripetizioni"] == "3x12"
+
+
+def test_parse_esercizi_csv_non_consuma_ne_chiude_il_file_like():
+    """app.py passa a parse_esercizi_csv l'oggetto di st.file_uploader, che
+    Streamlit riusa a ogni rerun: leggerlo non deve né chiuderlo né lasciarlo
+    a EOF, altrimenti la seconda lettura fallisce o vede un file vuoto."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    caricato = io.BytesIO(csv_testo.encode("utf-8"))
+
+    primo = parse_esercizi_csv(caricato)
+    assert not caricato.closed
+    secondo = parse_esercizi_csv(caricato)
+
+    assert primo == secondo
+    assert len(secondo) == 1
+    assert secondo[0]["nome"] == "Squat"
+
+
+def test_parse_esercizi_csv_tollera_bom():
+    """Un CSV con BOM UTF-8 iniziale (es. esportato da Excel) deve essere
+    letto correttamente, senza che il BOM finisca appiccicato a 'Nome'."""
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        "Squat,Scendi e risali,Attenzione alla schiena,3x12,90 SEC\n"
+    )
+    dati_con_bom = b"\xef\xbb\xbf" + csv_testo.encode("utf-8")
+    esercizi = parse_esercizi_csv(io.BytesIO(dati_con_bom))
+
+    assert len(esercizi) == 1
+    assert esercizi[0]["nome"] == "Squat"
 
 
 def test_parse_esercizi_csv_timestamp_non_numerico():
@@ -461,6 +526,150 @@ def test_crop_frame_percentuali_non_valide(tmp_path):
 
     with pytest.raises(ValueError):
         crop_frame(str(percorso_originale), sinistra_pct=45, destra_pct=45)
+
+
+# ---------------------------------------------------------------------------
+# Test del backend di estrazione frame sostituibile (innesto Android)
+# ---------------------------------------------------------------------------
+
+def _scrivi_jpeg_finto(percorso):
+    """Scrive in 'percorso' un file con i soli magic bytes JPEG, sufficiente
+    per i controlli 'file non vuoto' di extract_frame()."""
+    with open(percorso, "wb") as file_immagine:
+        file_immagine.write(b"\xff\xd8\xff\xe0finto_jpeg")
+
+
+def test_imposta_backend_frame_sostituisce_ffmpeg(tmp_path, monkeypatch):
+    chiamate = []
+
+    def _backend_finto(stream_url, timestamp_seconds, output_path):
+        chiamate.append((stream_url, timestamp_seconds, output_path))
+        _scrivi_jpeg_finto(output_path)
+        return output_path
+
+    assert backend_frame_attivo() is None
+    imposta_backend_frame(_backend_finto)
+    assert backend_frame_attivo() is _backend_finto
+
+    output_path = tmp_path / "out.jpg"
+    risultato = extract_frame("https://stream.fittizio", 12.0, str(output_path))
+
+    assert risultato == str(output_path)
+    assert output_path.exists()
+    assert chiamate == [("https://stream.fittizio", 12.0, str(output_path))]
+
+    # extract_start_finish_frames deve usare lo stesso backend end-to-end,
+    # producendo i due file con i nomi convenzionali <slug>_start/_finish.jpg.
+    monkeypatch.setattr(video_helper, "get_stream_url", lambda video_url, formato=None: "https://stream.fittizio")
+
+    percorso_start, percorso_finish = extract_start_finish_frames(
+        "https://youtu.be/finto", 5.0, 20.0, "Squat", output_dir=str(tmp_path / "frames")
+    )
+
+    assert os.path.basename(percorso_start) == "squat_start.jpg"
+    assert os.path.basename(percorso_finish) == "squat_finish.jpg"
+    assert os.path.exists(percorso_start)
+    assert os.path.exists(percorso_finish)
+
+
+def test_backend_frame_errore_diventa_frame_extraction_error(tmp_path):
+    def _backend_che_fallisce(stream_url, timestamp_seconds, output_path):
+        raise RuntimeError("errore nativo Android fittizio")
+
+    imposta_backend_frame(_backend_che_fallisce)
+
+    output_path = tmp_path / "out.jpg"
+    with pytest.raises(FrameExtractionError):
+        extract_frame("https://stream.fittizio", 3.0, str(output_path))
+
+
+def test_backend_frame_file_vuoto_fallisce(tmp_path):
+    def _backend_file_vuoto(stream_url, timestamp_seconds, output_path):
+        # Crea il file ma senza scriverci nulla dentro: dev'essere trattato
+        # come fallimento esattamente come per il backend ffmpeg.
+        open(output_path, "wb").close()
+        return output_path
+
+    imposta_backend_frame(_backend_file_vuoto)
+
+    output_path = tmp_path / "out.jpg"
+    with pytest.raises(FrameExtractionError):
+        extract_frame("https://stream.fittizio", 3.0, str(output_path))
+
+
+# ---------------------------------------------------------------------------
+# Test di get_stream_url con formato personalizzato
+# ---------------------------------------------------------------------------
+
+class _FakeYoutubeDLFormato:
+    """Sostituto minimale di yt_dlp.YoutubeDL che registra le opzioni ricevute
+    e restituisce un url fittizio, per verificare quale 'format' viene passato."""
+
+    opzioni_ricevute = []
+
+    def __init__(self, opzioni):
+        type(self).opzioni_ricevute.append(opzioni)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def extract_info(self, video_url, download=False):
+        return {"url": "https://stream.fittizio/video"}
+
+
+def test_get_stream_url_formato_personalizzato(monkeypatch):
+    _FakeYoutubeDLFormato.opzioni_ricevute = []
+    monkeypatch.setattr(video_helper.yt_dlp, "YoutubeDL", _FakeYoutubeDLFormato)
+
+    get_stream_url("https://youtu.be/abc", formato="worst[ext=mp4]")
+    assert _FakeYoutubeDLFormato.opzioni_ricevute[-1]["format"] == "worst[ext=mp4]"
+
+    get_stream_url("https://youtu.be/abc")
+    assert (
+        _FakeYoutubeDLFormato.opzioni_ricevute[-1]["format"]
+        == "best[ext=mp4][height<=720]/best[height<=720]/best"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test di importabilità di video_helper senza Pillow installato
+# ---------------------------------------------------------------------------
+
+def test_video_helper_importabile_senza_pillow():
+    """
+    Pillow non è disponibile su Chaquopy: video_helper deve restare
+    importabile (import PIL spostato dentro crop_frame) e box_ritaglio(),
+    che è pura matematica, deve funzionare comunque. Ripristina sys.modules
+    e il modulo video_helper reimportato al termine del test.
+    """
+    # Volutamente in un sottoprocesso: simulare l'assenza di PIL nel processo
+    # dei test richiederebbe di ricaricare video_helper, e il reload rimpiazza
+    # le classi del modulo (FrameExtractionError & co.) con oggetti nuovi,
+    # diversi da quelli importati in cima a questo file. Ne risulterebbero
+    # fallimenti dipendenti dall'ordine di esecuzione dei test. Un processo
+    # separato isola tutto senza toccare lo stato globale di questo.
+    programma = (
+        "import sys\n"
+        # Un valore None in sys.modules forza ImportError su "from PIL import ...",
+        # simulando l'assenza del pacchetto.
+        "sys.modules['PIL'] = None\n"
+        "import video_helper\n"
+        "assert video_helper.box_ritaglio((200, 100), 10, 20, 5, 25) == (20, 20, 190, 75)\n"
+        "print('ok')\n"
+    )
+    risultato = subprocess.run(
+        [sys.executable, "-c", programma],
+        cwd=str(RADICE_PROGETTO),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
+
+    assert risultato.returncode == 0, risultato.stderr.decode("utf-8", errors="ignore")
+    assert risultato.stdout.decode("utf-8", errors="ignore").strip().endswith("ok")
 
 
 # ---------------------------------------------------------------------------
@@ -957,3 +1166,115 @@ def test_get_credentials_manual_flow_restituisce_url_autorizzazione(tmp_path, mo
         google_docs_helper.get_credentials_manual_flow()
 
     assert "https://" in str(errore.value)
+
+
+def test_richieste_cella_destra_salta_lo_stile_sui_campi_vuoti():
+    """
+    Un esercizio con campi opzionali vuoti non deve produrre updateTextStyle su
+    range di lunghezza zero: Google Docs risponde 400 ("The range should not be
+    empty") e rifiuta l'INTERO batchUpdate, lasciando la tabella dell'esercizio
+    creata ma vuota. Regressione osservata sull'app Android con un esercizio in
+    cui era compilato solo il nome.
+    """
+    esercizio_minimo = {
+        "nome": "Squat",
+        "spiegazione": "",
+        "note": "",
+        "ripetizioni": "",
+        "recupero": "",
+    }
+
+    richieste = google_docs_helper._richieste_cella_destra(1, esercizio_minimo)
+
+    range_vuoti = [
+        richiesta
+        for richiesta in richieste
+        if "updateTextStyle" in richiesta
+        and richiesta["updateTextStyle"]["range"]["startIndex"]
+        >= richiesta["updateTextStyle"]["range"]["endIndex"]
+    ]
+    assert range_vuoti == [], f"updateTextStyle con range vuoto: {range_vuoti}"
+
+    # I campi compilati devono comunque essere stilati: qui solo il nome.
+    assert any("updateTextStyle" in richiesta for richiesta in richieste)
+
+
+def test_richieste_cella_destra_stila_tutti_i_campi_compilati():
+    """Controprova: con tutti i campi valorizzati nessun segmento stilato viene perso."""
+    esercizio_completo = {
+        "nome": "Squat",
+        "spiegazione": "Piega le ginocchia.",
+        "note": "Schiena neutra.",
+        "ripetizioni": "3x12",
+        "recupero": "90 SEC",
+    }
+
+    richieste = google_docs_helper._richieste_cella_destra(1, esercizio_completo)
+    stili = [r for r in richieste if "updateTextStyle" in r]
+
+    # 9 segmenti con stile in _segmenti_cella_destra quando sono tutti pieni.
+    assert len(stili) == 9
+    assert all(
+        r["updateTextStyle"]["range"]["endIndex"] > r["updateTextStyle"]["range"]["startIndex"]
+        for r in stili
+    )
+
+
+def _testo_cella_destra(esercizio: dict) -> str:
+    return "".join(testo for testo, _ in google_docs_helper._segmenti_cella_destra(esercizio))
+
+
+def test_cella_destra_layout_invariato_con_tutti_i_campi():
+    """
+    Guardia sul layout: con la scheda compilata per intero il testo della cella
+    deve restare esattamente quello di sempre (stesse etichette, stessa
+    spaziatura). Serve a garantire che l'omissione delle etichette sui campi
+    vuoti non abbia cambiato l'aspetto delle schede complete.
+    """
+    esercizio = {
+        "nome": "Squat",
+        "spiegazione": "Piega le ginocchia.",
+        "note": "Schiena neutra.",
+        "ripetizioni": "3x12",
+        "recupero": "90 SEC",
+    }
+
+    atteso = (
+        "SQUAT"
+        "\n\n" "SPIEGAZIONE & NOTE"
+        "\n" "Piega le ginocchia."
+        "\n" "NOTE: " "Schiena neutra."
+        "\n\n" "RIPETIZIONI"
+        "\n" "3x12"
+        "\n" "RECUPERO"
+        "\n" "90 SEC"
+    )
+    assert _testo_cella_destra(esercizio) == atteso
+
+
+def test_cella_destra_omette_le_etichette_dei_campi_vuoti():
+    """Un'etichetta senza valore sotto è rumore nel documento stampato: non va inserita."""
+    solo_nome = {"nome": "Squat", "spiegazione": "", "note": "", "ripetizioni": "", "recupero": ""}
+
+    testo = _testo_cella_destra(solo_nome)
+
+    assert testo == "SQUAT"
+    for etichetta in ("SPIEGAZIONE", "NOTE:", "RIPETIZIONI", "RECUPERO"):
+        assert etichetta not in testo
+
+
+def test_cella_destra_mostra_solo_le_sezioni_valorizzate():
+    """Caso misto: senza spiegazione/note resta il blocco ripetizioni+recupero, ben staccato dal nome."""
+    parziale = {"nome": "Squat", "spiegazione": "", "note": "", "ripetizioni": "3x12", "recupero": "90 SEC"}
+
+    testo = _testo_cella_destra(parziale)
+
+    assert testo == "SQUAT\n\nRIPETIZIONI\n3x12\nRECUPERO\n90 SEC"
+    assert "SPIEGAZIONE" not in testo and "NOTE:" not in testo
+
+
+def test_cella_destra_note_senza_spiegazione_mantiene_intestazione():
+    """L'intestazione copre entrambi i campi: con le sole note deve comunque comparire."""
+    solo_note = {"nome": "Squat", "spiegazione": "", "note": "Schiena neutra.", "ripetizioni": "", "recupero": ""}
+
+    assert _testo_cella_destra(solo_note) == "SQUAT\n\nSPIEGAZIONE & NOTE\nNOTE: Schiena neutra."

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Primo piano minimale: un manubrio stilizzato, giusto per non lasciare
+     l'icona vuota in questa fase di scheletro (sarà rifinita più avanti). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,48h6v12h-6z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,48h6v12h-6z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,44h4v20h-4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M86,44h4v20h-4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,52h36v4h-36z" />
+</vector>

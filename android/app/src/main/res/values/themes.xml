@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tema Material 3 minimale: l'app usa Compose (Material3 via
+         androidx.compose.material3), questo tema serve solo come finestra
+         di avvio/splash prima che Compose prenda il controllo. -->
+    <style name="Theme.PytTrainer" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

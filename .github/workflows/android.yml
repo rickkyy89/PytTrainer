@@ -1,0 +1,56 @@
+name: Android
+
+# Solo manuale: niente build automatiche a ogni push. La build Android
+# impacchetta un intero interprete Python (Chaquopy) più il pip install
+# delle dipendenze runtime: è lenta e va lanciata quando serve davvero un
+# APK, non a ogni commit.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  assemble-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repository
+        uses: actions/checkout@v4
+
+      - name: Imposta JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Imposta Python 3.11
+        # Deve corrispondere ESATTAMENTE alla versione dichiarata in
+        # android/gradle.properties (pyttrainer.python.version): Chaquopy usa
+        # l'interprete Python della macchina di build per il pip install
+        # delle dipendenze imbarcate nell'APK.
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Imposta l'SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Imposta Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compila l'APK di debug
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Stampa l'impronta SHA-1 del keystore di debug
+        # Keystore condiviso e committato (android/keystore/debug.keystore):
+        # la SHA-1 qui stampata deve coincidere con quella registrata su
+        # Google Cloud Console per l'origine OAuth di questa app.
+        run: |
+          keytool -list -v \
+            -keystore android/keystore/debug.keystore \
+            -storepass android -alias androiddebugkey \
+            | grep -A1 "SHA1:"
+
+      - name: Carica l'APK come artefatto
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyttrainer-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

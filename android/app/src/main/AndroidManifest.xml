@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Ricerca YouTube (yt-dlp), estrazione stream, chiamate alle API Google
+         Docs/Drive: l'app parla sempre e solo con host HTTPS, quindi non
+         serve android:usesCleartextTraffic. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:name=".PytTrainerApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PytTrainer">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.PytTrainer">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Apertura di un file .scheda condiviso da un'altra app (Drive, file
+                 manager, email, ...). I content provider spesso non espongono
+                 l'estensione del file nel path dell'Uri content://, quindi il modo
+                 affidabile di intercettarli è per mimeType (application/zip: un
+                 .scheda è tecnicamente uno zip; application/octet-stream: il
+                 fallback più comune per estensioni sconosciute). Il terzo filtro
+                 copre invece il caso, più raro ma ancora in giro, di un Uri
+                 file:// con estensione nel path. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.scheda" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>
