@@ -2,9 +2,18 @@ credentials.json
 service_account.json
 token.json
 frames/
+*.state.json
+*.scheda
+*.scheda.tmp
+*.scheda.work/
 venv/
 .venv/
 __pycache__/
 .pytest_cache/
 *.pyc
 .streamlit/secrets.toml
+
+# Runtime artifacts
+*.log
+state/
+scheda.csv

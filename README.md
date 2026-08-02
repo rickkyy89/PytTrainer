@@ -19,6 +19,11 @@ Il flusso di lavoro tipico è:
 4. Genera il Google Doc: verrà creato un documento A4 con un modulo per
    ciascun esercizio pronto (cioè con entrambi i fotogrammi estratti).
 
+In qualsiasi momento puoi salvare la scheda su CSV (o scaricarla) dalla
+sidebar per riprendere il lavoro più tardi, riordinare gli esercizi con le
+frecce su/giù, e ritagliare (crop) i fotogrammi START/FINISH direttamente
+dall'anteprima, con possibilità di ripristinare l'originale.
+
 L'app funziona interamente in locale: i video non vengono mai scaricati per
 intero, viene solo letto lo stream necessario a estrarre i due fotogrammi.
 
@@ -113,8 +118,8 @@ L'app si aprirà nel browser all'indirizzo indicato in console (di norma
 
 ## Formato del file CSV
 
-Per il caricamento massivo degli esercizi, il CSV deve contenere esattamente
-queste colonne (l'ordine non è rilevante):
+Per il caricamento massivo degli esercizi, il CSV deve contenere almeno
+queste 5 colonne obbligatorie (l'ordine non è rilevante):
 
 | Nome | Spiegazione | Note | Ripetizioni | Recupero |
 |------|-------------|------|-------------|----------|
@@ -122,6 +127,69 @@ queste colonne (l'ordine non è rilevante):
 
 Un file di esempio è incluso nel progetto: [`esercizi_example.csv`](esercizi_example.csv)
 (scaricabile anche direttamente dall'interfaccia dell'app).
+
+## Formato CSV esteso (manifest)
+
+Oltre alle 5 colonne obbligatorie, il CSV supporta 6 colonne opzionali che lo
+trasformano in un manifest persistente della scheda: se assenti (o vuote) il
+comportamento resta identico a quello del CSV minimo (ricerca automatica del
+video, euristica sui timestamp). Sono pensate soprattutto per l'uso
+automatico da agente (vedi `CLAUDE.md`), tramite `video_helper.scegli_ed_estrai`
+e `csv_utils.scrivi_esercizi_csv`, ma un CSV così arricchito può anche essere
+caricato dall'interfaccia Streamlit: i valori precompilano URL video,
+timestamp e anteprima dei frame (se i file esistono ancora su disco).
+
+| Colonna | Obbligatoria | Descrizione |
+|---|---|---|
+| `Gruppo` | no | Nome della sezione/sottogruppo (es. `Attivazione`). Se assente, tutti gli esercizi finiscono in un gruppo implicito senza intestazione. |
+| `VideoURL` | no | URL YouTube scelto/forzato per l'esercizio. Se presente, salta la ricerca automatica e usa direttamente questo video. |
+| `TimestampStart` | no | Secondo del frame START. Se assente, si applica l'euristica del 10% della durata del video. |
+| `TimestampFinish` | no | Secondo del frame FINISH. Se assente, euristica del 50% della durata. |
+| `FrameStartPath` / `FrameFinishPath` | no | Percorso dei frame già estratti in una run precedente. Se presenti e i file esistono ancora, la ri-estrazione viene saltata. |
+
+Dopo l'elaborazione il CSV va riscritto arricchito (`scrivi_esercizi_csv`) con
+i valori effettivamente usati: diventa così il "salvataggio" della scheda,
+riaprirlo e ri-lanciare la generazione dà lo stesso risultato (idempotenza),
+e modificare a mano una singola cella (es. `VideoURL` o i timestamp) permette
+di correggere un solo esercizio senza rifare tutto da capo.
+
+## Ripresa e stato
+
+`create_workout_document(..., state_path=...)` salva un file di stato JSON
+(convenzionalmente `<slug_titolo>.state.json`, vedi
+`google_docs_helper.percorso_stato_per_titolo`) con il `doc_id` del
+documento e l'elenco degli esercizi già inseriti (nome, slug, id del named
+range che li àncora nel documento, gruppo). Se l'esecuzione si interrompe a
+metà, rilanciare la generazione con lo stesso `state_path` riusa il
+documento esistente e aggiunge solo gli esercizi mancanti, invece di
+rigenerare tutto da zero.
+
+Questi file sono esclusi da git (vedi `.gitignore`, pattern `*.state.json`)
+perché legati a un documento Google specifico. Per ripartire da zero con un
+nuovo documento, basta cancellare il file di stato corrispondente: alla
+generazione successiva ne verrà creato uno nuovo insieme a un nuovo Google
+Doc.
+
+Lo stesso file di stato serve anche per `update_exercise_media()`, che
+sostituisce solo i due frame (START/FINISH) di un esercizio già presente nel
+documento, individuandolo tramite il named range salvato nello stato.
+
+## Autenticazione in ambienti senza browser
+
+`get_credentials()` presuppone un browser locale disponibile (usa
+`flow.run_local_server()`). In un contesto di esecuzione remota/headless
+(agente, CI, sandbox) questo non è possibile: usa invece
+`google_docs_helper.get_credentials_manual_flow()`, che separa il flusso in
+due chiamate:
+
+1. `get_credentials_manual_flow()` (senza argomenti): solleva
+   `GoogleAuthError` il cui messaggio contiene l'URL di autorizzazione da
+   aprire in un browser qualsiasi (anche su un altro dispositivo).
+2. Dopo aver autorizzato l'accesso, si viene reindirizzati a un URL del tipo
+   `http://localhost/?code=...` (va bene copiarlo anche se la pagina non si
+   carica). Richiamare `get_credentials_manual_flow(auth_code=<code o URL
+   copiato>)` completa il login e salva `token.json`, esattamente come dopo
+   un login interattivo riuscito con `get_credentials()`.
 
 ## Struttura del progetto
 
