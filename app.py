@@ -28,6 +28,7 @@ from video_helper import (
     box_ritaglio,
     crop_frame,
     extract_start_finish_frames,
+    importa_frame_da_immagine,
     search_youtube,
 )
 
@@ -233,9 +234,187 @@ def _ui_ritaglio_frame(percorso_frame, uid, suffisso):
                 st.rerun()
 
 
+def _importa_immagine(indice, suffisso):
+    """
+    Chiede un'immagine con il file browser nativo e la usa come frame
+    START/FINISH dell'esercizio all'indice dato, al posto di quello estratto
+    dal video (l'immagine viene convertita in JPEG dentro la cartella frames
+    del bundle). Fa il rerun per mostrare subito l'anteprima e il ritaglio.
+    """
+    percorso = _apri_file_nativo(
+        [
+            ("Immagini", ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.gif")),
+            ("Tutti i file", "*.*"),
+        ],
+        f"Scegli l'immagine {suffisso.upper()}",
+    )
+    if percorso is None:
+        st.error("File browser non disponibile. Avvia l'app in locale.")
+        return
+    if not percorso:
+        return
+
+    esercizio = st.session_state["esercizi"][indice]
+    try:
+        destinazione = importa_frame_da_immagine(
+            percorso,
+            esercizio["nome"] or f"esercizio_{indice + 1}",
+            suffisso,
+            output_dir=cartella_frames(st.session_state["cartella_lavoro"]),
+        )
+    except (FrameExtractionError, ValueError) as errore:
+        st.error(str(errore))
+    except Exception as errore:
+        st.error(f"Errore imprevisto durante l'importazione dell'immagine: {errore}")
+    else:
+        st.session_state["esercizi"][indice][f"frame_{suffisso}"] = destinazione
+        st.rerun()
+
+
 def _inserisci_esercizi(posizione, nuovi):
     """Inserisce la lista 'nuovi' nella lista esercizi alla 'posizione' data."""
     st.session_state["esercizi"][posizione:posizione] = nuovi
+
+
+def _lista_riordinata(lista, indici, posizione):
+    """
+    Ritorna una copia di 'lista' in cui gli elementi agli 'indici' dati sono
+    spostati in blocco (mantenendo il loro ordine relativo) in modo che il
+    primo finisca alla 'posizione' 1-based richiesta: tutti gli altri scorrono
+    di conseguenza, sopra o sotto a seconda della direzione dello spostamento.
+    La posizione viene riportata nei limiti validi della lista.
+    """
+    origine = sorted(set(indici))
+    da_spostare = [lista[i] for i in origine]
+    resto = [e for i, e in enumerate(lista) if i not in set(origine)]
+    destinazione = max(0, min(int(posizione) - 1, len(resto)))
+    return resto[:destinazione] + da_spostare + resto[destinazione:]
+
+
+def _sposta_esercizi(indici, posizione):
+    """Sposta gli esercizi agli 'indici' dati alla 'posizione' 1-based richiesta."""
+    st.session_state["esercizi"] = _lista_riordinata(
+        st.session_state["esercizi"], indici, posizione
+    )
+
+
+def _elimina_esercizi(indici):
+    """Rimuove dalla lista gli esercizi agli 'indici' dati."""
+    da_rimuovere = set(indici)
+    st.session_state["esercizi"] = [
+        esercizio
+        for i, esercizio in enumerate(st.session_state["esercizi"])
+        if i not in da_rimuovere
+    ]
+
+
+def _assicura_uid():
+    """
+    Garantisce che ogni esercizio in lista abbia un uid: le key dei widget di
+    selezione e riordino ci si appoggiano, così restano legate all'esercizio
+    anche quando cambia di posizione.
+    """
+    for esercizio in st.session_state["esercizi"]:
+        if not esercizio.get("uid"):
+            esercizio["uid"] = uuid.uuid4().hex[:8]
+
+
+def _chiave_selezione(esercizio):
+    """Key della casella di selezione di un esercizio."""
+    return f"sel_{esercizio['uid']}"
+
+
+def _indici_selezionati():
+    """Indici degli esercizi con la casella di selezione spuntata."""
+    return [
+        i
+        for i, esercizio in enumerate(st.session_state["esercizi"])
+        if st.session_state.get(_chiave_selezione(esercizio))
+    ]
+
+
+def _imposta_selezione(valore):
+    """Spunta (o toglie la spunta a) la casella di tutti gli esercizi."""
+    for esercizio in st.session_state["esercizi"]:
+        st.session_state[_chiave_selezione(esercizio)] = valore
+
+
+def _numero_posizione(chiave, valore_default, massimo, etichetta="Posizione"):
+    """
+    Campo numerico 1..massimo per scegliere una posizione di destinazione. Se
+    in sessione è rimasto un valore fuori scala (lista accorciata nel
+    frattempo) viene riportato nei limiti prima di creare il widget, che
+    altrimenti solleverebbe un errore.
+    """
+    if chiave in st.session_state:
+        try:
+            st.session_state[chiave] = max(1, min(int(st.session_state[chiave]), massimo))
+        except (TypeError, ValueError):
+            st.session_state[chiave] = valore_default
+        return st.number_input(etichetta, min_value=1, max_value=massimo, step=1, key=chiave)
+    return st.number_input(
+        etichetta, min_value=1, max_value=massimo, value=valore_default, step=1, key=chiave
+    )
+
+
+def _barra_azioni_multiple():
+    """
+    Barra delle azioni di gruppo sopra la lista: conta gli esercizi spuntati
+    con la casella accanto a ciascuno e permette di spostarli in blocco a una
+    posizione o di eliminarli tutti insieme.
+    """
+    esercizi = st.session_state["esercizi"]
+    indici = _indici_selezionati()
+    nessuno_selezionato = not indici
+
+    with st.container(border=True):
+        colonne = st.columns([3, 2, 2, 2, 3, 3], vertical_alignment="bottom")
+        with colonne[0]:
+            st.markdown(f"☑️ **{len(indici)}** selezionati su **{len(esercizi)}**")
+        with colonne[1]:
+            if st.button(
+                "Seleziona tutti",
+                use_container_width=True,
+                disabled=(len(indici) == len(esercizi)),
+            ):
+                _imposta_selezione(True)
+                st.rerun()
+        with colonne[2]:
+            if st.button("Deseleziona", use_container_width=True, disabled=nessuno_selezionato):
+                _imposta_selezione(False)
+                st.rerun()
+        with colonne[3]:
+            posizione = _numero_posizione("pos_multipla", 1, len(esercizi))
+        with colonne[4]:
+            if st.button(
+                "↕️ Sposta selezionati",
+                use_container_width=True,
+                disabled=nessuno_selezionato,
+                help="Sposta gli esercizi spuntati in blocco a partire dalla posizione scelta",
+            ):
+                _sposta_esercizi(indici, posizione)
+                st.rerun()
+        with colonne[5]:
+            if st.button(
+                "🗑️ Elimina selezionati",
+                use_container_width=True,
+                disabled=nessuno_selezionato,
+            ):
+                st.session_state["conferma_elimina_selezionati"] = True
+                st.rerun()
+
+        if st.session_state.get("conferma_elimina_selezionati"):
+            st.warning(f"Eliminare i {len(indici)} esercizi selezionati?")
+            colonna_si, colonna_no, _ = st.columns([1, 1, 4])
+            with colonna_si:
+                if st.button("✅ Sì", key="elimina_selezionati_si", use_container_width=True):
+                    _elimina_esercizi(indici)
+                    st.session_state["conferma_elimina_selezionati"] = False
+                    st.rerun()
+            with colonna_no:
+                if st.button("❌ No", key="elimina_selezionati_no", use_container_width=True):
+                    st.session_state["conferma_elimina_selezionati"] = False
+                    st.rerun()
 
 
 def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizio qui"):
@@ -350,10 +529,11 @@ def _render_esercizio(i, esercizio):
     """
     Renderizza l'expander di un singolo esercizio con i due sotto-tab
     (Dettagli / Video & Frame). Ritorna una tupla (indice_da_rimuovere,
-    scambio) con l'eventuale azione richiesta dai pulsanti (o None).
+    spostamento) con l'eventuale azione richiesta dai pulsanti (o None);
+    spostamento è una coppia (indici, posizione_1based) per _sposta_esercizi.
     """
     indice_da_rimuovere = None
-    scambio = None
+    spostamento = None
     numero_esercizi = len(st.session_state["esercizi"])
 
     if "uid" not in esercizio:
@@ -397,15 +577,24 @@ def _render_esercizio(i, esercizio):
             )
 
             st.markdown("---")
-            colonna_su, colonna_giu, colonna_rimuovi = st.columns(3)
-            with colonna_su:
-                if st.button("⬆️ Sposta su", key=f"su_{uid}", disabled=(i == 0)):
-                    scambio = (i, i - 1)
-            with colonna_giu:
-                if st.button("⬇️ Sposta giù", key=f"giu_{uid}", disabled=(i == numero_esercizi - 1)):
-                    scambio = (i, i + 1)
+            colonna_posizione, colonna_sposta, colonna_rimuovi = st.columns(
+                [1, 1, 2], vertical_alignment="bottom"
+            )
+            with colonna_posizione:
+                posizione_scelta = _numero_posizione(
+                    f"pos_{uid}", i + 1, numero_esercizi, etichetta="Posizione"
+                )
+            with colonna_sposta:
+                if st.button(
+                    "↕️ Sposta",
+                    key=f"sposta_{uid}",
+                    use_container_width=True,
+                    disabled=(numero_esercizi < 2),
+                    help="Porta l'esercizio alla posizione scelta: gli altri scorrono di conseguenza",
+                ):
+                    spostamento = ([i], posizione_scelta)
             with colonna_rimuovi:
-                if st.button("🗑️ Rimuovi esercizio", key=f"rimuovi_{uid}"):
+                if st.button("🗑️ Rimuovi esercizio", key=f"rimuovi_{uid}", use_container_width=True):
                     indice_da_rimuovere = i
 
         with tab_video:
@@ -510,20 +699,40 @@ def _render_esercizio(i, esercizio):
                     except Exception as errore:
                         st.error(f"Errore imprevisto durante l'estrazione dei frame: {errore}")
 
+            st.subheader("Immagini tue al posto dei frame")
+            st.caption(
+                "Se il video non rende bene (o non c'è), puoi usare due immagini "
+                "tue: sostituiscono i frame estratti e finiscono nella scheda e nel "
+                "documento esattamente allo stesso modo."
+            )
+            colonna_carica_start, colonna_carica_finish = st.columns(2)
+            for colonna, suffisso, etichetta in (
+                (colonna_carica_start, "start", "START"),
+                (colonna_carica_finish, "finish", "FINISH"),
+            ):
+                with colonna:
+                    if st.button(
+                        f"🖼️ Scegli immagine {etichetta}",
+                        key=f"immagine_{suffisso}_{uid}",
+                        use_container_width=True,
+                    ):
+                        _importa_immagine(i, suffisso)
+
             frame_start = st.session_state["esercizi"][i].get("frame_start")
             frame_finish = st.session_state["esercizi"][i].get("frame_finish")
-            if frame_start and frame_finish and os.path.exists(frame_start) and os.path.exists(frame_finish):
-                colonna_img_start, colonna_img_finish = st.columns(2)
-                with colonna_img_start:
-                    st.image(frame_start, caption="START")
-                    with st.expander("✂️ Ritaglia START"):
-                        _ui_ritaglio_frame(frame_start, uid, "start")
-                with colonna_img_finish:
-                    st.image(frame_finish, caption="FINISH")
-                    with st.expander("✂️ Ritaglia FINISH"):
-                        _ui_ritaglio_frame(frame_finish, uid, "finish")
+            colonna_img_start, colonna_img_finish = st.columns(2)
+            for colonna, percorso, suffisso, etichetta in (
+                (colonna_img_start, frame_start, "start", "START"),
+                (colonna_img_finish, frame_finish, "finish", "FINISH"),
+            ):
+                if not (percorso and os.path.exists(percorso)):
+                    continue
+                with colonna:
+                    st.image(percorso, caption=etichetta)
+                    with st.expander(f"✂️ Ritaglia {etichetta}"):
+                        _ui_ritaglio_frame(percorso, uid, suffisso)
 
-    return indice_da_rimuovere, scambio
+    return indice_da_rimuovere, spostamento
 
 
 def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
@@ -710,6 +919,11 @@ def _esegui_esportazione(titolo_scheda):
         with st.spinner("Generazione del documento su Google Docs in corso..."):
             stato_scheda = percorso_stato(st.session_state["cartella_lavoro"])
             risultato = create_workout_document(esercizi_pronti, titolo_scheda, state_path=stato_scheda)
+        if risultato.get("documento_rigenerato"):
+            st.info(
+                "Il documento generato in precedenza non esiste più su Drive: "
+                "ne è stato creato uno nuovo con tutti gli esercizi."
+            )
         st.success(f"Documento generato con successo! [Apri il documento]({risultato['url']})")
     except GoogleAuthError as errore:
         st.error(str(errore))
@@ -748,8 +962,9 @@ def main():
 
     st.header("Anteprima e modifica scheda")
 
+    _assicura_uid()
     indice_da_rimuovere = None
-    scambio = None
+    spostamento = None
     numero_esercizi = len(st.session_state["esercizi"])
 
     if numero_esercizi == 0:
@@ -761,23 +976,32 @@ def main():
         with colonna_centro:
             _blocco_inserimento(0, etichetta="➕ Aggiungi esercizio", aiuto="Aggiungi il primo esercizio")
     else:
+        _barra_azioni_multiple()
         for i, esercizio in enumerate(st.session_state["esercizi"]):
             _blocco_inserimento(i, etichetta="➕", aiuto="Inserisci un esercizio qui")
-            rimuovi, scambia = _render_esercizio(i, esercizio)
+            colonna_selezione, colonna_esercizio = st.columns([1, 24], vertical_alignment="center")
+            with colonna_selezione:
+                st.checkbox(
+                    f"Seleziona esercizio {i + 1}",
+                    key=_chiave_selezione(esercizio),
+                    label_visibility="collapsed",
+                    help="Seleziona per spostare o eliminare più esercizi insieme",
+                )
+            with colonna_esercizio:
+                rimuovi, sposta = _render_esercizio(i, esercizio)
             if rimuovi is not None:
                 indice_da_rimuovere = rimuovi
-            if scambia is not None:
-                scambio = scambia
+            if sposta is not None:
+                spostamento = sposta
         _blocco_inserimento(numero_esercizi, etichetta="➕ Aggiungi in fondo", aiuto="Aggiungi un esercizio in fondo")
 
     if indice_da_rimuovere is not None:
-        del st.session_state["esercizi"][indice_da_rimuovere]
+        _elimina_esercizi([indice_da_rimuovere])
         st.rerun()
 
-    if scambio is not None:
-        indice_a, indice_b = scambio
-        lista_esercizi = st.session_state["esercizi"]
-        lista_esercizi[indice_a], lista_esercizi[indice_b] = lista_esercizi[indice_b], lista_esercizi[indice_a]
+    if spostamento is not None:
+        indici, posizione = spostamento
+        _sposta_esercizi(indici, posizione)
         st.rerun()
 
 

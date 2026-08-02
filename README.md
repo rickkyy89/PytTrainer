@@ -15,14 +15,25 @@ Il flusso di lavoro tipico è:
 2. Per ogni esercizio, cerca un video YouTube che mostri l'esecuzione
    corretta (oppure incolla direttamente un URL).
 3. Scegli i secondi (timestamp) in cui si vede la posizione di partenza e
-   quella finale del movimento, ed estrai i due fotogrammi.
+   quella finale del movimento, ed estrai i due fotogrammi. In alternativa,
+   con **🖼️ Scegli immagine START / FINISH** puoi usare due immagini tue
+   (foto, screenshot, disegni) al posto dei fotogrammi estratti: vengono
+   convertite in JPEG e trattate come qualsiasi altro fotogramma, ritaglio
+   compreso. Un esercizio può quindi essere completato anche senza video.
 4. Genera il Google Doc: verrà creato un documento A4 con un modulo per
    ciascun esercizio pronto (cioè con entrambi i fotogrammi estratti).
 
 In qualsiasi momento puoi salvare la scheda su CSV (o scaricarla) dalla
-sidebar per riprendere il lavoro più tardi, riordinare gli esercizi con le
-frecce su/giù, e ritagliare (crop) i fotogrammi START/FINISH direttamente
-dall'anteprima, con possibilità di ripristinare l'originale.
+sidebar per riprendere il lavoro più tardi, e ritagliare (crop) i fotogrammi
+START/FINISH direttamente dall'anteprima, con possibilità di ripristinare
+l'originale.
+
+Per riordinare la lista, ogni esercizio ha un campo **Posizione** con il
+pulsante **↕️ Sposta**: scegli il numero a cui vuoi portarlo e tutti gli altri
+scorrono di conseguenza. La casella di selezione a sinistra di ogni esercizio
+abilita invece le azioni di gruppo nella barra in cima alla lista, con cui
+puoi spostare in blocco (mantenendo l'ordine relativo) o eliminare più
+esercizi in una volta sola.
 
 L'app funziona interamente in locale: i video non vengono mai scaricati per
 intero, viene solo letto lo stream necessario a estrarre i due fotogrammi.
@@ -169,6 +180,13 @@ perché legati a un documento Google specifico. Per ripartire da zero con un
 nuovo documento, basta cancellare il file di stato corrispondente: alla
 generazione successiva ne verrà creato uno nuovo insieme a un nuovo Google
 Doc.
+
+Se il documento a cui punta lo stato è stato cancellato da Drive, non serve
+fare nulla a mano: alla generazione successiva la scheda viene rigenerata
+automaticamente in un documento nuovo con tutti gli esercizi (l'app lo
+segnala, e l'URL del documento cambia). Restano invece un errore i casi
+diversi da "documento inesistente" — per esempio un problema di permessi o di
+rete — per non creare un doppione del documento.
 
 Lo stesso file di stato serve anche per `update_exercise_media()`, che
 sostituisce solo i due frame (START/FINISH) di un esercizio già presente nel

@@ -12,7 +12,7 @@ import re
 import subprocess
 
 import yt_dlp
-from PIL import Image
+from PIL import Image, ImageOps
 from yt_dlp.utils import DownloadError
 
 from csv_utils import slugify
@@ -458,4 +458,65 @@ def crop_frame(
         if ritagliata.mode != "RGB":
             ritagliata = ritagliata.convert("RGB")
         ritagliata.save(output_path, "JPEG", quality=90)
+    return output_path
+
+
+def importa_frame_da_immagine(
+    image_path: str,
+    exercise_name: str,
+    suffisso: str,
+    output_dir: str = "frames",
+) -> str:
+    """
+    Usa un'immagine dell'utente al posto del frame estratto dal video: la
+    converte in JPEG e la salva in output_dir con lo stesso nome che avrebbe
+    prodotto extract_start_finish_frames() ("<slug>_start.jpg" /
+    "<slug>_finish.jpg"), così tutto il resto della pipeline (ritaglio,
+    bundle .scheda, upload nel Google Doc) la tratta come un frame qualsiasi.
+    Un eventuale frame già presente per quell'esercizio viene sostituito.
+
+    Accetta qualunque formato leggibile da PIL (PNG, WEBP, HEIC via plugin,
+    screenshot, foto...): l'orientamento EXIF viene applicato e la
+    trasparenza appiattita su fondo bianco, perché il JPEG non la supporta.
+
+    suffisso deve essere "start" o "finish". Solleva FrameExtractionError se
+    il file non esiste o non è un'immagine leggibile, ValueError se il
+    suffisso non è valido. Restituisce il percorso del JPEG scritto.
+    """
+    if suffisso not in ("start", "finish"):
+        raise ValueError(f"Suffisso frame non valido: '{suffisso}' (attesi 'start' o 'finish').")
+    if not image_path or not os.path.exists(image_path):
+        raise FrameExtractionError(f"L'immagine '{image_path}' non esiste.")
+
+    os.makedirs(output_dir, exist_ok=True)
+    slug = _slugify(exercise_name)
+    output_path = os.path.join(output_dir, f"{slug}_{suffisso}.jpg")
+
+    try:
+        with Image.open(image_path) as immagine:
+            immagine = ImageOps.exif_transpose(immagine)
+            if immagine.mode in ("RGBA", "LA", "P"):
+                convertita = immagine.convert("RGBA")
+                sfondo = Image.new("RGB", convertita.size, (255, 255, 255))
+                sfondo.paste(convertita, mask=convertita.split()[-1])
+                immagine = sfondo
+            elif immagine.mode != "RGB":
+                immagine = immagine.convert("RGB")
+            immagine.save(output_path, "JPEG", quality=90)
+    except (OSError, ValueError) as exc:
+        raise FrameExtractionError(
+            f"Impossibile usare '{os.path.basename(image_path)}' come frame: "
+            f"non è un'immagine leggibile ({exc})."
+        ) from exc
+
+    # Il backup pre-ritaglio dell'immagine precedente si riferisce a un frame
+    # che non esiste più: lasciarlo renderebbe "Ripristina originale" un
+    # ripristino della vecchia immagine.
+    backup = f"{os.path.splitext(output_path)[0]}_orig.jpg"
+    if os.path.exists(backup):
+        try:
+            os.remove(backup)
+        except OSError:
+            pass
+
     return output_path

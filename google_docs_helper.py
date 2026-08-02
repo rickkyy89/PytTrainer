@@ -288,7 +288,11 @@ def _richieste_cella_destra(right_start: int, esercizio: dict) -> list[dict]:
     offset = 0
     for testo, stile in segmenti:
         lunghezza = len(testo)
-        if stile:
+        # I segmenti vuoti (campo dell'esercizio non compilato: note,
+        # spiegazione, ripetizioni o recupero) non vanno stilizzati: un
+        # updateTextStyle con startIndex == endIndex fa fallire l'intero
+        # batchUpdate con "The range should not be empty".
+        if stile and lunghezza:
             inizio = right_start + offset
             fine = inizio + lunghezza
             richieste.append(_richiesta_stile_testo(inizio, fine, stile))
@@ -424,6 +428,99 @@ def _trova_tabella_esercizio(documento: dict, slug: str, indice_esercizio: int) 
     return tabelle[indice_esercizio]
 
 
+def _stato_http(exc: HttpError) -> int | None:
+    """Codice HTTP di un HttpError, robusto alle varianti di googleapiclient."""
+    risposta = getattr(exc, "resp", None)
+    stato = getattr(risposta, "status", None)
+    if stato is None:
+        stato = getattr(exc, "status_code", None)
+    try:
+        return int(stato) if stato is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _documento_raggiungibile(docs_service, doc_id: str) -> bool:
+    """
+    True se il documento esiste ancora, False se Google risponde 404 (documento
+    eliminato definitivamente da Drive). Ogni altro errore HTTP viene
+    propagato come GoogleDocsError: un problema di permessi o di rete non deve
+    far creare un doppione del documento.
+    """
+    try:
+        docs_service.documents().get(documentId=doc_id).execute()
+    except HttpError as exc:
+        if _stato_http(exc) == 404:
+            return False
+        raise GoogleDocsError(
+            f"Il documento '{doc_id}' non è accessibile: {exc}"
+        ) from exc
+    return True
+
+
+def _crea_documento_scheda(docs_service, doc_title: str, state_path: str | None) -> tuple[str, dict]:
+    """
+    Crea un nuovo Google Doc per la scheda: formato A4 verticale con margini
+    di 36pt e titolo centrato in grassetto. Ritorna (doc_id, stato) con lo
+    stato iniziale già salvato su state_path se indicato.
+    """
+    documento = docs_service.documents().create(body={"title": doc_title}).execute()
+    doc_id = documento["documentId"]
+
+    # Impostiamo il formato pagina A4 verticale (in punti) e margini di 36pt.
+    docs_service.documents().batchUpdate(
+        documentId=doc_id,
+        body={
+            "requests": [
+                {
+                    "updateDocumentStyle": {
+                        "documentStyle": {
+                            "pageSize": {
+                                "width": _dimensione_pt(595.28),
+                                "height": _dimensione_pt(841.89),
+                            },
+                            "marginTop": _dimensione_pt(36),
+                            "marginBottom": _dimensione_pt(36),
+                            "marginLeft": _dimensione_pt(36),
+                            "marginRight": _dimensione_pt(36),
+                        },
+                        "fields": "pageSize,marginTop,marginBottom,marginLeft,marginRight",
+                    }
+                }
+            ]
+        },
+    ).execute()
+
+    # Titolo della scheda, centrato e in grassetto.
+    titolo_testo = doc_title.upper() + "\n"
+    docs_service.documents().batchUpdate(
+        documentId=doc_id,
+        body={
+            "requests": [
+                {"insertText": {"location": {"index": 1}, "text": titolo_testo}},
+                _richiesta_stile_testo(1, 1 + len(titolo_testo), {"bold": True, "size": 18}),
+                {
+                    "updateParagraphStyle": {
+                        "range": {"startIndex": 1, "endIndex": 1 + len(titolo_testo)},
+                        "paragraphStyle": {"alignment": "CENTER"},
+                        "fields": "alignment",
+                    }
+                },
+            ]
+        },
+    ).execute()
+
+    stato = {
+        "doc_id": doc_id,
+        "titolo": doc_title,
+        "url": f"https://docs.google.com/document/d/{doc_id}/edit",
+        "esercizi": [],
+    }
+    if state_path:
+        salva_stato(state_path, stato)
+    return doc_id, stato
+
+
 def create_workout_document(
     exercises: list[dict],
     doc_title: str,
@@ -447,12 +544,18 @@ def create_workout_document(
     comportamento è quello "in un colpo solo" di sempre (nessun file
     scritto), ma la logica di raggruppamento si applica comunque.
 
+    Se il documento indicato dallo stato non esiste più (404: cancellato da
+    Drive), lo stato viene considerato orfano e la scheda viene rigenerata da
+    zero in un documento nuovo con tutti gli esercizi — non è un errore. Ogni
+    altro errore di accesso al documento (permessi, rete) resta un
+    GoogleDocsError, per non creare doppioni.
+
+    Restituisce {"document_id", "url", "esercizi_inseriti": [nomi inseriti
+    in QUESTA esecuzione], "documento_rigenerato": bool}.
+
     docs_service e drive_service possono essere passati esplicitamente (utile
     per i test con mock); se omessi vengono costruiti a partire dalle
     credenziali restituite da get_credentials().
-
-    Restituisce {"document_id", "url", "esercizi_inseriti": [nomi inseriti
-    in QUESTA esecuzione]}.
     """
     if docs_service is None or drive_service is None:
         creds = get_credentials()
@@ -466,73 +569,22 @@ def create_workout_document(
 
     try:
         stato = carica_stato(state_path) if state_path else None
+        doc_id = stato.get("doc_id") if stato else None
+        documento_rigenerato = False
 
-        if stato and stato.get("doc_id"):
-            # Ripresa di una scheda già iniziata: riusiamo il documento esistente.
-            doc_id = stato["doc_id"]
-            try:
-                docs_service.documents().get(documentId=doc_id).execute()
-            except HttpError as exc:
-                raise GoogleDocsError(
-                    f"Lo stato in '{state_path}' fa riferimento al documento '{doc_id}' che "
-                    f"non è più raggiungibile: {exc}. Lo stato è probabilmente orfano: cancella "
-                    f"il file '{state_path}' per ripartire da zero con un nuovo documento."
-                ) from exc
-        else:
-            documento = docs_service.documents().create(body={"title": doc_title}).execute()
-            doc_id = documento["documentId"]
+        if doc_id and not _documento_raggiungibile(docs_service, doc_id):
+            # Il documento a cui punta lo stato non esiste più (eliminato
+            # definitivamente da Drive): lo stato è orfano, quindi lo si
+            # scarta e si riparte da un documento nuovo con TUTTI gli
+            # esercizi, invece di fallire lasciando la scheda inesportabile.
+            doc_id = None
+            stato = None
+            documento_rigenerato = True
 
-            # Impostiamo il formato pagina A4 verticale (in punti) e margini di 36pt.
-            docs_service.documents().batchUpdate(
-                documentId=doc_id,
-                body={
-                    "requests": [
-                        {
-                            "updateDocumentStyle": {
-                                "documentStyle": {
-                                    "pageSize": {
-                                        "width": _dimensione_pt(595.28),
-                                        "height": _dimensione_pt(841.89),
-                                    },
-                                    "marginTop": _dimensione_pt(36),
-                                    "marginBottom": _dimensione_pt(36),
-                                    "marginLeft": _dimensione_pt(36),
-                                    "marginRight": _dimensione_pt(36),
-                                },
-                                "fields": "pageSize,marginTop,marginBottom,marginLeft,marginRight",
-                            }
-                        }
-                    ]
-                },
-            ).execute()
-
-            # Titolo della scheda, centrato e in grassetto.
-            titolo_testo = doc_title.upper() + "\n"
-            docs_service.documents().batchUpdate(
-                documentId=doc_id,
-                body={
-                    "requests": [
-                        {"insertText": {"location": {"index": 1}, "text": titolo_testo}},
-                        _richiesta_stile_testo(1, 1 + len(titolo_testo), {"bold": True, "size": 18}),
-                        {
-                            "updateParagraphStyle": {
-                                "range": {"startIndex": 1, "endIndex": 1 + len(titolo_testo)},
-                                "paragraphStyle": {"alignment": "CENTER"},
-                                "fields": "alignment",
-                            }
-                        },
-                    ]
-                },
-            ).execute()
-
-            stato = {
-                "doc_id": doc_id,
-                "titolo": doc_title,
-                "url": f"https://docs.google.com/document/d/{doc_id}/edit",
-                "esercizi": [],
-            }
-            if state_path:
-                salva_stato(state_path, stato)
+        if doc_id is None:
+            # Ripresa di una scheda già iniziata: riusiamo il documento
+            # esistente; altrimenti (o se è appena sparito) ne creiamo uno.
+            doc_id, stato = _crea_documento_scheda(docs_service, doc_title, state_path)
 
         slug_già_inseriti = {voce["slug"] for voce in stato["esercizi"]}
 
@@ -713,6 +765,7 @@ def create_workout_document(
             "document_id": doc_id,
             "url": f"https://docs.google.com/document/d/{doc_id}/edit",
             "esercizi_inseriti": esercizi_inseriti,
+            "documento_rigenerato": documento_rigenerato,
         }
     except HttpError as exc:
         raise GoogleDocsError(

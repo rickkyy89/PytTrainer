@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from googleapiclient.errors import HttpError
 from PIL import Image
 
 # Rendiamo importabili i moduli del progetto (root della repo) indipendentemente
@@ -38,6 +39,7 @@ from video_helper import (  # noqa: E402
     crop_frame,
     extract_frame,
     filtra_risultati_pertinenti,
+    importa_frame_da_immagine,
 )
 
 
@@ -99,6 +101,54 @@ def test_app_py_sintatticamente_valido():
     assert "main" in nomi_funzioni_top_level
 
     assert compileall.compile_file(str(percorso_app), quiet=1)
+
+
+# ---------------------------------------------------------------------------
+# Test del riordino della lista esercizi (logica pura di app.py)
+# ---------------------------------------------------------------------------
+
+def _lista_riordinata():
+    """
+    Importa la funzione di riordino di app.py. L'import e' sicuro (tutta la
+    logica Streamlit e' dentro main()) ma resta locale al test, cosi' gli
+    altri test non dipendono da streamlit installato.
+    """
+    app = pytest.importorskip("app")
+    return app._lista_riordinata
+
+
+def test_lista_riordinata_singolo_in_avanti():
+    """Spostare un esercizio a una posizione piu' in basso lo porta esattamente
+    a quel numero, facendo risalire di uno tutti quelli che scavalca."""
+    riordina = _lista_riordinata()
+    assert riordina(["a", "b", "c", "d", "e"], [1], 4) == ["a", "c", "d", "b", "e"]
+
+
+def test_lista_riordinata_singolo_indietro():
+    """Spostare un esercizio piu' in alto fa scendere di uno gli altri."""
+    riordina = _lista_riordinata()
+    assert riordina(["a", "b", "c", "d", "e"], [4], 2) == ["a", "e", "b", "c", "d"]
+
+
+def test_lista_riordinata_blocco_mantiene_ordine_relativo():
+    """Piu' esercizi selezionati si spostano in blocco, nell'ordine in cui erano."""
+    riordina = _lista_riordinata()
+    assert riordina(["a", "b", "c", "d", "e"], [0, 3], 3) == ["b", "c", "a", "d", "e"]
+
+
+def test_lista_riordinata_posizione_fuori_scala_viene_limitata():
+    """Una posizione oltre la fine (o sotto 1) finisce in fondo (o in testa)."""
+    riordina = _lista_riordinata()
+    assert riordina(["a", "b", "c"], [0], 99) == ["b", "c", "a"]
+    assert riordina(["a", "b", "c"], [2], 0) == ["c", "a", "b"]
+
+
+def test_lista_riordinata_non_muta_originale():
+    """Il riordino ritorna una nuova lista: l'originale resta intatta."""
+    riordina = _lista_riordinata()
+    originale = ["a", "b", "c"]
+    riordina(originale, [0], 3)
+    assert originale == ["a", "b", "c"]
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +514,89 @@ def test_crop_frame_percentuali_non_valide(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Test dell'import di immagini manuali al posto dei frame estratti
+# ---------------------------------------------------------------------------
+
+def test_importa_frame_da_immagine_converte_e_nomina_come_i_frame(tmp_path):
+    """
+    Un PNG con trasparenza diventa un JPEG con lo stesso nome che avrebbe
+    prodotto l'estrazione dal video, così il resto della pipeline non vede
+    differenza tra un frame estratto e un'immagine dell'utente.
+    """
+    sorgente = tmp_path / "mia_foto.png"
+    Image.new("RGBA", (120, 90), (255, 0, 0, 128)).save(sorgente)
+    cartella_frames = tmp_path / "frames"
+
+    percorso = importa_frame_da_immagine(
+        str(sorgente), "Squat con bilanciere", "start", output_dir=str(cartella_frames)
+    )
+
+    assert percorso == str(cartella_frames / "squat_con_bilanciere_start.jpg")
+    with Image.open(percorso) as immagine:
+        assert immagine.mode == "RGB"  # trasparenza appiattita
+        assert immagine.size == (120, 90)
+    with open(percorso, "rb") as file_immagine:
+        assert file_immagine.read(2) == b"\xff\xd8"  # magic bytes JPEG
+
+
+def test_importa_frame_da_immagine_sostituisce_il_frame_esistente(tmp_path):
+    """La nuova immagine prende il posto del frame già presente per l'esercizio."""
+    cartella_frames = tmp_path / "frames"
+    cartella_frames.mkdir()
+    frame_estratto = cartella_frames / "panca_piana_finish.jpg"
+    _crea_immagine_di_prova(frame_estratto)
+    sorgente = tmp_path / "sostituta.png"
+    Image.new("RGB", (64, 48), (0, 128, 0)).save(sorgente)
+
+    percorso = importa_frame_da_immagine(
+        str(sorgente), "Panca piana", "finish", output_dir=str(cartella_frames)
+    )
+
+    assert percorso == str(frame_estratto)
+    with Image.open(percorso) as immagine:
+        assert immagine.size == (64, 48)
+
+
+def test_importa_frame_da_immagine_rimuove_il_backup_pre_ritaglio(tmp_path):
+    """
+    Il backup *_orig.jpg del frame precedente va eliminato: si riferisce a
+    un'immagine che non c'è più e "Ripristina originale" la riporterebbe.
+    """
+    cartella_frames = tmp_path / "frames"
+    cartella_frames.mkdir()
+    _crea_immagine_di_prova(cartella_frames / "stacco_start.jpg")
+    backup = cartella_frames / "stacco_start_orig.jpg"
+    _crea_immagine_di_prova(backup)
+    sorgente = tmp_path / "nuova.jpg"
+    _crea_immagine_di_prova(sorgente)
+
+    importa_frame_da_immagine(str(sorgente), "Stacco", "start", output_dir=str(cartella_frames))
+
+    assert not backup.exists()
+
+
+def test_importa_frame_da_immagine_suffisso_non_valido(tmp_path):
+    sorgente = tmp_path / "foto.jpg"
+    _crea_immagine_di_prova(sorgente)
+
+    with pytest.raises(ValueError):
+        importa_frame_da_immagine(str(sorgente), "Squat", "meta", output_dir=str(tmp_path))
+
+
+def test_importa_frame_da_immagine_file_non_valido(tmp_path):
+    """File inesistente o non immagine: errore chiaro, nessun file scritto."""
+    with pytest.raises(FrameExtractionError):
+        importa_frame_da_immagine(
+            str(tmp_path / "non_esiste.jpg"), "Squat", "start", output_dir=str(tmp_path)
+        )
+
+    finto = tmp_path / "non_una_immagine.jpg"
+    finto.write_text("questo e' testo, non un JPEG", encoding="utf-8")
+    with pytest.raises(FrameExtractionError):
+        importa_frame_da_immagine(str(finto), "Squat", "start", output_dir=str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
 # Fake dei servizi Google Docs/Drive, condivisi dai test su create_workout_document
 # e update_exercise_media.
 # ---------------------------------------------------------------------------
@@ -477,6 +610,26 @@ class _RisultatoEseguibile:
 
     def execute(self):
         return self._valore
+
+
+class _RispostaHttpFinta:
+    """Minimo indispensabile perché HttpError esponga .resp.status."""
+
+    def __init__(self, status):
+        self.status = status
+        self.reason = {404: "Not Found", 403: "Forbidden"}.get(status, "Error")
+
+
+def _http_error(status):
+    """Costruisce un HttpError googleapiclient con il codice indicato."""
+    messaggi = {
+        404: "Requested entity was not found.",
+        403: "The caller does not have permission",
+    }
+    contenuto = json.dumps(
+        {"error": {"code": status, "message": messaggi.get(status, "errore")}}
+    ).encode("utf-8")
+    return HttpError(_RispostaHttpFinta(status), contenuto, uri="https://docs.googleapis.com/v1/documents/x")
 
 
 class FakeGoogleDocState:
@@ -499,6 +652,9 @@ class FakeGoogleDocState:
         self.named_ranges_creati = 0
         self.create_calls = 0
         self.all_batch_requests = []  # una voce per ogni chiamata batchUpdate
+        # doc_id -> codice HTTP con cui documents().get() deve fallire, per
+        # simulare un documento cancellato (404) o non accessibile (403).
+        self.errori_get = {}
 
     def snapshot(self):
         return {"documentId": self.doc_id, "body": {"content": list(self.content)}}
@@ -577,6 +733,9 @@ class FakeDocumentsResource:
         return _RisultatoEseguibile({"documentId": self.stato.doc_id})
 
     def get(self, documentId):
+        codice = self.stato.errori_get.get(documentId)
+        if codice:
+            raise _http_error(codice)
         return _RisultatoEseguibile(self.stato.snapshot())
 
     def batchUpdate(self, documentId, body):
@@ -695,6 +854,73 @@ def test_create_workout_document_con_servizi_mockati(tmp_path):
     assert sorted(stato_drive.deleted_files) == sorted(stato_drive.created_files)
 
 
+def test_create_workout_document_campi_vuoti_niente_range_vuoti(tmp_path):
+    """
+    Un esercizio con campi non compilati (note, spiegazione, ripetizioni,
+    recupero) non deve produrre updateTextStyle con range vuoto: Google Docs
+    risponderebbe 400 "The range should not be empty" facendo fallire tutto
+    il batchUpdate, e quindi l'intera generazione del documento.
+    """
+    esercizio = _crea_esercizio_di_prova("Esercizio senza note", tmp_path)
+    esercizio.update({"note": "", "spiegazione": "", "ripetizioni": "", "recupero": ""})
+
+    stato_doc = FakeGoogleDocState()
+    docs_service = FakeDocsService(stato_doc)
+    drive_service = FakeDriveService(FakeDriveState())
+
+    risultato = create_workout_document(
+        [esercizio], "Scheda con campi vuoti",
+        docs_service=docs_service, drive_service=drive_service,
+    )
+
+    assert risultato["esercizi_inseriti"] == ["Esercizio senza note"]
+
+    range_vuoti = [
+        richiesta
+        for batch in stato_doc.all_batch_requests
+        for richiesta in batch
+        if "updateTextStyle" in richiesta
+        and richiesta["updateTextStyle"]["range"]["startIndex"]
+        >= richiesta["updateTextStyle"]["range"]["endIndex"]
+    ]
+    assert not range_vuoti, f"updateTextStyle con range vuoto: {range_vuoti}"
+
+
+def test_richieste_cella_destra_offset_corretti_con_campi_vuoti():
+    """
+    Saltare i segmenti vuoti non deve spostare i range dei segmenti successivi:
+    gli offset restano calcolati sul testo completo davvero inserito.
+    """
+    esercizio = {
+        "nome": "SQUAT", "spiegazione": "", "note": "Schiena neutra.",
+        "ripetizioni": "3x10", "recupero": "",
+    }
+    richieste = google_docs_helper._richieste_cella_destra(100, esercizio)
+
+    testo_inserito = richieste[0]["insertText"]["text"]
+    assert richieste[0]["insertText"]["location"]["index"] == 100
+
+    for richiesta in richieste[1:]:
+        intervallo = richiesta["updateTextStyle"]["range"]
+        inizio, fine = intervallo["startIndex"], intervallo["endIndex"]
+        assert inizio < fine, "range vuoto"
+        # Ogni range deve ricadere dentro il testo effettivamente inserito.
+        assert 100 <= inizio < 100 + len(testo_inserito)
+        assert fine <= 100 + len(testo_inserito)
+
+    # Il range del nome copre esattamente "SQUAT", quello delle note esattamente
+    # il testo delle note: la mappa testo/stile non e' scivolata.
+    def _porzione(richiesta):
+        intervallo = richiesta["updateTextStyle"]["range"]
+        return testo_inserito[intervallo["startIndex"] - 100 : intervallo["endIndex"] - 100]
+
+    porzioni = [_porzione(r) for r in richieste[1:]]
+    assert "SQUAT" in porzioni
+    assert "Schiena neutra." in porzioni
+    assert "3x10" in porzioni
+    assert "" not in porzioni
+
+
 def test_create_workout_document_gruppi_intestazioni_e_page_break(tmp_path):
     """4 esercizi in 2 gruppi (2+2): 4 tabelle, 2 intestazioni di gruppo, 1 page break
     al cambio di gruppo (nessun page break interno perché i gruppi hanno solo 2 esercizi)."""
@@ -776,6 +1002,103 @@ def test_create_workout_document_resumibilita(tmp_path):
     assert {voce["nome"] for voce in stato_finale["esercizi"]} == {
         "Esercizio 1", "Esercizio 2", "Esercizio 3", "Esercizio 4"
     }
+
+
+def _stato_orfano(percorso_stato, doc_id_sparito, nomi_esercizi):
+    """Scrive uno state.json che punta a un documento non più esistente."""
+    percorso_stato.write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id_sparito,
+                "titolo": "Scheda Orfana",
+                "url": f"https://docs.google.com/document/d/{doc_id_sparito}/edit",
+                "esercizi": [
+                    {"nome": nome, "slug": slugify(nome), "named_range_id": f"nr_{n}", "gruppo": ""}
+                    for n, nome in enumerate(nomi_esercizi)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_create_workout_document_rigenera_se_documento_cancellato(tmp_path):
+    """
+    Se il documento indicato dallo stato è stato cancellato da Drive (404),
+    la scheda viene rigenerata da zero in un documento nuovo con TUTTI gli
+    esercizi: gli esercizi elencati nello stato orfano non vanno saltati,
+    altrimenti il nuovo documento resterebbe vuoto.
+    """
+    esercizi = [_crea_esercizio_di_prova(f"Esercizio {n + 1}", tmp_path) for n in range(3)]
+
+    stato_doc = FakeGoogleDocState()
+    stato_doc.errori_get["doc_cancellato_999"] = 404
+    docs_service = FakeDocsService(stato_doc)
+    drive_service = FakeDriveService(FakeDriveState())
+
+    percorso_stato = tmp_path / "scheda.state.json"
+    _stato_orfano(percorso_stato, "doc_cancellato_999", ["Esercizio 1", "Esercizio 2"])
+
+    risultato = create_workout_document(
+        esercizi, "Scheda Orfana",
+        docs_service=docs_service, drive_service=drive_service,
+        state_path=str(percorso_stato),
+    )
+
+    assert stato_doc.create_calls == 1  # documento nuovo creato
+    assert risultato["document_id"] == stato_doc.doc_id
+    assert risultato["documento_rigenerato"] is True
+    assert risultato["esercizi_inseriti"] == ["Esercizio 1", "Esercizio 2", "Esercizio 3"]
+    assert stato_doc.tables_inserted == 3
+
+    # Lo stato orfano è stato sostituito: nuovo doc_id e nessun residuo del vecchio.
+    stato_finale = json.loads(percorso_stato.read_text(encoding="utf-8"))
+    assert stato_finale["doc_id"] == stato_doc.doc_id
+    assert len(stato_finale["esercizi"]) == 3
+    assert all(voce["named_range_id"].startswith("nr_") for voce in stato_finale["esercizi"])
+
+
+def test_create_workout_document_non_rigenera_se_errore_di_permessi(tmp_path):
+    """
+    Un 403 (o qualunque errore diverso da 404) non è un documento sparito: va
+    segnalato, non deve far creare un doppione del documento.
+    """
+    esercizi = [_crea_esercizio_di_prova("Esercizio 1", tmp_path)]
+
+    stato_doc = FakeGoogleDocState()
+    stato_doc.errori_get["doc_senza_permessi"] = 403
+    docs_service = FakeDocsService(stato_doc)
+    drive_service = FakeDriveService(FakeDriveState())
+
+    percorso_stato = tmp_path / "scheda.state.json"
+    _stato_orfano(percorso_stato, "doc_senza_permessi", ["Esercizio 1"])
+
+    with pytest.raises(google_docs_helper.GoogleDocsError):
+        create_workout_document(
+            esercizi, "Scheda Protetta",
+            docs_service=docs_service, drive_service=drive_service,
+            state_path=str(percorso_stato),
+        )
+
+    assert stato_doc.create_calls == 0
+    # Lo stato non è stato toccato: il documento originale esiste ancora.
+    stato_finale = json.loads(percorso_stato.read_text(encoding="utf-8"))
+    assert stato_finale["doc_id"] == "doc_senza_permessi"
+
+
+def test_create_workout_document_senza_stato_non_rigenera(tmp_path):
+    """Senza state_path il flag documento_rigenerato resta False (nessuna ripresa)."""
+    esercizi = [_crea_esercizio_di_prova("Esercizio 1", tmp_path)]
+    stato_doc = FakeGoogleDocState()
+
+    risultato = create_workout_document(
+        esercizi, "Scheda Semplice",
+        docs_service=FakeDocsService(stato_doc),
+        drive_service=FakeDriveService(FakeDriveState()),
+    )
+
+    assert risultato["documento_rigenerato"] is False
+    assert stato_doc.create_calls == 1
 
 
 # ---------------------------------------------------------------------------

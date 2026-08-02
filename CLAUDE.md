@@ -34,6 +34,7 @@ ricompatta tutto in modo atomico.
 | `update_exercise_media(doc_id, nome_esercizio, video_url, ..., output_dir=...)` → `dict` | `google_docs_helper.py` | Sostituisce mirata mente i frame di UN esercizio già nel documento |
 | `get_credentials_manual_flow(auth_code=None)` | `google_docs_helper.py` | OAuth headless: prima chiamata dà l'URL, seconda con `auth_code` completa il login |
 | `crop_frame(path, sinistra_pct, alto_pct, destra_pct, basso_pct)` | `video_helper.py` | Ritaglia un frame estratto (percentuali per lato, sovrascrive il file) |
+| `importa_frame_da_immagine(path_immagine, nome_esercizio, suffisso, output_dir)` → `str` | `video_helper.py` | Usa un'immagine dell'utente al posto del frame estratto: la converte in JPEG col nome canonico `<slug>_start.jpg`/`<slug>_finish.jpg` (`suffisso` = `"start"`/`"finish"`), sostituendo il frame esistente |
 
 (`scrivi_esercizi_csv` e `percorso_stato_per_titolo` esistono ancora solo per
 il flusso legacy a CSV sciolto: nel flusso a bundle usa `salva_scheda` e
@@ -99,6 +100,12 @@ utilizzabile.
 | `TimestampStart` / `TimestampFinish` | Secondi dei frame START/FINISH | Euristica 10%/50% della durata |
 | `FrameStartPath` / `FrameFinishPath` | Frame già estratti (nel bundle: `frames/<slug>_start.jpg`) | Ri-estrazione |
 
+Se per un esercizio l'utente fornisce immagini proprie invece di un video,
+passale a `importa_frame_da_immagine(...)` con `output_dir=cartella_frames(lavoro)`
+e scrivi il percorso restituito in `frame_start` / `frame_finish`: da lì in poi
+l'esercizio è identico a uno con frame estratti (`scegli_ed_estrai` li rispetta
+e non ri-estrae, `salva_scheda` li mette nel bundle).
+
 ### Ripresa dopo interruzione
 
 `create_workout_document(..., state_path=...)` salva un checkpoint dopo OGNI
@@ -109,6 +116,12 @@ stesso `.scheda`: `carica_scheda` ri-estrae frame e `state.json`,
 riusa il documento aggiungendo solo gli esercizi mancanti. Per ripartire da
 zero: cancellare lo `state.json` nella cartella di lavoro e risalvare il
 bundle senza `state_path`.
+
+Se il Google Doc a cui punta lo stato è stato cancellato da Drive (404),
+`create_workout_document` non fallisce: scarta lo stato orfano e rigenera la
+scheda in un documento nuovo con tutti gli esercizi, segnalandolo con
+`risultato["documento_rigenerato"] is True` (da riportare all'utente insieme
+al nuovo URL, che è cambiato).
 
 ### Correzione mirata di un video/timestamp
 
