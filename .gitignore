@@ -17,3 +17,6 @@ __pycache__/
 *.log
 state/
 scheda.csv
+
+# Project Management
+workout_sheet_mgmt/
