@@ -279,6 +279,53 @@ def _importa_immagine(indice, suffisso):
         st.rerun()
 
 
+def _copia_frame_per_inserimento(percorso_src, cartella_lavoro_corrente):
+    """Copia un frame (e il suo backup *_orig.jpg) nella cartella frames corrente, con nome unico se collide."""
+    if not percorso_src or not os.path.exists(percorso_src):
+        return None
+    dest_dir = cartella_frames(cartella_lavoro_corrente)
+    base = os.path.basename(percorso_src)
+    dest = os.path.join(dest_dir, base)
+    if os.path.exists(dest):
+        # nome già occupato (es. slug duplicato): genera _2, _3 ...
+        radice, ext = os.path.splitext(base)
+        n = 2
+        while True:
+            candidato = os.path.join(dest_dir, f"{radice}_{n}{ext}")
+            if not os.path.exists(candidato):
+                dest = candidato
+                break
+            n += 1
+    try:
+        shutil.copy2(percorso_src, dest)
+    except OSError:
+        return None
+    # backup pre-ritaglio, se presente, segue il nome del frame copiato
+    backup_src = f"{os.path.splitext(percorso_src)[0]}_orig.jpg"
+    if os.path.exists(backup_src):
+        backup_dest = f"{os.path.splitext(dest)[0]}_orig.jpg"
+        try:
+            shutil.copy2(backup_src, backup_dest)
+        except OSError:
+            pass
+    return dest
+
+
+def _prepara_esercizio_per_inserimento(esercizio, cartella_lavoro_corrente):
+    """Ritorna una copia dell'esercizio con uid nuovo e frame copiati nella cartella corrente."""
+    nuovo = dict(esercizio)
+    nuovo["uid"] = uuid.uuid4().hex[:8]
+    nuovo["risultati_ricerca"] = list(esercizio.get("risultati_ricerca") or [])
+    for chiave in ("frame_start", "frame_finish"):
+        percorso_src = esercizio.get(chiave)
+        if percorso_src and os.path.exists(percorso_src):
+            copiato = _copia_frame_per_inserimento(percorso_src, cartella_lavoro_corrente)
+            nuovo[chiave] = copiato
+        else:
+            nuovo[chiave] = None
+    return nuovo
+
+
 def _inserisci_esercizi(posizione, nuovi):
     """Inserisce la lista 'nuovi' nella lista esercizi alla 'posizione' data."""
     st.session_state["esercizi"][posizione:posizione] = nuovi
@@ -428,9 +475,67 @@ def _barra_azioni_multiple():
 def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizio qui"):
     """
     Pulsante '+' con popover per inserire esercizi alla 'posizione' data
-    (indice nella lista): esercizio manuale, import CSV o import scheda. La
-    posizione rende uniche le key dei widget.
+    (indice nella lista): esercizio manuale, import CSV o import scheda.
+    Supporta anche l'inserimento di un singolo esercizio da una scheda esistente,
+    utile per comporre una nuova scheda pescando da più schede.
+    La posizione rende uniche le key dei widget.
     """
+    # Se per questa posizione c'è un import in attesa di scelta, mostra il selettore
+    pending = st.session_state.get("pending_single_import")
+    if pending and pending.get("posizione") == posizione:
+        esercizi_pending = pending.get("esercizi") or []
+        sorgente = pending.get("sorgente") or ""
+        with st.container(border=True):
+            st.markdown(f"**📦 «{os.path.basename(sorgente)}» — {len(esercizi_pending)} esercizi — inserisci in posizione {posizione + 1}:**")
+            if not esercizi_pending:
+                st.warning("Nessun esercizio trovato nel file selezionato.")
+                if st.button("Chiudi", key=f"single_chiudi_vuoto_{posizione}"):
+                    st.session_state["pending_single_import"] = None
+                    st.rerun()
+            else:
+                if st.button(f"📦 Inserisci tutta la scheda ({len(esercizi_pending)} esercizi)", key=f"single_all_{posizione}", use_container_width=True):
+                    nuovi = [
+                        _prepara_esercizio_per_inserimento(ex, st.session_state.get("cartella_lavoro") or "scheda.scheda.work")
+                        for ex in esercizi_pending
+                    ]
+                    _inserisci_esercizi(posizione, nuovi)
+                    st.session_state["pending_single_import"] = None
+                    st.success(f"Inseriti {len(nuovi)} esercizi in posizione {posizione + 1}.")
+                    st.rerun()
+                st.markdown("---")
+                st.caption("Oppure scegli un singolo esercizio:")
+                opzioni = list(range(len(esercizi_pending)))
+                etichette = []
+                for idx, ex in enumerate(esercizi_pending):
+                    nome = (ex.get("nome") or f"Esercizio {idx + 1}").strip()
+                    gruppo = (ex.get("gruppo") or "").strip()
+                    pref = f"[{gruppo}] " if gruppo else ""
+                    etichette.append(f"{idx + 1}. {pref}{nome}")
+                scelta = st.selectbox(
+                    "Scegli l'esercizio da inserire",
+                    options=opzioni,
+                    format_func=lambda x: etichette[x],
+                    key=f"single_sel_{posizione}",
+                )
+                scelto = esercizi_pending[scelta]
+                st.caption(
+                    f"**{scelto.get('nome','')}** — {scelto.get('ripetizioni','')} / {scelto.get('recupero','')} "
+                    f"{'— ' + scelto.get('gruppo') if scelto.get('gruppo') else ''}"
+                )
+                col_ins, col_ann = st.columns(2)
+                with col_ins:
+                    if st.button("🎯 Inserisci singolo qui", key=f"single_ins_{posizione}", use_container_width=True):
+                        nuovo = _prepara_esercizio_per_inserimento(
+                            scelto, st.session_state.get("cartella_lavoro") or "scheda.scheda.work"
+                        )
+                        _inserisci_esercizi(posizione, [nuovo])
+                        st.session_state["pending_single_import"] = None
+                        st.success(f"Inserito «{scelto.get('nome','')}» in posizione {posizione + 1}.")
+                        st.rerun()
+                with col_ann:
+                    if st.button("❌ Annulla", key=f"single_ann_{posizione}", use_container_width=True):
+                        st.session_state["pending_single_import"] = None
+                        st.rerun()
     with st.popover(etichetta, help=aiuto):
         st.caption("Inserisci qui:")
         with st.form(f"form_manuale_{posizione}", clear_on_submit=True):
@@ -455,24 +560,33 @@ def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizi
                     st.warning("Il nome dell'esercizio e' obbligatorio.")
 
         st.markdown("---")
-        if st.button("📄 Importa CSV qui", key=f"imp_csv_{posizione}"):
-            percorso = _apri_file_nativo([("CSV", "*.csv"), ("Tutti i file", "*.*")], "Importa CSV")
+        st.caption("📦 Da scheda esistente:")
+        if st.button("🎯 Inserisci un singolo esercizio da scheda", key=f"imp_singolo_{posizione}", use_container_width=True):
+            percorso = _apri_file_nativo(
+                [("File scheda", "*.scheda"), ("Archivio zip", "*.zip"), ("Tutti i file", "*.*")],
+                "Scegli scheda da cui pescare un esercizio",
+            )
             if percorso is None:
                 st.error("File browser non disponibile. Avvia l'app in locale.")
             elif percorso:
-                try:
-                    righe = parse_esercizi_csv(percorso)
-                except ValueError as errore:
-                    st.error(str(errore))
-                except Exception as errore:
-                    st.error(f"Errore durante la lettura del CSV: {errore}")
+                if os.path.exists(percorso):
+                    try:
+                        righe, _ = carica_scheda(percorso, cartella_lavoro_per_bundle(percorso))
+                    except (SchedaFileError, ValueError) as errore:
+                        st.error(str(errore))
+                    except Exception as errore:
+                        st.error(f"Errore durante la lettura della scheda: {errore}")
+                    else:
+                        st.session_state["pending_single_import"] = {
+                            "posizione": posizione,
+                            "sorgente": percorso,
+                            "esercizi": [_esercizio_da_riga(r) for r in righe],
+                        }
+                        st.rerun()
                 else:
-                    nuovi = [_esercizio_da_riga(r) for r in righe]
-                    _inserisci_esercizi(posizione, nuovi)
-                    st.success(f"Importati {len(nuovi)} esercizi.")
-                    st.rerun()
+                    st.warning("Il file selezionato non esiste.")
 
-        if st.button("📦 Importa scheda qui", key=f"imp_scheda_{posizione}"):
+        if st.button("📦 Importa intera scheda qui", key=f"imp_scheda_{posizione}", use_container_width=True):
             percorso = _apri_file_nativo(
                 [("File scheda", "*.scheda"), ("Archivio zip", "*.zip"), ("Tutti i file", "*.*")],
                 "Importa scheda",
@@ -488,12 +602,33 @@ def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizi
                     except Exception as errore:
                         st.error(f"Errore durante la lettura della scheda: {errore}")
                     else:
-                        nuovi = [_esercizio_da_riga(r) for r in righe]
-                        _inserisci_esercizi(posizione, nuovi)
-                        st.success(f"Importati {len(nuovi)} esercizi.")
+                        # Mostra il selettore per scegliere quali esercizi inserire (tutti o uno)
+                        st.session_state["pending_single_import"] = {
+                            "posizione": posizione,
+                            "sorgente": percorso,
+                            "esercizi": [_esercizio_da_riga(r) for r in righe],
+                        }
                         st.rerun()
                 else:
                     st.warning("Il file selezionato non esiste.")
+
+        st.markdown("---")
+        if st.button("📄 Importa CSV qui", key=f"imp_csv_{posizione}", use_container_width=True):
+            percorso = _apri_file_nativo([("CSV", "*.csv"), ("Tutti i file", "*.*")], "Importa CSV")
+            if percorso is None:
+                st.error("File browser non disponibile. Avvia l'app in locale.")
+            elif percorso:
+                try:
+                    righe = parse_esercizi_csv(percorso)
+                except ValueError as errore:
+                    st.error(str(errore))
+                except Exception as errore:
+                    st.error(f"Errore durante la lettura del CSV: {errore}")
+                else:
+                    nuovi = [_esercizio_da_riga(r) for r in righe]
+                    _inserisci_esercizi(posizione, nuovi)
+                    st.success(f"Importati {len(nuovi)} esercizi.")
+                    st.rerun()
 
 
 def _campo_gruppo(esercizio, uid):
@@ -878,8 +1013,6 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                 else:
                     st.session_state["percorso_scheda"] = destinazione
                     st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(destinazione)
-                    # Allinea subito il titolo in sessione se è cambiato via salvataggio
-                    st.session_state["titolo_scheda"] = titolo_scheda
                     st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"], titolo_scheda)
                     st.success(f"Scheda salvata in '{destinazione}' ({len(st.session_state['esercizi'])} esercizi).")
                     st.rerun()
@@ -1001,6 +1134,18 @@ def main():
         _esegui_esportazione(titolo_scheda)
 
     st.header("Anteprima e modifica scheda")
+
+    # Banner globale per import singolo in sospeso: assicura visibilità anche se il '+' è fuori viewport
+    pending_glob = st.session_state.get("pending_single_import")
+    if pending_glob:
+        pos = pending_glob.get("posizione", 0)
+        sorg = os.path.basename(pending_glob.get("sorgente") or "")
+        tot = len(pending_glob.get("esercizi") or [])
+        with st.container(border=True):
+            st.info(f"📦 Import in sospeso: «{sorg}» ({tot} esercizi) → posizione {pos + 1}. Scorri fino al ➕ in quella posizione per scegliere, o annulla qui.")
+            if st.button("❌ Annulla import in sospeso", key="global_ann_single"):
+                st.session_state["pending_single_import"] = None
+                st.rerun()
 
     _assicura_uid()
     duplicati = trova_duplicati_slug(st.session_state["esercizi"])

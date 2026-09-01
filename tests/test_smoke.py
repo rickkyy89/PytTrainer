@@ -39,6 +39,7 @@ from video_helper import (  # noqa: E402
     crop_frame,
     extract_frame,
     filtra_risultati_pertinenti,
+    get_stream_info,
     importa_frame_da_immagine,
 )
 
@@ -101,6 +102,30 @@ def test_app_py_sintatticamente_valido():
     assert "main" in nomi_funzioni_top_level
 
     assert compileall.compile_file(str(percorso_app), quiet=1)
+
+
+def test_salvataggio_non_riassegna_la_chiave_del_widget_titolo():
+    """Il valore di un widget Streamlit non può essere scritto dopo la sua creazione."""
+    percorso_app = RADICE_PROGETTO / "app.py"
+    albero = ast.parse(percorso_app.read_text(encoding="utf-8"), filename=str(percorso_app))
+    sidebar = next(nodo for nodo in albero.body if isinstance(nodo, ast.FunctionDef) and nodo.name == "_sidebar")
+
+    assegnazioni_titolo = [
+        nodo
+        for nodo in ast.walk(sidebar)
+        if isinstance(nodo, (ast.Assign, ast.AnnAssign))
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and isinstance(target.value.value, ast.Name)
+            and target.value.value.id == "st"
+            and target.value.attr == "session_state"
+            and isinstance(target.slice, ast.Constant)
+            and target.slice.value == "titolo_scheda"
+            for target in (nodo.targets if isinstance(nodo, ast.Assign) else [nodo.target])
+        )
+    ]
+    assert len(assegnazioni_titolo) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +476,57 @@ def test_extract_frame_fallisce_con_input_non_valido(tmp_path):
     output_path = tmp_path / "out.jpg"
     with pytest.raises(FrameExtractionError):
         extract_frame(str(tmp_path / "video_inesistente.mp4"), 0.0, str(output_path))
+
+
+def test_extract_frame_inoltra_gli_header_yt_dlp_a_ffmpeg(tmp_path, monkeypatch):
+    """Gli header associati allo stream evitano che YouTube rifiuti ffmpeg con 403."""
+    output_path = tmp_path / "out.jpg"
+    comandi = []
+
+    def _run_fittizio(comando, **kwargs):
+        comandi.append(comando)
+        output_path.write_bytes(b"\xff\xd8frame")
+        return subprocess.CompletedProcess(comando, returncode=0, stderr=b"")
+
+    monkeypatch.setattr(video_helper.subprocess, "run", _run_fittizio)
+
+    extract_frame(
+        "https://googlevideo.example/stream",
+        12.0,
+        str(output_path),
+        {"User-Agent": "yt-dlp-test", "Referer": "https://www.youtube.com/"},
+    )
+
+    comando = comandi[0]
+    indice_header = comando.index("-headers")
+    assert comando[indice_header + 1] == "User-Agent: yt-dlp-test\r\nReferer: https://www.youtube.com/\r\n"
+    assert comando[indice_header + 2 : indice_header + 4] == ["-i", "https://googlevideo.example/stream"]
+
+
+def test_get_stream_info_restituisce_gli_header_yt_dlp(monkeypatch):
+    class _YoutubeDLFinto:
+        def __init__(self, opzioni):
+            self.opzioni = opzioni
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, video_url, download):
+            return {
+                "url": "https://googlevideo.example/stream",
+                "vcodec": "h264",
+                "http_headers": {"User-Agent": "formato-specifico"},
+            }
+
+    monkeypatch.setattr(video_helper.yt_dlp, "YoutubeDL", _YoutubeDLFinto)
+
+    stream_url, headers = get_stream_info("https://www.youtube.com/watch?v=test")
+
+    assert stream_url == "https://googlevideo.example/stream"
+    assert headers == {"User-Agent": "formato-specifico"}
 
 
 # ---------------------------------------------------------------------------

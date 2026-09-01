@@ -9,7 +9,10 @@ from __future__ import annotations
 import math
 import os
 import re
+import shutil
 import subprocess
+import tempfile
+import urllib.request
 
 import yt_dlp
 from PIL import Image, ImageOps
@@ -70,17 +73,22 @@ def search_youtube(query: str, max_results: int = 3) -> list[dict]:
     return risultati
 
 
-def get_stream_url(video_url: str) -> str:
+def get_stream_info(video_url: str) -> tuple[str, dict[str, str]]:
     """
-    Risolve l'URL diretto dello stream video (senza scaricarlo) per poterlo
-    passare a ffmpeg. Restituisce l'URL del miglior formato mp4 disponibile
-    fino a 720p, con fallback a formati alternativi.
+    Risolve URL e header dello stream video senza scaricarlo. Gli header sono
+    necessari perché YouTube può rifiutare con 403 una richiesta ffmpeg priva
+    dello User-Agent scelto da yt-dlp.
+
+    Usa il client Android che fornisce formati progressivi (itag 18) senza
+    richiedere un runtime JS per decriptare la firma: senza, su installazioni
+    senza deno/node l'estrazione web fallisce e l'URL resta 403.
     """
     opzioni = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
     }
     try:
         with yt_dlp.YoutubeDL(opzioni) as ydl:
@@ -90,61 +98,125 @@ def get_stream_url(video_url: str) -> str:
             f"Impossibile recuperare lo stream del video '{video_url}': {exc}"
         ) from exc
 
-    url = info.get("url")
-    if url:
-        return url
+    def _stream(sorgente: dict) -> tuple[str, dict[str, str]]:
+        # I singoli formati possono avere header più specifici di quelli
+        # generali del video; integra entrambi senza sovrascriverli.
+        headers = dict(info.get("http_headers") or {})
+        headers.update(sorgente.get("http_headers") or {})
+        return sorgente["url"], headers
 
-    # Fallback: cerca l'url nei formati richiesti (es. video+audio separati).
+    if info.get("url"):
+        return _stream(info)
+
+    # Fallback: cerca l'URL nei formati richiesti (es. video+audio separati).
     for formato in info.get("requested_formats") or []:
         if formato.get("url"):
-            return formato["url"]
+            return _stream(formato)
 
     # Ultimo fallback: scorre tutti i formati disponibili e prende l'ultimo
-    # con url valido e traccia video presente.
-    formati = info.get("formats") or []
-    for formato in reversed(formati):
+    # con URL valido e traccia video presente.
+    for formato in reversed(info.get("formats") or []):
         if formato.get("url") and formato.get("vcodec") not in (None, "none"):
-            return formato["url"]
+            return _stream(formato)
 
     raise VideoSearchError(
         f"Nessuno stream video valido trovato per '{video_url}'."
     )
 
 
-def extract_frame(stream_url: str, timestamp_seconds: float, output_path: str) -> str:
+def get_stream_url(video_url: str) -> str:
+    """Restituisce il solo URL diretto dello stream (API compatibile)."""
+    return get_stream_info(video_url)[0]
+
+
+def _download_stream_to_temp(stream_url: str, http_headers: dict[str, str] | None) -> str:
+    """Scarica lo stream via Python http (con gli stessi header di yt-dlp) su file temporaneo."""
+    headers = dict(http_headers or {})
+    # yt-dlp fornisce già UA/Accept corretti; urllib ne aggiungerebbe uno diverso se mancasse
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    tmp_path = tmp.name
+    tmp.close()
+    req = urllib.request.Request(stream_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as out:
+            shutil.copyfileobj(resp, out)
+    except Exception as exc:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise FrameExtractionError(f"Download fallback fallito per '{stream_url}': {exc}") from exc
+    if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise FrameExtractionError("Download fallback ha prodotto un file vuoto.")
+    return tmp_path
+
+
+def extract_frame(
+    stream_url: str,
+    timestamp_seconds: float,
+    output_path: str,
+    http_headers: dict[str, str] | None = None,
+) -> str:
     """
     Estrae un singolo frame dallo stream all'istante indicato usando ffmpeg,
     scaricando solo i byte necessari grazie al seek rapido (-ss prima di -i).
+
+    Se ffmpeg fallisce con 403 (YouTube rifiuta il client http di ffmpeg),
+    ritenta scaricando lo stream via Python http con gli stessi header di
+    yt-dlp su file temporaneo e riestraendo localmente.
     """
-    comando = [
-        "ffmpeg",
-        "-ss", str(timestamp_seconds),
-        "-i", stream_url,
-        "-frames:v", "1",
-        "-q:v", "2",
-        "-y",
-        output_path,
-    ]
+
+    def _run_ffmpeg(input_path: str, use_headers: bool) -> subprocess.CompletedProcess:
+        cmd = ["ffmpeg", "-ss", str(timestamp_seconds)]
+        if use_headers and http_headers:
+            header_lines = "".join(f"{n}: {v}\r\n" for n, v in http_headers.items())
+            cmd.extend(["-headers", header_lines])
+        cmd.extend(["-i", input_path, "-frames:v", "1", "-q:v", "2", "-y", output_path])
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+
     try:
-        risultato = subprocess.run(
-            comando,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=90,
-        )
+        risultato = _run_ffmpeg(stream_url, use_headers=True)
     except subprocess.TimeoutExpired as exc:
         raise FrameExtractionError(
             f"Timeout durante l'estrazione del frame al secondo {timestamp_seconds}."
         ) from exc
 
     file_ok = os.path.exists(output_path) and os.path.getsize(output_path) > 0
-    if risultato.returncode != 0 or not file_ok:
-        stderr_text = risultato.stderr.decode("utf-8", errors="ignore")
-        ultime_righe = "\n".join(stderr_text.strip().splitlines()[-10:])
-        raise FrameExtractionError(
-            f"ffmpeg non è riuscito a estrarre il frame al secondo {timestamp_seconds}: {ultime_righe}"
-        )
-    return output_path
+    if risultato.returncode == 0 and file_ok:
+        return output_path
+
+    stderr_text = risultato.stderr.decode("utf-8", errors="ignore") if risultato.stderr else ""
+    # Fallback solo su 403 / access denied: evita di scaricare inutilmente su altri errori
+    if "403" in stderr_text or "Forbidden" in stderr_text or "access denied" in stderr_text.lower():
+        tmp_video = None
+        try:
+            tmp_video = _download_stream_to_temp(stream_url, http_headers)
+            # Da file locale non servono header
+            risultato2 = _run_ffmpeg(tmp_video, use_headers=False)
+            file_ok2 = os.path.exists(output_path) and os.path.getsize(output_path) > 0
+            if risultato2.returncode == 0 and file_ok2:
+                return output_path
+            stderr_text2 = risultato2.stderr.decode("utf-8", errors="ignore") if risultato2.stderr else ""
+            ultime = "\n".join((stderr_text2 or stderr_text).strip().splitlines()[-10:])
+            raise FrameExtractionError(
+                f"ffmpeg non è riuscito a estrarre il frame al secondo {timestamp_seconds} "
+                f"(fallback download fallito): {ultime}"
+            )
+        finally:
+            if tmp_video and os.path.exists(tmp_video):
+                try:
+                    os.remove(tmp_video)
+                except OSError:
+                    pass
+
+    ultime_righe = "\n".join(stderr_text.strip().splitlines()[-10:])
+    raise FrameExtractionError(
+        f"ffmpeg non è riuscito a estrarre il frame al secondo {timestamp_seconds}: {ultime_righe}"
+    )
 
 
 # Alias mantenuto per compatibilità interna: la slugificazione canonica ora
@@ -189,16 +261,16 @@ def extract_start_finish_frames(
     path_start = _percorso_frame_unico(output_dir, slug, "start")
     path_finish = _percorso_frame_unico(output_dir, slug, "finish")
 
-    stream_url = get_stream_url(video_url)
+    stream_url, stream_headers = get_stream_info(video_url)
 
     def _estrai_con_retry(timestamp: float, path: str) -> str:
-        nonlocal stream_url
+        nonlocal stream_url, stream_headers
         try:
-            return extract_frame(stream_url, timestamp, path)
+            return extract_frame(stream_url, timestamp, path, stream_headers)
         except FrameExtractionError:
             # Lo stream url potrebbe essere scaduto: lo ri-risolviamo e riproviamo una volta.
-            stream_url = get_stream_url(video_url)
-            return extract_frame(stream_url, timestamp, path)
+            stream_url, stream_headers = get_stream_info(video_url)
+            return extract_frame(stream_url, timestamp, path, stream_headers)
 
     _estrai_con_retry(ts_start, path_start)
     _estrai_con_retry(ts_finish, path_finish)
