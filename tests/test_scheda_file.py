@@ -173,6 +173,26 @@ def test_salva_scheda_include_backup_pre_ritaglio(tmp_path):
         assert f"{CARTELLA_FRAMES}/squat_start_orig.jpg" in archivio.namelist()
 
 
+def test_salva_scheda_backup_segue_frame_rinominato_per_collisione(tmp_path):
+    """Il backup del secondo frame omonimo deve restare ripristinabile dopo il load."""
+    prima = _crea_esercizio_con_frame("Squat", tmp_path)
+    altra_cartella = tmp_path / "altra_cartella"
+    altra_cartella.mkdir()
+    seconda = _crea_esercizio_con_frame("Squat", altra_cartella)
+    Path(seconda["frame_start"]).with_name("squat_start_orig.jpg").write_bytes(b"backup_secondo")
+    percorso_bundle = str(tmp_path / "duplicati.scheda")
+
+    salva_scheda([prima, seconda], percorso_bundle)
+
+    with zipfile.ZipFile(percorso_bundle) as archivio:
+        assert f"{CARTELLA_FRAMES}/squat_start_2.jpg" in archivio.namelist()
+        assert f"{CARTELLA_FRAMES}/squat_start_2_orig.jpg" in archivio.namelist()
+
+    caricati, _ = carica_scheda(percorso_bundle, str(tmp_path / "duplicati.work"))
+    backup_secondo = Path(caricati[1]["frame_start"]).with_name("squat_start_2_orig.jpg")
+    assert backup_secondo.read_bytes() == b"backup_secondo"
+
+
 def test_carica_scheda_frame_referenziato_ma_assente_dallo_zip(tmp_path):
     """Manifest che punta a frame non inclusi nell'archivio (o con percorsi
     legacy assoluti): le chiavi frame tornano a None per la ri-estrazione."""

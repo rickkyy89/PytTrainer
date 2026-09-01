@@ -15,7 +15,7 @@ import yt_dlp
 from PIL import Image, ImageOps
 from yt_dlp.utils import DownloadError
 
-from csv_utils import slugify, slugs_unici
+from csv_utils import slugify
 
 
 class VideoSearchError(Exception):

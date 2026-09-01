@@ -854,6 +854,30 @@ def test_create_workout_document_con_servizi_mockati(tmp_path):
     assert sorted(stato_drive.deleted_files) == sorted(stato_drive.created_files)
 
 
+def test_create_workout_document_esercizi_omonimi_hanno_slug_distinti(tmp_path):
+    """Due esercizi con lo stesso nome devono entrambi finire nel documento."""
+    esercizi = [
+        _crea_esercizio_di_prova("Squat", tmp_path),
+        _crea_esercizio_di_prova("Squat", tmp_path),
+    ]
+    stato_doc = FakeGoogleDocState()
+    stato_drive = FakeDriveState()
+    percorso_stato = tmp_path / "scheda.state.json"
+
+    risultato = create_workout_document(
+        esercizi,
+        "Scheda con omonimi",
+        docs_service=FakeDocsService(stato_doc),
+        drive_service=FakeDriveService(stato_drive),
+        state_path=str(percorso_stato),
+    )
+
+    assert risultato["esercizi_inseriti"] == ["Squat", "Squat"]
+    assert stato_doc.tables_inserted == 2
+    stato_salvato = json.loads(percorso_stato.read_text(encoding="utf-8"))
+    assert [esercizio["slug"] for esercizio in stato_salvato["esercizi"]] == ["squat", "squat_2"]
+
+
 def test_create_workout_document_campi_vuoti_niente_range_vuoti(tmp_path):
     """
     Un esercizio con campi non compilati (note, spiegazione, ripetizioni,

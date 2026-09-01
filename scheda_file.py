@@ -247,21 +247,12 @@ def _scrivi_zip(
                 copia[chiave] = membro
                 backup = _percorso_backup_frame(percorso)
                 if os.path.exists(backup):
-                    backup_membro = f"{CARTELLA_FRAMES}/{os.path.basename(backup)}"
-                    if backup_membro not in membri_usati:
-                        membri_usati.add(backup_membro)
-                        frame_da_includere[backup_membro] = backup
-                    else:
-                        # Evita collisione anche sui backup
-                        radice_b, ext_b = os.path.splitext(os.path.basename(backup))
-                        n = 2
-                        while True:
-                            cand_b = f"{CARTELLA_FRAMES}/{radice_b}_{n}{ext_b}"
-                            if cand_b not in membri_usati:
-                                membri_usati.add(cand_b)
-                                frame_da_includere[cand_b] = backup
-                                break
-                            n += 1
+                    # Il backup deve seguire il nome assegnato al frame nel bundle:
+                    # dopo il caricamento app.py lo cerca come <frame>_orig.jpg.
+                    radice_membro, _ = os.path.splitext(membro)
+                    backup_membro = f"{radice_membro}_orig.jpg"
+                    membri_usati.add(backup_membro)
+                    frame_da_includere[backup_membro] = backup
             else:
                 # Frame referenziato ma non (più) esistente su disco: cella
                 # vuota nel manifest, nessun errore (verrà ri-estratto).
