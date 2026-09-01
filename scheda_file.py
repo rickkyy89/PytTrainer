@@ -12,6 +12,7 @@ Layout dell'archivio:
     │                            all'archivio: "frames/<slug>_start.jpg"
     ├── frames/                  i JPEG dei frame START/FINISH, più gli
     │                            eventuali backup pre-ritaglio *_orig.jpg
+    ├── metadata.json            opzionale — metadati della scheda (titolo)
     └── state.json               opzionale — stato di ripresa del Google Doc
                                  ({"doc_id", "titolo", "esercizi"})
 
@@ -34,6 +35,7 @@ vince l'ultimo (last-wins).
 from __future__ import annotations
 
 import io
+import json
 import os
 import posixpath
 import zipfile
@@ -42,6 +44,7 @@ from csv_utils import esercizi_csv_bytes, parse_esercizi_csv
 
 SUFFISSO_SCHEDA = ".scheda"
 NOME_MANIFEST = "scheda.csv"
+NOME_METADATA = "metadata.json"
 NOME_STATO = "state.json"
 CARTELLA_FRAMES = "frames"
 
@@ -78,6 +81,18 @@ def percorso_stato(cartella_lavoro: str) -> str:
     """
     os.makedirs(cartella_lavoro, exist_ok=True)
     return os.path.join(cartella_lavoro, NOME_STATO)
+
+
+def titolo_scheda(cartella_lavoro: str) -> str | None:
+    """Restituisce il titolo salvato nel bundle, o None per bundle legacy."""
+    percorso = os.path.join(cartella_lavoro, NOME_METADATA)
+    try:
+        with open(percorso, encoding="utf-8") as file_metadata:
+            metadata = json.load(file_metadata)
+    except (OSError, ValueError):
+        return None
+    titolo = metadata.get("titolo") if isinstance(metadata, dict) else None
+    return titolo if isinstance(titolo, str) else None
 
 
 def _valida_nomi_membri(nomi: list[str]) -> None:
@@ -121,15 +136,15 @@ def _estrai_da_zip(archivio: zipfile.ZipFile, cartella_lavoro: str) -> list[dict
         with open(destinazione, "wb") as file_frame:
             file_frame.write(archivio.read(nome))
 
-    # Lo stato del bundle sovrascrive (o rimuove) quello eventualmente
-    # rimasto nella cache: il bundle è la fonte di verità anche per la
-    # ripresa del Google Doc.
-    destinazione_stato = os.path.join(cartella_lavoro, NOME_STATO)
-    if NOME_STATO in nomi:
-        with open(destinazione_stato, "wb") as file_stato:
-            file_stato.write(archivio.read(NOME_STATO))
-    elif os.path.exists(destinazione_stato):
-        os.remove(destinazione_stato)
+    # Metadati e stato sovrascrivono (o rimuovono) quanto rimasto nella cache:
+    # il bundle è la fonte di verità anche per titolo e ripresa del Google Doc.
+    for nome_file in (NOME_METADATA, NOME_STATO):
+        destinazione = os.path.join(cartella_lavoro, nome_file)
+        if nome_file in nomi:
+            with open(destinazione, "wb") as file_cache:
+                file_cache.write(archivio.read(nome_file))
+        elif os.path.exists(destinazione):
+            os.remove(destinazione)
 
     esercizi = parse_esercizi_csv(io.BytesIO(archivio.read(NOME_MANIFEST)))
 
@@ -195,12 +210,14 @@ def _percorso_backup_frame(percorso_frame: str) -> str:
     return f"{radice}_orig.jpg"
 
 
-def _scrivi_zip(esercizi: list[dict], destinazione, state_path: str | None) -> None:
+def _scrivi_zip(
+    esercizi: list[dict], destinazione, state_path: str | None, titolo: str | None
+) -> None:
     """
     Builder condiviso di salva_scheda() e scheda_bytes(): scrive l'archivio
     completo (manifest con percorsi frame normalizzati, frame esistenti su
-    disco con i loro backup *_orig.jpg, stato se presente) su 'destinazione'
-    (percorso o file-like).
+    disco con i loro backup *_orig.jpg, titolo e stato se presenti) su
+    'destinazione' (percorso o file-like).
     """
     frame_da_includere: dict[str, str] = {}
     esercizi_normalizzati = []
@@ -223,23 +240,31 @@ def _scrivi_zip(esercizi: list[dict], destinazione, state_path: str | None) -> N
 
     with zipfile.ZipFile(destinazione, "w", zipfile.ZIP_DEFLATED) as archivio:
         archivio.writestr(NOME_MANIFEST, esercizi_csv_bytes(esercizi_normalizzati))
+        if titolo is not None:
+            archivio.writestr(NOME_METADATA, json.dumps({"titolo": titolo}, ensure_ascii=False))
         for membro, percorso in frame_da_includere.items():
             archivio.write(percorso, membro)
         if state_path and os.path.exists(state_path):
             archivio.write(state_path, NOME_STATO)
 
 
-def salva_scheda(esercizi: list[dict], percorso_bundle: str, state_path: str | None = None) -> None:
+def salva_scheda(
+    esercizi: list[dict],
+    percorso_bundle: str,
+    state_path: str | None = None,
+    titolo: str | None = None,
+) -> None:
     """
     Salva (o sovrascrive) il file .scheda con il manifest CSV, tutti i frame
     attualmente esistenti su disco referenziati dagli esercizi (più i backup
     pre-ritaglio) e, se state_path esiste, lo stato di ripresa del Google
-    Doc. La scrittura è atomica: prima su "<percorso>.tmp", poi os.replace,
-    così un'interruzione non corrompe mai un bundle esistente.
+    Doc e il titolo della scheda. La scrittura è atomica: prima su
+    "<percorso>.tmp", poi os.replace, così un'interruzione non corrompe mai
+    un bundle esistente.
     """
     percorso_temporaneo = f"{percorso_bundle}.tmp"
     try:
-        _scrivi_zip(esercizi, percorso_temporaneo, state_path)
+        _scrivi_zip(esercizi, percorso_temporaneo, state_path, titolo)
         os.replace(percorso_temporaneo, percorso_bundle)
     finally:
         if os.path.exists(percorso_temporaneo):
@@ -249,11 +274,13 @@ def salva_scheda(esercizi: list[dict], percorso_bundle: str, state_path: str | N
                 pass
 
 
-def scheda_bytes(esercizi: list[dict], state_path: str | None = None) -> bytes:
+def scheda_bytes(
+    esercizi: list[dict], state_path: str | None = None, titolo: str | None = None
+) -> bytes:
     """
     Genera in memoria (nessun file su disco) lo stesso archivio prodotto da
     salva_scheda(), per il bottone di download dell'interfaccia Streamlit.
     """
     buffer = io.BytesIO()
-    _scrivi_zip(esercizi, buffer, state_path)
+    _scrivi_zip(esercizi, buffer, state_path, titolo)
     return buffer.getvalue()

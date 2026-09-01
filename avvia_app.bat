@@ -18,10 +18,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem --- Streamlit installato? ----------------------------------------------
-python -c "import streamlit" >nul 2>&1
+rem --- Dipendenze Python installate? --------------------------------------
+rem Non basta controllare Streamlit: potrebbe essere installato mentre le
+rem librerie Google richieste dall'app non lo sono ancora.
+python -c "import streamlit, yt_dlp, pandas, PIL, google.auth, googleapiclient, google_auth_httplib2, google_auth_oauthlib" >nul 2>&1
 if errorlevel 1 (
-    echo [INFO] Streamlit non risulta installato: installo i requirements...
+    echo [INFO] Una o piu' dipendenze non risultano installate: installo i requirements...
     python -m pip install -r requirements.txt
     if errorlevel 1 (
         echo.

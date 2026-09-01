@@ -31,6 +31,7 @@ from scheda_file import (  # noqa: E402
     percorso_stato,
     salva_scheda,
     scheda_bytes,
+    titolo_scheda,
 )
 
 
@@ -132,6 +133,16 @@ def test_manifest_nel_bundle_ha_percorsi_relativi(tmp_path):
         righe_manifest = parse_esercizi_csv(io.BytesIO(archivio.read(NOME_MANIFEST)))
     assert righe_manifest[0]["frame_start"] == f"{CARTELLA_FRAMES}/affondi_start.jpg"
     assert righe_manifest[0]["frame_finish"] == f"{CARTELLA_FRAMES}/affondi_finish.jpg"
+
+
+def test_salva_e_carica_titolo_scheda(tmp_path):
+    percorso_bundle = str(tmp_path / "scheda.scheda")
+    lavoro = str(tmp_path / "scheda.scheda.work")
+
+    salva_scheda([], percorso_bundle, titolo="Scheda Forza - Settembre")
+    carica_scheda(percorso_bundle, lavoro)
+
+    assert titolo_scheda(lavoro) == "Scheda Forza - Settembre"
 
 
 def test_salva_scheda_frame_mancante_su_disco(tmp_path):

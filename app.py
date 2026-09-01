@@ -21,6 +21,7 @@ from scheda_file import (
     cartella_lavoro_per_bundle,
     percorso_stato,
     salva_scheda,
+    titolo_scheda as titolo_scheda_salvato,
 )
 from video_helper import (
     FrameExtractionError,
@@ -737,6 +738,9 @@ def _render_esercizio(i, esercizio):
 
 def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
     """Renderizza la barra laterale e ritorna il titolo scheda corrente."""
+    titolo_da_caricare = st.session_state.pop("titolo_scheda_da_caricare", None)
+    if titolo_da_caricare is not None:
+        st.session_state["titolo_scheda"] = titolo_da_caricare
     with st.sidebar:
         st.title("🏋️ Workout Sheet Automator")
         titolo_scheda = st.text_input("Titolo scheda", value=titolo_default, key="titolo_scheda")
@@ -765,7 +769,8 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
             elif percorso:
                 if os.path.exists(percorso):
                     try:
-                        righe, _ = carica_scheda(percorso, cartella_lavoro_per_bundle(percorso))
+                        lavoro_importato = cartella_lavoro_per_bundle(percorso)
+                        righe, _ = carica_scheda(percorso, lavoro_importato)
                     except (SchedaFileError, ValueError) as errore:
                         st.error(str(errore))
                     except Exception as errore:
@@ -775,6 +780,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                             "esercizi": [_esercizio_da_riga(r) for r in righe],
                             "sorgente": percorso,
                             "tipo": "scheda",
+                            "titolo": titolo_scheda_salvato(lavoro_importato),
                         }
                         st.rerun()
                 else:
@@ -812,6 +818,8 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                     if pendente["tipo"] == "scheda":
                         st.session_state["percorso_scheda"] = pendente["sorgente"]
                         st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(pendente["sorgente"])
+                        if pendente.get("titolo") is not None:
+                            st.session_state["titolo_scheda_da_caricare"] = pendente["titolo"]
                         st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"])
                     st.session_state["import_pending"] = None
                     st.rerun()
@@ -835,6 +843,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                         st.session_state["esercizi"],
                         destinazione,
                         state_path=percorso_stato(cartella_lavoro_per_bundle(destinazione)),
+                        titolo=titolo_scheda,
                     )
                 except Exception as errore:
                     st.error(f"Errore durante il salvataggio della scheda: {errore}")
@@ -937,6 +946,7 @@ def _esegui_esportazione(titolo_scheda):
                 st.session_state["esercizi"],
                 st.session_state["percorso_scheda"],
                 state_path=stato_scheda,
+                titolo=titolo_scheda,
             )
             st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"])
         except Exception as errore:
