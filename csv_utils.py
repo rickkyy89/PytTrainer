@@ -48,6 +48,50 @@ def slugify(nome: str) -> str:
     return slug or "esercizio"
 
 
+def slugs_unici(esercizi: list[dict]) -> list[str]:
+    """
+    Restituisce uno slug unico per ogni esercizio, mantenendo l'ordine.
+    Duplicati ottengono suffisso _2, _3 ... (es. squat, squat_2). La
+    generazione è deterministica e gestisce anche collisioni con slug già
+    presenti come "squat_2" naturale.
+    """
+    contatori: dict[str, int] = {}
+    visti: set[str] = set()
+    risultato: list[str] = []
+    for esercizio in esercizi:
+        base = slugify(str(esercizio.get("nome") or "esercizio"))
+        # Se il base non è mai stato usato e non collide con un suffisso già emesso
+        if base not in visti and base not in contatori:
+            slug = base
+            contatori[base] = 1
+        else:
+            # Serve un suffisso numerico
+            n = contatori.get(base, 1) + 1
+            # Cerca il primo libero
+            while True:
+                candidato = f"{base}_{n}"
+                if candidato not in visti:
+                    slug = candidato
+                    contatori[base] = n
+                    break
+                n += 1
+        visti.add(slug)
+        risultato.append(slug)
+    return risultato
+
+
+def trova_duplicati_slug(esercizi: list[dict]) -> dict[str, list[int]]:
+    """
+    Mappa slug base -> indici degli esercizi che lo condividono (solo gruppi >1).
+    Utile per mostrare un avviso in UI.
+    """
+    mappa: dict[str, list[int]] = {}
+    for idx, esercizio in enumerate(esercizi):
+        slug = slugify(str(esercizio.get("nome") or "esercizio"))
+        mappa.setdefault(slug, []).append(idx)
+    return {slug: indici for slug, indici in mappa.items() if len(indici) > 1}
+
+
 def _timestamp_o_none(valore, nome_colonna: str) -> float | None:
     """
     Converte una cella di timestamp in float, oppure None se la cella è

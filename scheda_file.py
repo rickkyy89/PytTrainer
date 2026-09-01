@@ -28,8 +28,8 @@ preserva l'idempotenza tra esecuzioni: scegli_ed_estrai() salta i frame già
 presenti su disco e create_workout_document() riprende dallo state.json.
 
 Nota sulle collisioni: come nella vecchia cartella "frames/" condivisa, due
-esercizi con lo stesso slug producono gli stessi nomi file — nell'archivio
-vince l'ultimo (last-wins).
+esercizi con lo stesso slug producevano gli stessi nomi file (last-wins).
+Ora _scrivi_zip garantisce nomi unici aggiungendo _2, _3 se necessario.
 """
 
 from __future__ import annotations
@@ -221,17 +221,47 @@ def _scrivi_zip(
     """
     frame_da_includere: dict[str, str] = {}
     esercizi_normalizzati = []
+    # Traccia i nomi membro già usati per evitare collisioni su slug duplicati
+    membri_usati: set[str] = set()
     for esercizio in esercizi:
         copia = dict(esercizio)
         for chiave in ("frame_start", "frame_finish"):
             percorso = copia.get(chiave)
             if percorso and os.path.exists(percorso):
-                membro = f"{CARTELLA_FRAMES}/{os.path.basename(percorso)}"
+                base = os.path.basename(percorso)
+                membro = f"{CARTELLA_FRAMES}/{base}"
+                # Se due esercizi diversi puntano allo stesso basename (slug duplicato), rinomina il secondo
+                if membro in membri_usati:
+                    radice, ext = os.path.splitext(base)
+                    n = 2
+                    while True:
+                        candidato = f"{CARTELLA_FRAMES}/{radice}_{n}{ext}"
+                        if candidato not in membri_usati:
+                            membro = candidato
+                            # Copia fisica già esistente: il file su disco ha il nome originale, ma nel bundle
+                            # lo salviamo con nome unico. Aggiorniamo la copia del percorso per il manifest.
+                            break
+                        n += 1
+                membri_usati.add(membro)
                 frame_da_includere[membro] = percorso
                 copia[chiave] = membro
                 backup = _percorso_backup_frame(percorso)
                 if os.path.exists(backup):
-                    frame_da_includere[f"{CARTELLA_FRAMES}/{os.path.basename(backup)}"] = backup
+                    backup_membro = f"{CARTELLA_FRAMES}/{os.path.basename(backup)}"
+                    if backup_membro not in membri_usati:
+                        membri_usati.add(backup_membro)
+                        frame_da_includere[backup_membro] = backup
+                    else:
+                        # Evita collisione anche sui backup
+                        radice_b, ext_b = os.path.splitext(os.path.basename(backup))
+                        n = 2
+                        while True:
+                            cand_b = f"{CARTELLA_FRAMES}/{radice_b}_{n}{ext_b}"
+                            if cand_b not in membri_usati:
+                                membri_usati.add(cand_b)
+                                frame_da_includere[cand_b] = backup
+                                break
+                            n += 1
             else:
                 # Frame referenziato ma non (più) esistente su disco: cella
                 # vuota nel manifest, nessun errore (verrà ri-estratto).

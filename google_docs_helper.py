@@ -22,7 +22,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 import video_helper
-from csv_utils import slugify
+from csv_utils import slugify, slugs_unici
 
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
@@ -587,6 +587,10 @@ def create_workout_document(
             doc_id, stato = _crea_documento_scheda(docs_service, doc_title, state_path)
 
         slug_già_inseriti = {voce["slug"] for voce in stato["esercizi"]}
+        # Mappa esercizio id -> slug unico per gestire omonimi (squat, squat_2)
+        # L'ordine è quello di 'exercises' così la ripresa è deterministica.
+        slugs_unici_lista = slugs_unici(exercises)
+        slug_per_id = {id(ex): slug for ex, slug in zip(exercises, slugs_unici_lista)}
 
         # Raggruppiamo gli esercizi per 'gruppo' mantenendo l'ordine di prima apparizione.
         gruppi: dict[str, list[dict]] = {}
@@ -612,7 +616,7 @@ def create_workout_document(
 
             numero_esercizi_gruppo = len(esercizi_gruppo)
             for posizione, esercizio in enumerate(esercizi_gruppo):
-                slug = slugify(esercizio["nome"])
+                slug = slug_per_id[id(esercizio)]
                 if slug in slug_già_inseriti:
                     # Già presente nello stato (esecuzione precedente interrotta): saltiamo.
                     continue

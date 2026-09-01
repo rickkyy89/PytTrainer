@@ -15,7 +15,7 @@ import yt_dlp
 from PIL import Image, ImageOps
 from yt_dlp.utils import DownloadError
 
-from csv_utils import slugify
+from csv_utils import slugify, slugs_unici
 
 
 class VideoSearchError(Exception):
@@ -153,6 +153,22 @@ def extract_frame(stream_url: str, timestamp_seconds: float, output_path: str) -
 _slugify = slugify
 
 
+def _percorso_frame_unico(output_dir: str, slug: str, suffisso: str) -> str:
+    """
+    Restituisce un percorso frame non collidente in output_dir. Se
+    "<slug>_<suffisso>.jpg" esiste già, prova "<slug>_2_<suffisso>.jpg" ecc.
+    """
+    candidato = os.path.join(output_dir, f"{slug}_{suffisso}.jpg")
+    if not os.path.exists(candidato):
+        return candidato
+    n = 2
+    while True:
+        alternativo = os.path.join(output_dir, f"{slug}_{n}_{suffisso}.jpg")
+        if not os.path.exists(alternativo):
+            return alternativo
+        n += 1
+
+
 def extract_start_finish_frames(
     video_url: str,
     ts_start: float,
@@ -164,12 +180,14 @@ def extract_start_finish_frames(
     Risolve lo stream URL una sola volta ed estrae i frame START e FINISH
     per l'esercizio indicato, salvandoli in output_dir. Se lo stream URL
     risulta scaduto (errore di ffmpeg), viene ri-risolto una volta e si
-    ritenta l'estrazione.
+    ritenta l'estrazione. Se esiste già un file con lo stesso slug, usa un
+    suffisso numerico (_2, _3) per non sovrascrivere l'esercizio omonimo.
     """
     os.makedirs(output_dir, exist_ok=True)
     slug = _slugify(exercise_name)
-    path_start = os.path.join(output_dir, f"{slug}_start.jpg")
-    path_finish = os.path.join(output_dir, f"{slug}_finish.jpg")
+    # Usa nomi unici per non sovrascrivere un omonimo già estratto
+    path_start = _percorso_frame_unico(output_dir, slug, "start")
+    path_finish = _percorso_frame_unico(output_dir, slug, "finish")
 
     stream_url = get_stream_url(video_url)
 

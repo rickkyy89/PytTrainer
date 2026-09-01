@@ -12,7 +12,7 @@ import uuid
 import streamlit as st
 from PIL import Image
 
-from csv_utils import parse_esercizi_csv
+from csv_utils import parse_esercizi_csv, trova_duplicati_slug
 from google_docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
 from scheda_file import (
     SchedaFileError,
@@ -109,13 +109,20 @@ def _esercizio_da_riga(riga):
     )
 
 
-def _snapshot_esercizi(esercizi):
-    """Firma leggera della lista esercizi per rilevare modifiche non salvate."""
+def _snapshot_esercizi(esercizi, titolo=None):
+    """Firma leggera di titolo + lista esercizi per rilevare modifiche non salvate."""
+    if titolo is None:
+        # Fallback per chiamate legacy senza titolo: usa il titolo in sessione se presente
+        try:
+            titolo = st.session_state.get("titolo_scheda", "")
+        except Exception:
+            titolo = ""
     campi = [
         "nome", "spiegazione", "note", "ripetizioni", "recupero", "gruppo",
         "video_url", "ts_start", "ts_finish", "frame_start", "frame_finish",
     ]
-    return json.dumps([[e.get(c) for c in campi] for e in esercizi], default=str)
+    esercizi_firma = [[e.get(c) for c in campi] for e in esercizi]
+    return json.dumps([titolo, esercizi_firma], ensure_ascii=False, default=str)
 
 
 def _formatta_durata(secondi):
@@ -745,7 +752,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
         st.title("🏋️ Workout Sheet Automator")
         titolo_scheda = st.text_input("Titolo scheda", value=titolo_default, key="titolo_scheda")
 
-        if st.session_state.get("snapshot_salvato") == _snapshot_esercizi(st.session_state["esercizi"]):
+        if st.session_state.get("snapshot_salvato") == _snapshot_esercizi(st.session_state["esercizi"], titolo_scheda):
             st.caption("✅ Salvato")
         else:
             st.caption("⚠️ Modifiche non salvate")
@@ -820,7 +827,18 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                         st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(pendente["sorgente"])
                         if pendente.get("titolo") is not None:
                             st.session_state["titolo_scheda_da_caricare"] = pendente["titolo"]
-                        st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"])
+                            st.session_state["snapshot_salvato"] = _snapshot_esercizi(
+                                st.session_state["esercizi"], pendente["titolo"]
+                            )
+                        else:
+                            # Bundle legacy senza titolo: usa il titolo corrente in sessione
+                            st.session_state["snapshot_salvato"] = _snapshot_esercizi(
+                                st.session_state["esercizi"], st.session_state.get("titolo_scheda", "")
+                            )
+                    else:
+                        st.session_state["snapshot_salvato"] = _snapshot_esercizi(
+                            st.session_state["esercizi"], st.session_state.get("titolo_scheda", "")
+                        )
                     st.session_state["import_pending"] = None
                     st.rerun()
             with colonna_agg:
@@ -839,18 +857,30 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                 st.error("File browser non disponibile. Avvia l'app in locale.")
             elif destinazione:
                 try:
+                    stato_corrente = percorso_stato(st.session_state["cartella_lavoro"])
                     salva_scheda(
                         st.session_state["esercizi"],
                         destinazione,
-                        state_path=percorso_stato(cartella_lavoro_per_bundle(destinazione)),
+                        state_path=stato_corrente if os.path.exists(stato_corrente) else None,
                         titolo=titolo_scheda,
                     )
+                    # Sincronizza la cache di lavoro della destinazione: il bundle è la fonte
+                    # di verità ma l'UI legge subito da <destinazione>.work/state.json.
+                    if os.path.exists(stato_corrente):
+                        dest_lavoro = cartella_lavoro_per_bundle(destinazione)
+                        try:
+                            os.makedirs(dest_lavoro, exist_ok=True)
+                            shutil.copy2(stato_corrente, percorso_stato(dest_lavoro))
+                        except OSError:
+                            pass
                 except Exception as errore:
                     st.error(f"Errore durante il salvataggio della scheda: {errore}")
                 else:
                     st.session_state["percorso_scheda"] = destinazione
                     st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(destinazione)
-                    st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"])
+                    # Allinea subito il titolo in sessione se è cambiato via salvataggio
+                    st.session_state["titolo_scheda"] = titolo_scheda
+                    st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"], titolo_scheda)
                     st.success(f"Scheda salvata in '{destinazione}' ({len(st.session_state['esercizi'])} esercizi).")
                     st.rerun()
 
@@ -948,7 +978,7 @@ def _esegui_esportazione(titolo_scheda):
                 state_path=stato_scheda,
                 titolo=titolo_scheda,
             )
-            st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"])
+            st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"], titolo_scheda)
         except Exception as errore:
             st.warning(f"Documento creato, ma salvataggio della scheda fallito: {errore}")
 
@@ -973,6 +1003,17 @@ def main():
     st.header("Anteprima e modifica scheda")
 
     _assicura_uid()
+    duplicati = trova_duplicati_slug(st.session_state["esercizi"])
+    if duplicati:
+        dettagli = ", ".join(
+            f"'{slug}' alle posizioni {', '.join(str(i+1) for i in idx)}"
+            for slug, idx in duplicati.items()
+        )
+        st.warning(
+            f"Nomi duplicati rilevati (stesso slug): {dettagli}. "
+            "I frame verranno salvati con suffisso _2, _3 per evitare sovrascritture, "
+            "ma rinominare gli esercizi è consigliato."
+        )
     indice_da_rimuovere = None
     spostamento = None
     numero_esercizi = len(st.session_state["esercizi"])
