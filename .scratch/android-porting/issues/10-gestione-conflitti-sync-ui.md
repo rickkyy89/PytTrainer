@@ -6,8 +6,8 @@
 
 **Status:** blocked-dependency
 
-**Blocco attuale:** richiede la home Kivy del ticket 05, sospesa in attesa
-della validazione OAuth Android del ticket 01.
+**Blocco attuale:** richiede la home Kivy del ticket 05, sospesa finche' non
+sono configurati cartella Drive e OAuth Android dell'app di produzione.
 
 - [ ] Controllo conflitto all'apertura scheda
 - [ ] Controllo conflitto al salvataggio

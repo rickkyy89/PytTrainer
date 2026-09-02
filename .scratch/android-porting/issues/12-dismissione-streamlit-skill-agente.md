@@ -7,7 +7,7 @@
 **Status:** blocked-dependency
 
 **Blocco attuale:** richiede la parita' funzionale del ticket 08, che non puo'
-essere verificata finche' il login Android del ticket 01 resta bloccato.
+essere verificata finche' la home del ticket 05 resta bloccata.
 
 - [ ] `app.py` e dipendenza Streamlit rimossi
 - [ ] Skill agente per generazione CSV/manifest aggiornata e funzionante

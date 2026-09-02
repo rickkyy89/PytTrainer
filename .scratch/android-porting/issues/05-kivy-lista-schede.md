@@ -4,7 +4,14 @@
 
 **Blocked by:** 01 — Spike Android; 04 — `core.drive_sync`
 
-**Status:** ready-for-agent
+**Status:** blocked-user
+
+**Blocco attuale:** per l'app finale servono due configurazioni non deducibili
+dal repository: l'ID della cartella Drive dedicata e un client OAuth Android
+registrato per il package e il certificato di firma di produzione. Il client
+dello spike (`org.ptt.pttspike` con SHA-1 debug) non e' riusabile per la
+release pyTrainer. Quando package, keystore e cartella saranno definiti, la
+home potra' essere verificata su PC e sul tablet.
 
 - [ ] Home con lista schede da Drive (nome + data modifica), aggiornabile
 - [ ] Apertura scheda in sola lettura: esercizi e frame visibili

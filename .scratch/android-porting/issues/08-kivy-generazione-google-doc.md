@@ -7,7 +7,7 @@
 **Status:** blocked-dependency
 
 **Blocco attuale:** richiede l'editor Kivy del ticket 06, a sua volta bloccato
-dalla home del ticket 05 e dalla validazione OAuth Android del ticket 01.
+dalla home del ticket 05 e dalla configurazione dell'app di produzione.
 
 - [ ] Esportazione con conteggio pronti e conferma
 - [ ] Progress per esercizio durante la generazione
