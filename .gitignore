@@ -13,6 +13,8 @@ __pycache__/
 
 # Runtime artifacts
 *.log
+drive-folders.json
+drive-cache/
 
 # Project Management
 workout_sheet_mgmt/

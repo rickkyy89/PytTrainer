@@ -4,19 +4,23 @@
 
 **Blocked by:** 01 — Spike Android; 04 — `core.drive_sync`
 
-**Status:** blocked-user
+**Status:** in-progress
 
-**Blocco attuale:** per l'app finale servono due configurazioni non deducibili
-dal repository: l'ID della cartella Drive dedicata e un client OAuth Android
-registrato per il package e il certificato di firma di produzione. Il client
-dello spike (`org.ptt.pttspike` con SHA-1 debug) non e' riusabile per la
-release pyTrainer. Quando package, keystore e cartella saranno definiti, la
-home potra' essere verificata su PC e sul tablet.
+**Implementato nel codice:** home Kivy PC con controller testabile, cartelle
+Drive locali persistenti (iniziale `1UthYZdR1GiVADYNUWBN1cX3z790FEkXq`),
+lista/refresh, download e lettura sola, creazione/upload, conferma
+eliminazione e stato Drive non disponibile. La composizione PC usa
+`LocalCredentialsProvider` e la build del client Drive in modo lazy/iniettabile.
 
-- [ ] Home con lista schede da Drive (nome + data modifica), aggiornabile
-- [ ] Apertura scheda in sola lettura: esercizi e frame visibili
-- [ ] Creazione nuova scheda vuota sincronizzata su Drive
-- [ ] Eliminazione scheda con conferma
-- [ ] Avviso offline visibile
+**Blocco residuo:** la verifica su dispositivo, la build Android e l'OAuth di
+produzione restano da fare. Il client dello spike (`org.ptt.pttspike` con SHA-1
+debug) non e' riusabile: il package di produzione deve essere esattamente
+`org.ptt.pyTrainer`, con client OAuth Android e certificato release registrati.
+
+- [x] Home con lista schede da Drive (nome + data modifica), aggiornabile
+- [x] Apertura scheda in sola lettura: esercizi e frame visibili
+- [x] Creazione nuova scheda vuota sincronizzata su Drive
+- [x] Eliminazione scheda con conferma
+- [x] Avviso offline visibile
 - [ ] Login Google funzionante su PC e su Android
 - [ ] App avviabile su PC e installabile su Android (build interna)
