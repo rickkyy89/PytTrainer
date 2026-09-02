@@ -251,6 +251,18 @@ def test_parse_esercizi_csv_timestamp_non_numerico():
     assert "TimestampStart" in str(errore.value)
 
 
+@pytest.mark.parametrize("mancante", ["NA", "NaN"])
+def test_parse_esercizi_csv_timestamp_mancante_pandas_compatibile(mancante):
+    csv_testo = (
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero,TimestampStart\n"
+        f"Squat,Scendi e risali,Attenzione,3x12,90 SEC,{mancante}\n"
+    )
+
+    esercizi = parse_esercizi_csv(io.StringIO(csv_testo))
+
+    assert esercizi[0]["ts_start"] is None
+
+
 def test_parse_esercizi_csv_binario_gestisce_bom_e_campi_quotati():
     dati = (
         b"\xef\xbb\xbfNome,Spiegazione,Note,Ripetizioni,Recupero\n"

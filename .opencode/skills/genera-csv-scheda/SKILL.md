@@ -1,10 +1,11 @@
 ---
 name: genera-csv-scheda
-description: Crea CSV iniziali per pyTrainer da richiesta diretta, YouTube o Instagram, con VideoURL e timestamp per ritrovo rapido
+description: Crea bundle .scheda iniziali per pyTrainer da richiesta diretta, YouTube o Instagram, con VideoURL e timestamp per ritrovo rapido
 ---
 
 ## Cosa fa
-Genera un CSV manifest iniziale (11 colonne) pronto per `csv_utils.parse_esercizi_csv` / `scheda_file.salva_scheda`. Supporta tre sorgenti:
+Genera una `.scheda` iniziale con manifest CSV (11 colonne) pronto per
+`core.scheda_file.salva_scheda`. Supporta tre sorgenti:
 - **richiesta diretta** (es. "5 esercizi per rinforzare l'arcata plantare")
 - **YouTube** (singolo video o playlist) - estrae esercizi, salva `VideoURL` + `TimestampStart`/`TimestampFinish`
 - **Instagram** (post/reel) - estrae esercizi, salva `VideoURL` + timestamp se ricavabile
@@ -26,7 +27,8 @@ Ordine canonico: `Nome,Spiegazione,Note,Ripetizioni,Recupero,Gruppo,VideoURL,Tim
 - `VideoURL`/`TimestampStart`/`TimestampFinish`: valorizza se fonte e' video; lascia vuoto se richiesta diretta
 - `FrameStartPath`/`FrameFinishPath`: lascia vuoto nel CSV iniziale (verra' popolato dopo `scegli_ed_estrai`)
 
-Validazione: usa `csv_utils.scrivi_esercizi_csv` o `csv_utils.esercizi_csv_bytes` per garantire round-trip con `parse_esercizi_csv`. Verifica con `python -c "from csv_utils import parse_esercizi_csv; parse_esercizi_csv('output.csv')"`.
+Il CSV e' solo un artefatto in memoria dentro il bundle: non conservarlo come
+file separato.
 
 ## Workflow
 
@@ -71,22 +73,15 @@ Validazione: usa `csv_utils.scrivi_esercizi_csv` o `csv_utils.esercizi_csv_bytes
 3. `VideoURL` = link Instagram originale fornito dall'utente
 4. `TimestampStart`/`TimestampFinish` = secondi nel reel dove appare l'esercizio (se reel unico con piu' esercizi, stima equamente: es. reel 30s con 3 esercizi -> 0-10, 10-20, 20-30). Se non stimabile, lascia vuoto.
 
-### 3. Genera il CSV
+### 3. Genera il bundle `.scheda`
 ```python
-from csv_utils import scrivi_esercizi_csv, parse_esercizi_csv
+from core.scheda_file import salva_scheda
 esercizi = [
     {"nome": "...", "spiegazione": "...", "note": "...", "ripetizioni": "3x12", "recupero": "60 SEC",
      "gruppo": "Attivazione", "video_url": "https://...", "ts_start": 12.0, "ts_finish": 25.0,
      "frame_start": None, "frame_finish": None},
     # ...
 ]
-scrivi_esercizi_csv(esercizi, "scheda_iniziale.csv")
-# verifica
-parse_esercizi_csv("scheda_iniziale.csv")
-```
-Per creare direttamente il bundle `.scheda`:
-```python
-from scheda_file import salva_scheda
 salva_scheda(esercizi, "scheda_iniziale.scheda")
 ```
 

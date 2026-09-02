@@ -102,15 +102,31 @@ def _timestamp_o_none(valore, nome_colonna: str) -> float | None:
     if valore is None or (isinstance(valore, float) and math.isnan(valore)):
         return None
     testo = str(valore).strip()
-    if not testo:
+    if not testo or testo.casefold() in {
+        "#n/a",
+        "#na",
+        "-nan",
+        "-1.#ind",
+        "-1.#qnan",
+        "-na",
+        "1.#ind",
+        "1.#qnan",
+        "<na>",
+        "n/a",
+        "na",
+        "nan",
+        "null",
+        "none",
+    }:
         return None
     try:
-        return float(testo)
+        timestamp = float(testo)
     except ValueError as exc:
         raise ValueError(
             f"Valore non numerico nella colonna '{nome_colonna}': '{testo}'. "
             "I timestamp devono essere numeri (secondi), es. 12.5."
         ) from exc
+    return None if math.isnan(timestamp) else timestamp
 
 
 def parse_esercizi_csv(file_like) -> list[dict]:
