@@ -16,5 +16,9 @@ __pycache__/
 drive-folders.json
 drive-cache/
 
+# Android build caches and generated APKs
+.buildozer/
+bin/
+
 # Project Management
 workout_sheet_mgmt/

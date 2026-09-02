@@ -12,10 +12,19 @@ lista/refresh, download e lettura sola, creazione/upload, conferma
 eliminazione e stato Drive non disponibile. La composizione PC usa
 `LocalCredentialsProvider` e la build del client Drive in modo lazy/iniettabile.
 
-**Blocco residuo:** la verifica su dispositivo, la build Android e l'OAuth di
-produzione restano da fare. Il client dello spike (`org.ptt.pttspike` con SHA-1
-debug) non e' riusabile: il package di produzione deve essere esattamente
-`org.ptt.pyTrainer`, con client OAuth Android e certificato release registrati.
+**Blocco residuo:** la verifica su dispositivo e l'OAuth di produzione restano
+da fare. Il client dello spike (`org.ptt.pttspike`) non e' riusabile: in Google
+Cloud va aggiunto un client OAuth Android per il package esatto
+`org.ptt.pyTrainer`, usando per la build debug questo SHA-1:
+
+```text
+BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
+```
+
+La prima build debug con `buildozer -v android debug` ha raggiunto la
+compilazione di OpenSSL ma e' stata interrotta dal limite temporale
+dell'ambiente prima di generare l'APK; la cache `.buildozer/` permette di
+riprenderla.
 
 - [x] Home con lista schede da Drive (nome + data modifica), aggiornabile
 - [x] Apertura scheda in sola lettura: esercizi e frame visibili
