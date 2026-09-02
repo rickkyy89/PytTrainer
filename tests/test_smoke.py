@@ -251,6 +251,18 @@ def test_parse_esercizi_csv_timestamp_non_numerico():
     assert "TimestampStart" in str(errore.value)
 
 
+def test_parse_esercizi_csv_binario_gestisce_bom_e_campi_quotati():
+    dati = (
+        b"\xef\xbb\xbfNome,Spiegazione,Note,Ripetizioni,Recupero\n"
+        b'"Squat, goblet","Scendi mantenendo il busto alto","Ginocchia stabili",3x12,90 SEC\n'
+    )
+
+    esercizi = parse_esercizi_csv(io.BytesIO(dati))
+
+    assert esercizi[0]["nome"] == "Squat, goblet"
+    assert esercizi[0]["spiegazione"] == "Scendi mantenendo il busto alto"
+
+
 def test_scrivi_esercizi_csv_round_trip(tmp_path):
     """scrivi_esercizi_csv → parse_esercizi_csv deve restituire gli stessi valori."""
     esercizi = [

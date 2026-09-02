@@ -12,10 +12,11 @@ timestamp.
 
 from __future__ import annotations
 
+import csv
 import io
+import math
+import os
 import re
-
-import pandas as pd
 
 COLONNE_ATTESE = {"Nome", "Spiegazione", "Note", "Ripetizioni", "Recupero"}
 
@@ -98,7 +99,7 @@ def _timestamp_o_none(valore, nome_colonna: str) -> float | None:
     vuota/assente. Solleva ValueError con messaggio chiaro se il valore non è
     numerico.
     """
-    if valore is None or (isinstance(valore, float) and pd.isna(valore)):
+    if valore is None or (isinstance(valore, float) and math.isnan(valore)):
         return None
     testo = str(valore).strip()
     if not testo:
@@ -124,9 +125,9 @@ def parse_esercizi_csv(file_like) -> list[dict]:
     Solleva ValueError con un messaggio chiaro se le colonne obbligatorie non
     sono tutte presenti nel file, oppure se un timestamp non è numerico.
     """
-    df = pd.read_csv(file_like)
-
-    colonne_presenti = set(df.columns)
+    testo = _leggi_testo_csv(file_like)
+    lettore = csv.DictReader(io.StringIO(testo))
+    colonne_presenti = set(lettore.fieldnames or [])
     colonne_mancanti = COLONNE_ATTESE - colonne_presenti
     if colonne_mancanti:
         raise ValueError(
@@ -135,48 +136,60 @@ def parse_esercizi_csv(file_like) -> list[dict]:
             f"Colonne attese: {sorted(COLONNE_ATTESE)}."
         )
 
-    # I valori mancanti (NaN) diventano stringhe vuote per evitare problemi a
-    # valle (rendering UI, generazione documento). I timestamp sono esclusi
-    # da questo riempimento perché gestiti a parte (serve distinguere
-    # "assente" da un eventuale "0").
-    colonne_timestamp = {"TimestampStart", "TimestampFinish"}
-    colonne_da_riempire = [colonna for colonna in df.columns if colonna not in colonne_timestamp]
-    df[colonne_da_riempire] = df[colonne_da_riempire].fillna("")
-
     esercizi = []
-    for _, riga in df.iterrows():
+    for riga in lettore:
         esercizio = {
-            "nome": str(riga["Nome"]).strip(),
-            "spiegazione": str(riga["Spiegazione"]).strip(),
-            "note": str(riga["Note"]).strip(),
-            "ripetizioni": str(riga["Ripetizioni"]).strip(),
-            "recupero": str(riga["Recupero"]).strip(),
-            "gruppo": str(riga["Gruppo"]).strip() if "Gruppo" in df.columns else "",
-            "video_url": str(riga["VideoURL"]).strip() if "VideoURL" in df.columns else "",
+            "nome": _testo_cella(riga["Nome"]),
+            "spiegazione": _testo_cella(riga["Spiegazione"]),
+            "note": _testo_cella(riga["Note"]),
+            "ripetizioni": _testo_cella(riga["Ripetizioni"]),
+            "recupero": _testo_cella(riga["Recupero"]),
+            "gruppo": _testo_cella(riga["Gruppo"]) if "Gruppo" in colonne_presenti else "",
+            "video_url": _testo_cella(riga["VideoURL"]) if "VideoURL" in colonne_presenti else "",
             "ts_start": (
                 _timestamp_o_none(riga["TimestampStart"], "TimestampStart")
-                if "TimestampStart" in df.columns
+                if "TimestampStart" in colonne_presenti
                 else None
             ),
             "ts_finish": (
                 _timestamp_o_none(riga["TimestampFinish"], "TimestampFinish")
-                if "TimestampFinish" in df.columns
+                if "TimestampFinish" in colonne_presenti
                 else None
             ),
             "frame_start": (
-                (str(riga["FrameStartPath"]).strip() or None) if "FrameStartPath" in df.columns else None
+                (_testo_cella(riga["FrameStartPath"]) or None)
+                if "FrameStartPath" in colonne_presenti
+                else None
             ),
             "frame_finish": (
-                (str(riga["FrameFinishPath"]).strip() or None) if "FrameFinishPath" in df.columns else None
+                (_testo_cella(riga["FrameFinishPath"]) or None)
+                if "FrameFinishPath" in colonne_presenti
+                else None
             ),
         }
         esercizi.append(esercizio)
     return esercizi
 
 
-def _dataframe_da_esercizi(esercizi: list[dict]) -> pd.DataFrame:
+def _leggi_testo_csv(file_like) -> str:
+    """Restituisce testo UTF-8 da un percorso o da un file-like testuale/binario."""
+    if isinstance(file_like, (str, bytes, os.PathLike)):
+        with open(file_like, encoding="utf-8-sig", newline="") as file_csv:
+            return file_csv.read()
+
+    contenuto = file_like.read()
+    if isinstance(contenuto, bytes):
+        return contenuto.decode("utf-8-sig")
+    return contenuto
+
+
+def _testo_cella(valore) -> str:
+    return "" if valore is None else str(valore).strip()
+
+
+def _righe_csv_da_esercizi(esercizi: list[dict]) -> list[dict]:
     """
-    Costruisce il DataFrame delle 11 colonne del manifest (le 5 obbligatorie
+    Costruisce le righe delle 11 colonne del manifest (le 5 obbligatorie
     più le 6 opzionali, nell'ordine di _COLONNE_CSV_COMPLETE) a partire dalla
     lista di dizionari esercizio. Le chiavi opzionali mancanti o a None
     diventano celle vuote. Logica condivisa da scrivi_esercizi_csv() ed
@@ -200,7 +213,15 @@ def _dataframe_da_esercizi(esercizi: list[dict]) -> pd.DataFrame:
                 "FrameFinishPath": esercizio.get("frame_finish") or "",
             }
         )
-    return pd.DataFrame(righe, columns=_COLONNE_CSV_COMPLETE)
+    return righe
+
+
+def _csv_testo_da_esercizi(esercizi: list[dict]) -> str:
+    buffer = io.StringIO(newline="")
+    scrittore = csv.DictWriter(buffer, fieldnames=_COLONNE_CSV_COMPLETE, lineterminator="\n")
+    scrittore.writeheader()
+    scrittore.writerows(_righe_csv_da_esercizi(esercizi))
+    return buffer.getvalue()
 
 
 def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
@@ -211,18 +232,15 @@ def scrivi_esercizi_csv(esercizi: list[dict], percorso: str) -> None:
     restituisce gli stessi valori (round-trip). Le chiavi opzionali mancanti
     o a None diventano celle vuote nel CSV.
     """
-    df = _dataframe_da_esercizi(esercizi)
-    df.to_csv(percorso, index=False)
+    with open(percorso, "w", encoding="utf-8", newline="") as file_csv:
+        file_csv.write(_csv_testo_da_esercizi(esercizi))
 
 
 def esercizi_csv_bytes(esercizi: list[dict]) -> bytes:
     """
     Genera in memoria (nessun file su disco) lo stesso CSV arricchito
     prodotto da scrivi_esercizi_csv(), utile per il bottone di download
-    diretto dall'interfaccia Streamlit. Riusa _dataframe_da_esercizi() per
+    diretto dall'interfaccia Streamlit. Riusa _righe_csv_da_esercizi() per
     non duplicare la logica di costruzione delle colonne.
     """
-    df = _dataframe_da_esercizi(esercizi)
-    buffer = io.StringIO()
-    df.to_csv(buffer, index=False)
-    return buffer.getvalue().encode("utf-8")
+    return _csv_testo_da_esercizi(esercizi).encode("utf-8")

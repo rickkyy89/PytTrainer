@@ -63,7 +63,7 @@ i file esistenti, zero migrazione.
 3. As an allenatore, I want che i frame dentro il `.scheda` mantengano gli stessi nomi canonici (`frames/<slug>_start.jpg`, `frames/<slug>_finish.jpg`) su PC e Android, so that i bundle siano intercambiabili senza rinomine.
 4. As an allenatore, I want che i backup di ritaglio (`<nome>_orig.jpg`) viaggino dentro il bundle come oggi, so that posso annullare un crop anche dall'altra piattaforma.
 5. As an allenatore, I want che i metadati della scheda (titolo) e lo stato di ripresa del Google Doc (`state.json`) restino dentro il bundle, so that la ripresa della generazione funzioni indipendentemente dal dispositivo.
-6. As a sviluppatore, I want che il core non dipenda dalla working directory, so that lo stesso codice giri su PC, su Android e nei test senza workaround tipo `avvia_app.bat`.
+6. As a sviluppatore, I want che il core non dipenda dalla working directory, so that lo stesso codice giri su PC, su Android e nei test senza launcher workaround.
 7. As a sviluppatore, I want che il core non importi alcuna libreria UI (Streamlit, Kivy, tkinter), so that sia testabile e riusabile ovunque.
 
 ### Sincronizzazione Google Drive
@@ -126,7 +126,7 @@ i file esistenti, zero migrazione.
 
 ### Migrazione e qualità
 
-45. As a sviluppatore, I want che gli script legacy a CSV sciolto (`build_doc*.py`, `process_one.py`, `run_flow.py`, `avvia_app.bat`) siano eliminati nel refactor, so that resta una sola modalità supportata: il bundle `.scheda`.
+45. As a sviluppatore, I want che il flusso legacy a CSV sciolto sia eliminato nel refactor, so that resta una sola modalità supportata: il bundle `.scheda`.
 46. As a sviluppatore, I want una suite pytest sul core (bundle, CSV, sync, stato ripresa), so that il refactor non rompe il comportamento esistente.
 47. As a sviluppatore, I want che CLAUDE.md sia aggiornato a ogni cambio di API del core, so that gli agenti Cowork continuano a operare correttamente.
 48. As an allenatore, I want che i miei `.scheda` esistenti si aprano senza alcuna conversione, so that non perdo il lavoro fatto finora.
@@ -144,8 +144,8 @@ i file esistenti, zero migrazione.
 
 1. **Base directory / storage**: nessun path CWD-relativo nel core. Credenziali, token, cache
    di lavoro (`.work`) e directory frame sono sempre ricavati da una directory base esplicita
-   passata dal chiamante. Eliminato il workaround di `avvia_app.bat` (che oggi fa `cd` per
-   via dei path relativi delle credenziali).
+   passata dal chiamante. Non serve alcun launcher che cambi directory per compensare path
+   relativi delle credenziali.
 2. **Backend ffmpeg**: interfaccia unica "estrai un frame JPEG a timestamp T da uno stream
    URL con questi header HTTP". Implementazione PC: binario `ffmpeg` via subprocess
    (comportamento attuale, incluso fallback anti-403 con download temporaneo su urllib).
@@ -205,9 +205,8 @@ i file esistenti, zero migrazione.
 
 ### Script legacy e asset PC-only eliminati
 
-- Eliminati nel refactor: `build_doc.py`, `build_doc_step.py`, `process_one.py`,
-  `run_flow.py`, `avvia_app.bat`. La modalità "CSV sciolto + cartella state/" non è più
-  supportata; esiste solo il bundle `.scheda`.
+- Eliminato il flusso a CSV sciolto e cartella di stato separata; esiste solo il bundle
+  `.scheda`.
 - `app.py` (Streamlit) resta finché l'app Kivy non raggiunge parità funzionale, poi viene
   eliminato. Fino ad allora va fatto girare sopra il nuovo `core` (import aggiornati).
 
@@ -273,12 +272,11 @@ i file esistenti, zero migrazione.
      validare con un'app scheletro.
   Si raccomanda una spike tecnica (app Kivy minima che fa: ricerca yt-dlp + estrazione un
   frame + login Google) prima o all'inizio del lavoro sulla UI.
-- **Dipendenze attuali** (da `requirements.txt`, non pinnate): streamlit, yt-dlp, pandas,
-  pillow, google-api-python-client, google-auth-httplib2, google-auth-oauthlib. Per il core
-  andranno valutate versioni pinnate compatibili con buildozer (in particolare pandas su
-  Android: valutare se sostituire l'uso di pandas in `csv_utils` con il modulo `csv`
-  standard, che eliminerebbe la dipendenza più pesante dal porting — decisione rimandata
-  alla fase di refactor, con test a parità di comportamento).
+- **Decisione CSV**: `core.csv_utils` usa il modulo standard `csv`, non `pandas`. Il parser
+  conserva le API e il mapping delle 11 colonne, inclusi input testuali e binari e il
+  round-trip; i test del core ne verificano il comportamento. Questo rimuove la dipendenza
+  Python piu pesante dal porting Android. Le dipendenze attuali sono: streamlit, yt-dlp,
+  pillow, google-api-python-client, google-auth-httplib2, google-auth-oauthlib.
 - La cartella Drive oggi hardcoded in `app.py`
   (`1UthYZdR1GiVADYNUWBN1cX3z790FEkXq`) diventa configurazione dell'app.
 - Branch di lavoro: `android-porting` (creato da `claude/pc-refactor-schede`).

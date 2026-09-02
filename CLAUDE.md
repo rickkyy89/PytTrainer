@@ -37,10 +37,6 @@ ricompatta tutto in modo atomico.
 | `importa_frame_da_immagine(path_immagine, nome_esercizio, suffisso, output_dir)` → `str` | `core.video_helper` | Usa un'immagine dell'utente al posto del frame estratto: la converte in JPEG col nome canonico `<slug>_start.jpg`/`<slug>_finish.jpg` (`suffisso` = `"start"`/`"finish"`), sostituendo il frame esistente |
 | `LocalCredentialsProvider(base_dir)` / `PcFfmpegBackend()` | `core.platform` | Implementazioni PC iniettabili per credenziali Google e ffmpeg; il core non cerca più credenziali rispetto alla CWD |
 
-(`scrivi_esercizi_csv` e `percorso_stato_per_titolo` esistono ancora solo per
-il flusso legacy a CSV sciolto: nel flusso a bundle usa `salva_scheda` e
-`percorso_stato`.)
-
 ## 1. Installazione (una sola volta)
 
 ```bash

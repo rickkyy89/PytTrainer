@@ -23,10 +23,11 @@ Il flusso di lavoro tipico è:
 4. Genera il Google Doc: verrà creato un documento A4 con un modulo per
    ciascun esercizio pronto (cioè con entrambi i fotogrammi estratti).
 
-In qualsiasi momento puoi salvare la scheda su CSV (o scaricarla) dalla
-sidebar per riprendere il lavoro più tardi, e ritagliare (crop) i fotogrammi
-START/FINISH direttamente dall'anteprima, con possibilità di ripristinare
-l'originale.
+In qualsiasi momento puoi salvare o scaricare la scheda come bundle `.scheda`
+(manifest CSV, fotogrammi e stato di ripresa nello stesso archivio) per
+riprenderla più tardi. Il CSV resta disponibile solo come formato di import
+degli esercizi. Puoi inoltre ritagliare (crop) i fotogrammi START/FINISH
+direttamente dall'anteprima, con possibilità di ripristinare l'originale.
 
 Per riordinare la lista, ogni esercizio ha un campo **Posizione** con il
 pulsante **↕️ Sposta**: scegli il numero a cui vuoi portarlo e tutti gli altri
@@ -139,16 +140,13 @@ queste 5 colonne obbligatorie (l'ordine non è rilevante):
 Un file di esempio è incluso nel progetto: [`esercizi_example.csv`](esercizi_example.csv)
 (scaricabile anche direttamente dall'interfaccia dell'app).
 
-## Formato CSV esteso (manifest)
+## Manifest CSV nel bundle
 
-Oltre alle 5 colonne obbligatorie, il CSV supporta 6 colonne opzionali che lo
-trasformano in un manifest persistente della scheda: se assenti (o vuote) il
-comportamento resta identico a quello del CSV minimo (ricerca automatica del
-video, euristica sui timestamp). Sono pensate soprattutto per l'uso
-automatico da agente (vedi `CLAUDE.md`), tramite `video_helper.scegli_ed_estrai`
-e `csv_utils.scrivi_esercizi_csv`, ma un CSV così arricchito può anche essere
-caricato dall'interfaccia Streamlit: i valori precompilano URL video,
-timestamp e anteprima dei frame (se i file esistono ancora su disco).
+Oltre alle 5 colonne obbligatorie, il manifest `scheda.csv` contenuto nel
+bundle `.scheda` supporta 6 colonne opzionali. Se assenti (o vuote), si usa la
+ricerca automatica del video e l'euristica sui timestamp. Un CSV esteso può
+anche essere importato nell'interfaccia Streamlit per precompilare URL video,
+timestamp e anteprime dei frame.
 
 | Colonna | Obbligatoria | Descrizione |
 |---|---|---|
@@ -158,28 +156,21 @@ timestamp e anteprima dei frame (se i file esistono ancora su disco).
 | `TimestampFinish` | no | Secondo del frame FINISH. Se assente, euristica del 50% della durata. |
 | `FrameStartPath` / `FrameFinishPath` | no | Percorso dei frame già estratti in una run precedente. Se presenti e i file esistono ancora, la ri-estrazione viene saltata. |
 
-Dopo l'elaborazione il CSV va riscritto arricchito (`scrivi_esercizi_csv`) con
-i valori effettivamente usati: diventa così il "salvataggio" della scheda,
-riaprirlo e ri-lanciare la generazione dà lo stesso risultato (idempotenza),
-e modificare a mano una singola cella (es. `VideoURL` o i timestamp) permette
-di correggere un solo esercizio senza rifare tutto da capo.
+Al salvataggio il manifest, i frame e lo stato vengono ricompattati nel bundle
+`.scheda`. Riaprirlo e rilanciare la generazione dà lo stesso risultato
+(idempotenza); modificare `VideoURL` o i timestamp nell'esercizio permette di
+correggere un solo esercizio senza rifare tutto da capo.
 
 ## Ripresa e stato
 
-`create_workout_document(..., state_path=...)` salva un file di stato JSON
-(convenzionalmente `<slug_titolo>.state.json`, vedi
-`google_docs_helper.percorso_stato_per_titolo`) con il `doc_id` del
-documento e l'elenco degli esercizi già inseriti (nome, slug, id del named
-range che li àncora nel documento, gruppo). Se l'esecuzione si interrompe a
-metà, rilanciare la generazione con lo stesso `state_path` riusa il
-documento esistente e aggiunge solo gli esercizi mancanti, invece di
-rigenerare tutto da zero.
-
-Questi file sono esclusi da git (vedi `.gitignore`, pattern `*.state.json`)
-perché legati a un documento Google specifico. Per ripartire da zero con un
-nuovo documento, basta cancellare il file di stato corrispondente: alla
-generazione successiva ne verrà creato uno nuovo insieme a un nuovo Google
-Doc.
+`create_workout_document(..., state_path=...)` salva `state.json` nella
+cartella di lavoro del bundle, con il `doc_id` del documento e l'elenco degli
+esercizi già inseriti (nome, slug, id del named range che li àncora nel
+documento, gruppo). `salva_scheda(..., state_path=...)` lo include nel bundle.
+Se l'esecuzione si interrompe a metà, riaprire lo stesso `.scheda` riusa il
+documento esistente e aggiunge solo gli esercizi mancanti. Per ricominciare da
+zero, elimina `state.json` dalla cartella di lavoro e salva nuovamente il
+bundle senza `state_path`.
 
 Se il documento a cui punta lo stato è stato cancellato da Drive, non serve
 fare nulla a mano: alla generazione successiva la scheda viene rigenerata
@@ -214,9 +205,10 @@ due chiamate:
 ```
 PytTrainer/
 ├── app.py                   # Interfaccia Streamlit (in italiano)
-├── video_helper.py          # Ricerca YouTube + estrazione frame via ffmpeg
-├── google_docs_helper.py    # Autenticazione e generazione del Google Doc
-├── csv_utils.py             # Parsing/validazione del CSV esercizi
+├── core/                    # Logica condivisa, senza dipendenze UI
+├── video_helper.py          # Wrapper compatibile di core.video_helper
+├── google_docs_helper.py    # Wrapper compatibile di core.docs_helper
+├── csv_utils.py             # Wrapper compatibile di core.csv_utils
 ├── requirements.txt         # Dipendenze Python
 ├── esercizi_example.csv     # CSV di esempio
 ├── README.md
@@ -230,8 +222,8 @@ File generati/usati a runtime (esclusi da git, vedi `.gitignore`):
 - `credentials.json` / `service_account.json` - credenziali Google (da
   configurare come descritto sopra).
 - `token.json` - token OAuth generato automaticamente dopo il primo login.
-- `frames/` - cartella dove vengono salvati i fotogrammi START/FINISH
-  estratti dai video.
+- `<nome>.scheda.work/` - cache estraibile e rigenerabile del bundle, con
+  frame e `state.json`.
 
 ## Esecuzione dei test
 

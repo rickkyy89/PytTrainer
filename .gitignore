@@ -1,8 +1,6 @@
 credentials.json
 service_account.json
 token.json
-frames/
-*.state.json
 *.scheda
 *.scheda.tmp
 *.scheda.work/
@@ -15,8 +13,6 @@ __pycache__/
 
 # Runtime artifacts
 *.log
-state/
-scheda.csv
 
 # Project Management
 workout_sheet_mgmt/

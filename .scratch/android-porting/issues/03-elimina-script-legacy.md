@@ -4,10 +4,10 @@
 
 **Blocked by:** 02 — Estrarre package `core`
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `build_doc.py`, `build_doc_step.py`, `process_one.py`, `run_flow.py`, `avvia_app.bat` eliminati
-- [ ] Nessun riferimento residuo agli script legacy nel codice e nella documentazione
-- [ ] Decisione pandas-vs-csv presa e documentata; se sostituito, test di `csv_utils` verdi a parità di comportamento
-- [ ] Test suite verde dopo le rimozioni
-- [ ] CLAUDE.md aggiornato (solo flusso bundle `.scheda`)
+- [x] `build_doc.py`, `build_doc_step.py`, `process_one.py`, `run_flow.py`, `avvia_app.bat` eliminati
+- [x] Nessun riferimento residuo agli script legacy nel codice e nella documentazione
+- [x] Decisione pandas-vs-csv presa e documentata; test di `csv_utils` verdi a parità di comportamento
+- [x] Test suite verde dopo le rimozioni
+- [x] CLAUDE.md aggiornato (solo flusso bundle `.scheda`)
