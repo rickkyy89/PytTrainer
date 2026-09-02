@@ -776,14 +776,10 @@ def update_exercise_media(
         if ts_finish is None:
             ts_finish = durata * 0.50
 
-    if ffmpeg_backend is None:
-        percorso_start, percorso_finish = video_helper.extract_start_finish_frames(
-            video_url, ts_start, ts_finish, exercise_name, output_dir
-        )
-    else:
-        percorso_start, percorso_finish = video_helper.extract_start_finish_frames(
-            video_url, ts_start, ts_finish, exercise_name, output_dir, ffmpeg_backend=ffmpeg_backend
-        )
+    percorso_start, percorso_finish = video_helper.extract_start_finish_frames(
+        video_url, ts_start, ts_finish, exercise_name, output_dir,
+        ffmpeg_backend=ffmpeg_backend,
+    )
 
     file_id_caricati: list[str] = []
     try:

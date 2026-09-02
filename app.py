@@ -15,7 +15,7 @@ from PIL import Image
 
 from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
 from core.docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
-from core.platform import LocalCredentialsProvider
+from core.platform import LocalCredentialsProvider, PcFfmpegBackend
 from core.scheda_file import (
     SchedaFileError,
     carica_scheda,
@@ -39,6 +39,7 @@ from core.video_helper import (
 URL_CARTELLA_DRIVE = "https://drive.google.com/drive/folders/1UthYZdR1GiVADYNUWBN1cX3z790FEkXq"
 APP_BASE_DIR = Path(__file__).resolve().parent
 GOOGLE_CREDENTIALS = LocalCredentialsProvider(APP_BASE_DIR)
+FFMPEG_BACKEND = PcFfmpegBackend()
 
 
 def _url_doc_corrente():
@@ -841,6 +842,7 @@ def _render_esercizio(i, esercizio):
                                 ts_finish,
                                 esercizio["nome"] or f"esercizio_{i + 1}",
                                 output_dir=cartella_frames(st.session_state["cartella_lavoro"]),
+                                ffmpeg_backend=FFMPEG_BACKEND,
                             )
                         st.session_state["esercizi"][i]["frame_start"] = percorso_start
                         st.session_state["esercizi"][i]["frame_finish"] = percorso_finish

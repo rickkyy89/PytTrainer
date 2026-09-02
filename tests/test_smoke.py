@@ -403,7 +403,9 @@ def test_scegli_ed_estrai_frame_gia_presenti_non_cerca(tmp_path, monkeypatch):
 def test_scegli_ed_estrai_video_url_forzato_usa_url_e_timestamp_del_manifest(tmp_path, monkeypatch):
     chiamate = {}
 
-    def _estrai_fittizio(video_url, ts_start, ts_finish, exercise_name, output_dir="frames"):
+    def _estrai_fittizio(
+        video_url, ts_start, ts_finish, exercise_name, output_dir="frames", *, ffmpeg_backend=None
+    ):
         chiamate["video_url"] = video_url
         chiamate["ts_start"] = ts_start
         chiamate["ts_finish"] = ts_finish
@@ -1346,7 +1348,9 @@ def test_update_exercise_media_sostituisce_solo_le_due_immagini(tmp_path, monkey
     percorso_start_nuovo.write_bytes(b"\xff\xd8\xff\xe0nuovo_start")
     percorso_finish_nuovo.write_bytes(b"\xff\xd8\xff\xe0nuovo_finish")
 
-    def _estrai_fittizio(video_url, ts_start, ts_finish, exercise_name, output_dir="frames"):
+    def _estrai_fittizio(
+        video_url, ts_start, ts_finish, exercise_name, output_dir="frames", *, ffmpeg_backend=None
+    ):
         return (str(percorso_start_nuovo), str(percorso_finish_nuovo))
 
     monkeypatch.setattr(video_helper, "extract_start_finish_frames", _estrai_fittizio)

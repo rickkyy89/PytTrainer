@@ -273,15 +273,15 @@ def extract_start_finish_frames(
     def _estrai_con_retry(timestamp: float, path: str) -> str:
         nonlocal stream_url, stream_headers
         try:
-            if ffmpeg_backend is None:
-                return extract_frame(stream_url, timestamp, path, stream_headers)
-            return extract_frame(stream_url, timestamp, path, stream_headers, ffmpeg_backend=ffmpeg_backend)
+            return extract_frame(
+                stream_url, timestamp, path, stream_headers, ffmpeg_backend=ffmpeg_backend
+            )
         except FrameExtractionError:
             # Lo stream url potrebbe essere scaduto: lo ri-risolviamo e riproviamo una volta.
             stream_url, stream_headers = get_stream_info(video_url)
-            if ffmpeg_backend is None:
-                return extract_frame(stream_url, timestamp, path, stream_headers)
-            return extract_frame(stream_url, timestamp, path, stream_headers, ffmpeg_backend=ffmpeg_backend)
+            return extract_frame(
+                stream_url, timestamp, path, stream_headers, ffmpeg_backend=ffmpeg_backend
+            )
 
     _estrai_con_retry(ts_start, path_start)
     _estrai_con_retry(ts_finish, path_finish)
@@ -433,14 +433,10 @@ def scegli_ed_estrai(esercizio: dict, output_dir: str = "frames", logger=print, 
             if ts_finish is None:
                 ts_finish = durata * 0.50
         try:
-            if ffmpeg_backend is None:
-                percorso_start, percorso_finish = extract_start_finish_frames(
-                    video_url_forzato, ts_start, ts_finish, nome, output_dir
-                )
-            else:
-                percorso_start, percorso_finish = extract_start_finish_frames(
-                    video_url_forzato, ts_start, ts_finish, nome, output_dir, ffmpeg_backend=ffmpeg_backend
-                )
+            percorso_start, percorso_finish = extract_start_finish_frames(
+                video_url_forzato, ts_start, ts_finish, nome, output_dir,
+                ffmpeg_backend=ffmpeg_backend,
+            )
         except (VideoSearchError, FrameExtractionError) as errore:
             logger(f"[{nome}] estrazione fallita dal video forzato '{video_url_forzato}': {errore}")
             return esercizio
@@ -472,14 +468,10 @@ def scegli_ed_estrai(esercizio: dict, output_dir: str = "frames", logger=print, 
         if ts_finish is None:
             ts_finish = durata * 0.50
         try:
-            if ffmpeg_backend is None:
-                percorso_start, percorso_finish = extract_start_finish_frames(
-                    video["webpage_url"], ts_start, ts_finish, nome, output_dir
-                )
-            else:
-                percorso_start, percorso_finish = extract_start_finish_frames(
-                    video["webpage_url"], ts_start, ts_finish, nome, output_dir, ffmpeg_backend=ffmpeg_backend
-                )
+            percorso_start, percorso_finish = extract_start_finish_frames(
+                video["webpage_url"], ts_start, ts_finish, nome, output_dir,
+                ffmpeg_backend=ffmpeg_backend,
+            )
         except (VideoSearchError, FrameExtractionError) as errore:
             logger(f"[{nome}] estrazione fallita per '{video.get('title')}': {errore}")
             continue
