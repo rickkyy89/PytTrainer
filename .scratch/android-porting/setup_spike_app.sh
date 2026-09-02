@@ -253,7 +253,7 @@ class SpikeRoot(BoxLayout):
 
 class SpikeApp(App):
     def build(self):
-        self.title = "PytTrainer Spike"
+        self.title = "pyTrainer Spike"
         root = SpikeRoot()
         global PythonActivity, GoogleBridge
         try:
@@ -276,7 +276,7 @@ PY
 
 cat > "$APP/buildozer.spec" <<'SPEC'
 [app]
-title = PytTrainerSpike
+title = pyTrainerSpike
 package.name = pttspike
 package.domain = org.ptt
 version = 0.1

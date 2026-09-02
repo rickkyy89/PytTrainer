@@ -1,6 +1,6 @@
 ---
 name: genera-csv-scheda
-description: Crea CSV iniziali per PytTrainer da richiesta diretta, YouTube o Instagram, con VideoURL e timestamp per ritrovo rapido
+description: Crea CSV iniziali per pyTrainer da richiesta diretta, YouTube o Instagram, con VideoURL e timestamp per ritrovo rapido
 ---
 
 ## Cosa fa

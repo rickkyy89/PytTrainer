@@ -1,4 +1,4 @@
-# SPEC — Porting Android di PytTrainer con core condiviso PC/Android
+# SPEC — Porting Android di pyTrainer con core condiviso PC/Android
 
 **Stato:** ready-for-agent
 **Data:** 2026-09-02
@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-PytTrainer oggi è un'app solo PC: una UI Streamlit (`app.py`) sopra quattro moduli Python
+pyTrainer oggi è un'app solo PC: una UI Streamlit (`app.py`) sopra quattro moduli Python
 (`scheda_file`, `csv_utils`, `video_helper`, `google_docs_helper`) che generano schede
 d'allenamento A4 su Google Docs partendo da file `.scheda` (zip con manifest CSV, frame
 START/FINISH e stato di ripresa).

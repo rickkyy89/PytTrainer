@@ -1,4 +1,4 @@
-# Spike 01 — PytTrainer su Android: yt-dlp + ffmpeg-kit su device reale
+# Spike 01 — pyTrainer su Android: yt-dlp + ffmpeg-kit su device reale
 
 **Stato:** SUPERATO CON WORKAROUND — rischi 1, 2a e 2b validati su device reale.
 L'estrazione usa `MediaMetadataRetriever`; il percorso ffmpeg-kit resta opzionale e ha una
@@ -72,7 +72,7 @@ per validare l'estrazione frame.
 
 ```ini
 [app]
-title = PytTrainerSpike
+title = pyTrainerSpike
 package.name = pttspike
 package.domain = org.ptt
 version = 0.1
