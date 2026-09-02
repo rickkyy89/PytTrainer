@@ -1,6 +1,6 @@
 # Spike 01 — pyTrainer su Android: yt-dlp + ffmpeg-kit su device reale
 
-**Stato:** SUPERATO CON WORKAROUND — rischi 1, 2a e 2b validati su device reale.
+**Stato:** SUPERATO CON WORKAROUND — rischi 1, 2a, 2b e 3 validati su device reale.
 L'estrazione usa `MediaMetadataRetriever`; il percorso ffmpeg-kit resta opzionale e ha una
 dipendenza Java mancante nel pacchetto mantenuto (dettaglio sotto).
 
@@ -17,7 +17,7 @@ dipendenza Java mancante nel pacchetto mantenuto (dettaglio sotto).
 | 1 | yt-dlp come libreria Python sul device (ricerca) | **OK** | `SPIKE search OK n=5 title='How To Squat Correctly (NO BACK PAIN)' dur=458 url=...my0tLDaWyDU` |
 | 2a | yt-dlp risolve lo stream URL del video sul device | **OK** | `SPIKE frame got stream https://rr3---sn-...googlevideo.com/videoplayback...` |
 | 2b | Estrazione frame JPEG a un timestamp | **OK con workaround nativo** | `SPIKE frame result /data/user/0/org.ptt.pttspike/files/frame_result.jpg`; JPEG estratto dallo stream YouTube (12.542 byte, magic bytes `ff d8 ff e0`) |
-| 3 | Google authorization + Drive Picker nativo | **IMPLEMENTATO, test Cloud ancora necessario** | `GoogleBridge` + `ACTION_OPEN_DOCUMENT`; manca il client OAuth Android |
+| 3 | Google authorization + Drive Picker nativo | **OK** | `GoogleBridge` ha riportato `authorized` con token non vuoto dopo la configurazione Cloud |
 
 - L'**APK è stato buildato, installato e la UI Kivy renderizza correttamente** su hardware reale
   (OpenGL ES 3.2, window/provider sdl2, main loop attivo, nessun crash).
@@ -156,3 +156,9 @@ dall'utente. Il test del consenso reale richiede un OAuth Client Android registr
 ```text
 BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
 ```
+
+Il client e le API Drive/Docs sono stati configurati e il consenso e' stato
+rieseguito sul tablet Android API 33. Il bridge ha registrato ripetutamente
+`SPIKE google authorized token_length=322`: la richiesta degli scope e la
+ricezione di un access token sono quindi valide. Il valore del token non e'
+stato salvato ne' riportato nei log.

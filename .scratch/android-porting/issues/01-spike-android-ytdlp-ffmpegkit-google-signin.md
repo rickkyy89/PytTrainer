@@ -4,13 +4,13 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** blocked-user
+**Status:** done
 
 - [x] APK buildato con buildozer e installato su dispositivo reale Android 10+
 - [x] Ricerca yt-dlp sul device ritorna risultati (titolo/durata/URL) per una query di prova
 - [x] Estrazione di un frame JPEG da uno stream YouTube a un timestamp dato, salvato e mostrato a schermo
-- [ ] Login Google nativo completato con credenziali valide per scope `drive.file` e `documents`
-- [ ] Documentati nel repo (nota in docs/) ricetta buildozer.spec, ricette/pacchetti necessari, dimensioni APK e problemi incontrati
+- [x] Login Google nativo completato con credenziali valide per scope `drive.file` e `documents`
+- [x] Documentati nel repo (nota in docs/) ricetta buildozer.spec, ricette/pacchetti necessari, dimensioni APK e problemi incontrati
 
 ## Implementazione in corso
 
@@ -26,5 +26,6 @@ Android con package `org.ptt.pttspike` e SHA-1 debug:
 BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
 ```
 
-Riprendere dopo che Drive API e Docs API sono abilitate, l'account e' aggiunto
-come test user e il client OAuth Android e' stato creato nel progetto Cloud.
+Validazione conclusa il 2026-09-02 sul tablet Android API 33: dopo la
+configurazione Cloud, `GoogleBridge` ha riportato `authorized` con access token
+non vuoto (322 caratteri), senza registrare il token nei log.
