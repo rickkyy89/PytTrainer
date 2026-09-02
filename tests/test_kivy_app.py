@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.drive_sync import RemoteScheda
 from kivy_app.config import AppConfigError, DEFAULT_FOLDER_ID, FolderConfigStore
 from kivy_app.controller import DriveHomeController, HomeUnavailableError
+from kivy_app.main import build_controller
 
 
 class FakeProvider:
@@ -25,6 +26,20 @@ class FakeProvider:
         if self.error:
             raise self.error
         return "credentials"
+
+
+class FakeAndroidBridge:
+    def __init__(self):
+        self.authorization_started = 0
+
+    def start_authorization(self):
+        self.authorization_started += 1
+
+    def get_access_token(self):
+        return "native-access-token"
+
+    def get_status(self):
+        return "authorized"
 
 
 class FakeSync:
@@ -118,6 +133,33 @@ def test_refresh_composes_drive_lazily_with_provider_and_current_folder(tmp_path
     assert provider.scopes == ["https://www.googleapis.com/auth/drive"]
     assert instances[0].service == "drive:credentials"
     assert instances[0].folder_id == DEFAULT_FOLDER_ID
+
+
+def test_android_composition_starts_native_authorization_at_launch(tmp_path):
+    bridge = FakeAndroidBridge()
+
+    controller = build_controller(
+        tmp_path, is_android=True, android_bridge_factory=lambda: bridge,
+    )
+
+    assert isinstance(controller, DriveHomeController)
+    assert bridge.authorization_started == 1
+
+
+def test_pc_composition_never_constructs_or_starts_android_authorization(tmp_path):
+    bridge_factory_called = False
+
+    def bridge_factory():
+        nonlocal bridge_factory_called
+        bridge_factory_called = True
+        return FakeAndroidBridge()
+
+    controller = build_controller(
+        tmp_path, is_android=False, android_bridge_factory=bridge_factory,
+    )
+
+    assert isinstance(controller, DriveHomeController)
+    assert bridge_factory_called is False
 
 
 def test_open_downloads_and_exposes_readonly_exercise_and_frame_model(tmp_path):
