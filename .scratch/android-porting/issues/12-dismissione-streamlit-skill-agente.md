@@ -4,7 +4,10 @@
 
 **Blocked by:** 08 — Generazione Google Doc (parità funzionale raggiunta)
 
-**Status:** ready-for-agent
+**Status:** blocked-dependency
+
+**Blocco attuale:** richiede la parita' funzionale del ticket 08, che non puo'
+essere verificata finche' il login Android del ticket 01 resta bloccato.
 
 - [ ] `app.py` e dipendenza Streamlit rimossi
 - [ ] Skill agente per generazione CSV/manifest aggiornata e funzionante

@@ -4,7 +4,10 @@
 
 **Blocked by:** 05 — App Kivy: lista schede
 
-**Status:** ready-for-agent
+**Status:** blocked-dependency
+
+**Blocco attuale:** richiede la home Kivy del ticket 05, sospesa in attesa
+della validazione OAuth Android del ticket 01.
 
 - [ ] Controllo conflitto all'apertura scheda
 - [ ] Controllo conflitto al salvataggio

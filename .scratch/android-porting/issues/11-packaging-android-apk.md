@@ -4,7 +4,10 @@
 
 **Blocked by:** 07 — Scelta video e frame; 08 — Generazione Google Doc
 
-**Status:** ready-for-agent
+**Status:** blocked-dependency
+
+**Blocco attuale:** richiede i ticket Kivy 07 e 08, entrambi bloccati dalla
+validazione OAuth Android del ticket 01 attraverso i ticket 05 e 06.
 
 - [ ] buildozer.spec definitivo con tutte le dipendenze e ricette
 - [ ] APK release firmato installabile su Android 10+

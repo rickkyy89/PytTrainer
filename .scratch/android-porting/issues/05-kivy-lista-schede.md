@@ -4,7 +4,12 @@
 
 **Blocked by:** 01 — Spike Android; 04 — `core.drive_sync`
 
-**Status:** ready-for-agent
+**Status:** blocked-user
+
+**Blocco attuale:** il login Google nativo su Android (ticket 01) non e' stato
+validato: manca la configurazione del client OAuth Android nel progetto Google
+Cloud. Senza credenziali valide non e' possibile verificare la home con Drive
+su un dispositivo reale.
 
 - [ ] Home con lista schede da Drive (nome + data modifica), aggiornabile
 - [ ] Apertura scheda in sola lettura: esercizi e frame visibili

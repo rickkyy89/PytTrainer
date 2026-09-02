@@ -4,7 +4,10 @@
 
 **Blocked by:** 06 — App Kivy: editor scheda
 
-**Status:** ready-for-agent
+**Status:** blocked-dependency
+
+**Blocco attuale:** richiede l'editor Kivy del ticket 06, a sua volta bloccato
+dalla home del ticket 05 e dalla validazione OAuth Android del ticket 01.
 
 - [ ] Ricerca YouTube con risultati (titolo, durata, anteprima) e selezione
 - [ ] URL video manuale override
