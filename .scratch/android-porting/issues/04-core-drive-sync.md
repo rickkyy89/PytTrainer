@@ -4,12 +4,12 @@
 
 **Blocked by:** 02 — Estrarre package `core`
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Lista schede dalla cartella Drive con nome/id/timestamp modifica
-- [ ] Download scheda in cache locale con tracciamento timestamp ultimo sync
-- [ ] Upload scheda nuova o modificata
-- [ ] Creazione ed eliminazione schede nella cartella Drive
-- [ ] Rilevamento conflitto (locale modificata + remota più recente) esposto con entrambi i timestamp, senza auto-risoluzione
-- [ ] ID cartella Drive in configurazione
-- [ ] Test pytest su fake client Drive: lista, download, upload, conflitto sì/no, eliminazione
+- [x] Lista schede dalla cartella Drive con nome/id/timestamp modifica
+- [x] Download scheda in cache locale con tracciamento timestamp ultimo sync
+- [x] Upload scheda nuova o modificata
+- [x] Creazione ed eliminazione schede nella cartella Drive
+- [x] Rilevamento conflitto (locale modificata + remota più recente) esposto con entrambi i timestamp, senza auto-risoluzione
+- [x] ID cartella Drive in configurazione
+- [x] Test pytest su fake client Drive: lista, download, upload, conflitto sì/no, eliminazione
