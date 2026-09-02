@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 from core.platform import LocalCredentialsProvider
 
@@ -10,9 +11,22 @@ from .config import FolderConfigStore
 from .controller import DriveHomeController, HomeUnavailableError
 
 
-def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeController:
-    """Compose the PC OAuth provider and Google Drive client only at app startup."""
+def build_controller(
+    base_dir: str | Path | None = None, *, is_android: bool | None = None,
+    android_bridge_factory=None,
+) -> DriveHomeController:
+    """Compose the platform credential provider only at application startup."""
     base = Path(base_dir or Path(__file__).resolve().parent.parent).expanduser()
+    is_android = sys.platform == "android" if is_android is None else is_android
+
+    if is_android:
+        # Avoid importing pyjnius and Android-only code on the PC and in pytest.
+        from .platform_android import AndroidCredentialProvider, PyjniusGoogleBridge
+        bridge_factory = android_bridge_factory or PyjniusGoogleBridge
+        credential_provider = AndroidCredentialProvider(bridge_factory())
+        credential_provider.start_authorization()
+    else:
+        credential_provider = LocalCredentialsProvider(base)
 
     def drive_service_factory(credentials):
         from googleapiclient.discovery import build
@@ -20,9 +34,14 @@ def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeControll
 
     return DriveHomeController(
         FolderConfigStore(base / "drive-folders.json"), base / "drive-cache",
-        credential_provider=LocalCredentialsProvider(base),
+        credential_provider=credential_provider,
         drive_service_factory=drive_service_factory,
     )
+
+
+def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeController:
+    """Compose the unchanged PC OAuth implementation."""
+    return build_controller(base_dir, is_android=False)
 
 
 def run() -> None:
@@ -35,7 +54,7 @@ def run() -> None:
     from kivy.uix.popup import Popup
     from kivy.uix.textinput import TextInput
 
-    controller = build_pc_controller()
+    controller = build_controller()
 
     class PyTrainerApp(App):
         def build(self):
