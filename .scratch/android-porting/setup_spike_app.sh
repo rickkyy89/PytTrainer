@@ -59,72 +59,51 @@ def yt_stream_url(video_url):
             return f["url"]
     return info["url"]
 
-# ---- ffmpeg-kit via pyjnius: carica classi con classloader dell'app, invoca via java.lang.reflect ----
-def _app_cls(name):
+# ---- ffmpeg-kit: le classi vanno risolte con autoclass SUL MAIN THREAD ----
+# FindClass da un thread Python secondario usa il classloader di sistema e non
+# vede i dex dell'app; sul main thread (dove Kivy fa il bootstrap) invece li vede.
+# Quindi cachiamo le classi all'avvio e le riusiamo dai worker thread.
+FFMPEG_CLASSES = {}
+
+
+def cache_ffmpeg_classes():
     from jnius import autoclass
-    PythonActivity = autoclass("org.kivy.android.PythonActivity")
-    return PythonActivity.mActivity.getClassLoader().loadClass(name)
-
-
-def _ensure_reflect_helpers():
-    """Fonde invoke()/get() (statici) nelle classi reflect di pyjnius se mancanti."""
-    from jnius import JavaMultipleMethod
-    from jnius.reflect import Method, Field
-    if not hasattr(Method, "invoke"):
-        Method.invoke = JavaMultipleMethod([
-            ("(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", True, False),
-            ("(Ljava/lang/Object;)Ljava/lang/Object;", True, False),
-            ("()Ljava/lang/Object;", True, False),
-        ])
-    if not hasattr(Field, "get"):
-        Field.get = JavaMultipleMethod([
-            ("(Ljava/lang/Object;)Ljava/lang/Object;", True, False),
-            ("()Ljava/lang/Object;", True, False),
-        ])
+    FFMPEG_CLASSES["FFmpegKit"] = autoclass("com.arthenica.ffmpegkit.FFmpegKit")
+    FFMPEG_CLASSES["ReturnCode"] = autoclass("com.arthenica.ffmpegkit.ReturnCode")
+    print("SPIKE ffmpeg classes cached on main thread", flush=True)
 
 
 def extract_frame_ffmpegkit(stream_url, ts, out_path):
-    from jnius import autoclass
-    _ensure_reflect_helpers()
-    FFmpegKit_cls = _app_cls("com.arthenica.ffmpegkit.FFmpegKit")
-    ReturnCode_cls = _app_cls("com.arthenica.ffmpegkit.ReturnCode")
-    java_String = autoclass("java.lang.String")
+    FFmpegKit = FFMPEG_CLASSES["FFmpegKit"]
+    ReturnCode = FFMPEG_CLASSES["ReturnCode"]
     cmd = (
         "-y -ss {ts} -i {url} -vframes 1 -q:v 2 {out}"
     ).format(ts=ts, url=stream_url, out=out_path)
+    session = FFmpegKit.execute(cmd)
+    return session.getReturnCode().getValue() == ReturnCode.SUCCESS.getValue()
 
-    # trova il metodo statico execute(String) via reflection dei metodi
-    session = None
-    Object = autoclass("java.lang.Object")
-    Array = autoclass("java.lang.reflect.Array")
-    for m in FFmpegKit_cls.getMethods():
-        if m.getName() == "execute":
-            params = m.getParameterTypes()
-            if len(params) == 1 and params[0].getName() == "java.lang.String":
-                try:
-                    args_arr = Array.newInstance(Object, 1)
-                    args_arr[0] = java_String(cmd)
-                    session = m.invoke(None, args_arr)
-                except Exception as e:
-                    print("SPIKE invoke execute error: %s" % e, flush=True)
-                break
-    if session is None:
-        raise RuntimeError("FFmpegKit.execute(String) not found or failed")
 
-    rc_m = None
-    empty = Array.newInstance(Object, 0)
-    for m in session.getClass().getMethods():
-        if m.getName() == "getReturnCode" and m.getParameterTypes().length == 0:
-            rc_m = m
-            break
-    rc = rc_m.invoke(session, empty)
-
-    success = None
-    for f in ReturnCode_cls.getFields():
-        if f.getName() == "SUCCESS":
-            success = f.get(None).getValue()
-            break
-    return rc.getValue() == success
+def extract_frame_mediaretriever(stream_url, ts, out_path):
+    from jnius import autoclass
+    Retriever = autoclass("android.media.MediaMetadataRetriever")
+    CompressFormat = autoclass("android.graphics.Bitmap$CompressFormat")
+    FileOutputStream = autoclass("java.io.FileOutputStream")
+    retriever = Retriever()
+    stream = None
+    try:
+        retriever.setDataSource(stream_url)
+        bitmap = retriever.getFrameAtTime(int(ts * 1000000), 2)
+        if bitmap is None:
+            raise RuntimeError("MediaMetadataRetriever returned no frame")
+        stream = FileOutputStream(out_path)
+        if not bitmap.compress(CompressFormat.JPEG, 90, stream):
+            raise RuntimeError("Could not encode frame as JPEG")
+        stream.flush()
+        return out_path
+    finally:
+        if stream is not None:
+            stream.close()
+        retriever.release()
 
 class SpikeRoot(BoxLayout):
     def __init__(self, **kw):
@@ -187,7 +166,7 @@ class SpikeRoot(BoxLayout):
             self.set_status("set a video url first")
             print("SPIKE frame NO URL", flush=True)
             return
-        out = "/sdcard/frame_result.jpg"
+        out = os.path.join(os.environ.get("ANDROID_PRIVATE", "/tmp"), "frame_result.jpg")
         print("SPIKE frame stream RESOLVE %s" % url, flush=True)
         stream = yt_stream_url(url)
         print("SPIKE frame got stream %s..." % stream[:60], flush=True)
@@ -219,12 +198,23 @@ class SpikeRoot(BoxLayout):
         time.sleep(1.5)
 
     def extract_frame(self, stream_url, ts, out_path):
-        return extract_frame_ffmpegkit(stream_url, ts, out_path)
+        if FFMPEG_CLASSES:
+            try:
+                if extract_frame_ffmpegkit(stream_url, ts, out_path):
+                    return out_path
+                print("SPIKE ffmpegkit non-zero return code -> fallback MediaMetadataRetriever", flush=True)
+            except Exception as e:
+                print("SPIKE ffmpegkit ERR %s -> fallback MediaMetadataRetriever" % e, flush=True)
+        return extract_frame_mediaretriever(stream_url, ts, out_path)
 
 class SpikeApp(App):
     def build(self):
         self.title = "PytTrainer Spike"
         root = SpikeRoot()
+        try:
+            cache_ffmpeg_classes()
+        except Exception as e:
+            print("SPIKE cache ffmpeg classes ERR %s" % e, flush=True)
         threading.Timer(3.0, root.auto_test).start()
         return root
 
