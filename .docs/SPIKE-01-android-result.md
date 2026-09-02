@@ -17,7 +17,7 @@ dipendenza Java mancante nel pacchetto mantenuto (dettaglio sotto).
 | 1 | yt-dlp come libreria Python sul device (ricerca) | **OK** | `SPIKE search OK n=5 title='How To Squat Correctly (NO BACK PAIN)' dur=458 url=...my0tLDaWyDU` |
 | 2a | yt-dlp risolve lo stream URL del video sul device | **OK** | `SPIKE frame got stream https://rr3---sn-...googlevideo.com/videoplayback...` |
 | 2b | Estrazione frame JPEG a un timestamp | **OK con workaround nativo** | `SPIKE frame result /data/user/0/org.ptt.pttspike/files/frame_result.jpg`; JPEG estratto dallo stream YouTube (12.542 byte, magic bytes `ff d8 ff e0`) |
-| 3 | Google Sign-In nativo | **NON fatto** (decisione: "solo yt-dlp + frame nel primo giro") | — |
+| 3 | Google authorization + Drive Picker nativo | **IMPLEMENTATO, test Cloud ancora necessario** | `GoogleBridge` + `ACTION_OPEN_DOCUMENT`; manca il client OAuth Android |
 
 - L'**APK è stato buildato, installato e la UI Kivy renderizza correttamente** su hardware reale
   (OpenGL ES 3.2, window/provider sdl2, main loop attivo, nessun crash).
@@ -144,3 +144,15 @@ Il flusso necessario all'app è **confermato percorribile**: yt-dlp cerca il vid
 stream, mentre `MediaMetadataRetriever` estrae il frame JPEG sul device. Per il porting conviene
 incapsulare questo backend dietro la stessa interfaccia di estrazione usata su desktop; valutare
 ffmpeg-kit soltanto se test su più video evidenziano formati o seek non supportati dal retriever.
+
+## Google Picker e prerequisito Cloud
+
+Il percorso scelto per `drive.file` è implementato nello spike: `GoogleBridge` usa
+`AuthorizationClient` per ottenere un access token con gli scope `drive.file` e `documents`, mentre
+`ACTION_OPEN_DOCUMENT` apre il picker di sistema e restituisce una URI `content://` selezionata
+dall'utente. Il test del consenso reale richiede un OAuth Client Android registrato con package
+`org.ptt.pttspike` e SHA-1 debug:
+
+```text
+BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
+```

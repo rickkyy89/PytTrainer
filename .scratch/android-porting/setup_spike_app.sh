@@ -3,6 +3,8 @@
 set -e
 APP=/home/rickk/spike-builder/app
 mkdir -p "$APP"
+mkdir -p "$APP/java/org/ptt/spike"
+cp /mnt/c/PyTrainer/PC/PytTrainer/.scratch/android-porting/GoogleBridge.java "$APP/java/org/ptt/spike/GoogleBridge.java"
 
 cat > "$APP/main.py" <<'PY'
 import os
@@ -20,6 +22,9 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.core.window import Window
 from kivy.logger import Logger
+
+PythonActivity = None
+GoogleBridge = None
 
 # ---- yt-dlp ----
 def yt_search(query):
@@ -114,9 +119,13 @@ class SpikeRoot(BoxLayout):
         self.video_url = TextInput(text="", hint_text="url video scelto", size_hint_y=0.08)
         self.slider = Slider(min=0, max=60, value=10, size_hint_y=0.06)
         self.btn_frame = Button(text="2) Extract frame", size_hint_y=0.08)
+        self.btn_google = Button(text="3) Google authorization", size_hint_y=0.08)
+        self.btn_picker = Button(text="4) Drive picker", size_hint_y=0.08)
         self.image = AsyncImage(size_hint_y=0.5)
         self.btn_search.bind(on_release=lambda *a: self.threaded(self.do_search))
         self.btn_frame.bind(on_release=lambda *a: self.threaded(self.do_frame))
+        self.btn_google.bind(on_release=lambda *a: self.start_google())
+        self.btn_picker.bind(on_release=lambda *a: self.start_picker())
         sv = ScrollView()
         sv.add_widget(self.image)
         self.add_widget(self.query)
@@ -124,9 +133,44 @@ class SpikeRoot(BoxLayout):
         self.add_widget(self.video_url)
         self.add_widget(self.slider)
         self.add_widget(self.btn_frame)
+        self.add_widget(self.btn_google)
+        self.add_widget(self.btn_picker)
         self.add_widget(sv)
         self.add_widget(self.status)
         self.result = None
+        Clock.schedule_interval(self.poll_google, 0.5)
+
+    def start_google(self):
+        Clock.schedule_once(self._start_google, 0)
+
+    def _start_google(self, *_args):
+        if GoogleBridge is None:
+            self.set_status("Google bridge unavailable")
+            return
+        GoogleBridge.startAuthorization(PythonActivity.mActivity)
+        self.set_status("Google authorization started")
+
+    def start_picker(self):
+        if GoogleBridge is None:
+            self.set_status("Google bridge unavailable")
+            return
+        GoogleBridge.openDrivePicker(PythonActivity.mActivity)
+
+    def poll_google(self, *_args):
+        if GoogleBridge is None:
+            return
+        state = str(GoogleBridge.getStatus())
+        if state == "authorized":
+            length = GoogleBridge.getTokenLength()
+            self.set_status("Google OK | token=%d chars | drive.file + documents" % length)
+            print("SPIKE google authorized token_length=%d" % length, flush=True)
+        elif state == "picked":
+            uri = str(GoogleBridge.getPickedUri())
+            self.set_status("Drive picker OK | %s" % uri[:70])
+            print("SPIKE drive picker OK uri=%s" % uri, flush=True)
+        elif state.startswith("error") or state.endswith("cancelled"):
+            self.set_status("Google %s" % state)
+            print("SPIKE google %s" % state, flush=True)
 
     def threaded(self, fn):
         threading.Thread(target=lambda: self.with_status(fn)).start()
@@ -211,6 +255,14 @@ class SpikeApp(App):
     def build(self):
         self.title = "PytTrainer Spike"
         root = SpikeRoot()
+        global PythonActivity, GoogleBridge
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            GoogleBridge = autoclass("org.ptt.spike.GoogleBridge")
+            print("SPIKE google bridge cached on main thread", flush=True)
+        except Exception as e:
+            print("SPIKE cache google bridge ERR %s" % e, flush=True)
         try:
             cache_ffmpeg_classes()
         except Exception as e:
@@ -239,7 +291,8 @@ android.api = 33
 android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a
-android.gradle_dependencies = dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7
+android.gradle_dependencies = dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7,com.google.android.gms:play-services-auth:21.6.0
+android.add_src = java
 android.accept_sdk_license = True
 android.allow_backup = True
 p4a.source_exts = py,png,jpg,jpeg,kv,atlas
