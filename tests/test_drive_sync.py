@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 RADICE_PROGETTO = Path(__file__).resolve().parent.parent
@@ -140,6 +141,7 @@ def test_download_caches_bundle_and_records_last_remote_sync(tmp_path):
     assert state[str(local)]["file_id"] == file_id
     assert state[str(local)]["remote_modified_time"] == "2026-09-02T10:00:00Z"
     assert state[str(local)]["local_mtime_ns"] == local.stat().st_mtime_ns
+    assert state[str(local)]["local_fingerprint"] == sha256(b"bundle").hexdigest()
 
 
 def test_upload_creates_then_updates_known_local_bundle(tmp_path):
@@ -160,12 +162,13 @@ def test_upload_creates_then_updates_known_local_bundle(tmp_path):
     assert client.files_api.records[created.remote.id]["content"] == b"second"
 
 
-def test_upload_reports_conflict_only_for_changed_local_and_newer_remote(tmp_path):
+def test_upload_reports_conflict_for_content_edit_with_unchanged_mtime(tmp_path):
     service, client = sync(tmp_path)
     file_id = client.files_api.add("gambe.scheda", b"original", "2026-09-02T10:00:00Z")
     local = service.download_scheda(file_id)
+    original_mtime = local.stat().st_mtime_ns
     local.write_bytes(b"local edit")
-    os.utime(local, ns=(local.stat().st_atime_ns, local.stat().st_mtime_ns + 1))
+    os.utime(local, ns=(local.stat().st_atime_ns, original_mtime))
     client.files_api.records[file_id]["modifiedTime"] = "2026-09-02T11:00:00Z"
 
     conflict = service.upload_scheda(local)
@@ -181,6 +184,25 @@ def test_upload_reports_conflict_only_for_changed_local_and_newer_remote(tmp_pat
     result = service.upload_scheda(local)
     assert isinstance(result, UploadResult)
     assert client.files_api.records[file_id]["content"] == b"another local edit"
+
+
+def test_upload_legacy_state_uses_mtime_to_protect_newer_remote(tmp_path):
+    service, client = sync(tmp_path)
+    file_id = client.files_api.add("gambe.scheda", b"original", "2026-09-02T10:00:00Z")
+    local = service.download_scheda(file_id)
+    state_path = tmp_path / "cache" / ".drive-sync-state.json"
+    state = json.loads(state_path.read_text())
+    del state[str(local)]["local_fingerprint"]
+    state_path.write_text(json.dumps(state))
+
+    local.write_bytes(b"local edit")
+    os.utime(local, ns=(local.stat().st_atime_ns, local.stat().st_mtime_ns + 1))
+    client.files_api.records[file_id]["modifiedTime"] = "2026-09-02T11:00:00Z"
+
+    conflict = service.upload_scheda(local)
+
+    assert isinstance(conflict, SyncConflict)
+    assert client.files_api.records[file_id]["content"] == b"original"
 
 
 def test_delete_removes_remote_file_and_cached_sync_record(tmp_path):

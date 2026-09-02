@@ -12,15 +12,17 @@ the usual Google API request style::
     service.files().delete(...).execute()
 
 The cache contains ``.drive-sync-state.json``.  It records the remote file ID,
-the remote modified timestamp at the last successful sync, and the local mtime
-then observed.  Consumers must handle a returned ``SyncConflict`` explicitly;
-this module never selects either version automatically.
+the remote modified timestamp at the last successful sync, plus a SHA-256
+fingerprint and mtime for the local bundle then observed.  Consumers must
+handle a returned ``SyncConflict`` explicitly; this module never selects either
+version automatically.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from hashlib import sha256
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,6 +121,7 @@ class DriveSync:
             "name": metadata.name,
             "remote_modified_time": metadata.modified_time,
             "local_mtime_ns": destination.stat().st_mtime_ns,
+            "local_fingerprint": self._fingerprint(destination),
         }
         self._save_state(state)
         return destination
@@ -181,12 +184,28 @@ class DriveSync:
             "name": remote.name,
             "remote_modified_time": remote.modified_time,
             "local_mtime_ns": path.stat().st_mtime_ns,
+            "local_fingerprint": self._fingerprint(path),
         }
         self._save_state(state)
 
     def _has_conflict(self, path: Path, entry: dict, remote: RemoteScheda) -> bool:
-        local_changed = path.stat().st_mtime_ns != entry.get("local_mtime_ns")
+        fingerprint = entry.get("local_fingerprint")
+        if isinstance(fingerprint, str):
+            local_changed = self._fingerprint(path) != fingerprint
+        else:
+            # Legacy records have no content baseline.  A changed mtime is the
+            # only evidence of a local edit, so preserve the old conflict-safe
+            # behavior rather than overwriting a newer remote copy.
+            local_changed = path.stat().st_mtime_ns != entry.get("local_mtime_ns")
         return local_changed and self._timestamp(remote.modified_time) > self._timestamp(entry["remote_modified_time"])
+
+    @staticmethod
+    def _fingerprint(path: Path) -> str:
+        digest = sha256()
+        with path.open("rb") as bundle:
+            for chunk in iter(lambda: bundle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _cache_path(self, name: str) -> Path:
         if not name.endswith(".scheda") or Path(name).name != name:
