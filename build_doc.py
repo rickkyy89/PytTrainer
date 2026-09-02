@@ -1,7 +1,7 @@
 import json
 
-from csv_utils import parse_esercizi_csv
-from google_docs_helper import create_workout_document
+from core.csv_utils import parse_esercizi_csv
+from core.docs_helper import create_workout_document
 
 esercizi = parse_esercizi_csv("scheda.csv")
 

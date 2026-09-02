@@ -8,13 +8,15 @@ import json
 import os
 import shutil
 import uuid
+from pathlib import Path
 
 import streamlit as st
 from PIL import Image
 
-from csv_utils import parse_esercizi_csv, trova_duplicati_slug
-from google_docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
-from scheda_file import (
+from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
+from core.docs_helper import GoogleAuthError, GoogleDocsError, create_workout_document
+from core.platform import LocalCredentialsProvider
+from core.scheda_file import (
     SchedaFileError,
     carica_scheda,
     cartella_frames,
@@ -23,7 +25,7 @@ from scheda_file import (
     salva_scheda,
     titolo_scheda as titolo_scheda_salvato,
 )
-from video_helper import (
+from core.video_helper import (
     FrameExtractionError,
     VideoSearchError,
     box_ritaglio,
@@ -35,6 +37,8 @@ from video_helper import (
 
 # Cartella Google Drive dove finiscono tutti i workout esportati.
 URL_CARTELLA_DRIVE = "https://drive.google.com/drive/folders/1UthYZdR1GiVADYNUWBN1cX3z790FEkXq"
+APP_BASE_DIR = Path(__file__).resolve().parent
+GOOGLE_CREDENTIALS = LocalCredentialsProvider(APP_BASE_DIR)
 
 
 def _url_doc_corrente():
@@ -571,7 +575,9 @@ def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizi
             elif percorso:
                 if os.path.exists(percorso):
                     try:
-                        righe, _ = carica_scheda(percorso, cartella_lavoro_per_bundle(percorso))
+                        righe, _ = carica_scheda(
+                            percorso, cartella_lavoro_per_bundle(percorso, base_dir=APP_BASE_DIR)
+                        )
                     except (SchedaFileError, ValueError) as errore:
                         st.error(str(errore))
                     except Exception as errore:
@@ -596,7 +602,9 @@ def _blocco_inserimento(posizione, etichetta="➕", aiuto="Inserisci un esercizi
             elif percorso:
                 if os.path.exists(percorso):
                     try:
-                        righe, _ = carica_scheda(percorso, cartella_lavoro_per_bundle(percorso))
+                        righe, _ = carica_scheda(
+                            percorso, cartella_lavoro_per_bundle(percorso, base_dir=APP_BASE_DIR)
+                        )
                     except (SchedaFileError, ValueError) as errore:
                         st.error(str(errore))
                     except Exception as errore:
@@ -898,7 +906,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
             st.session_state["percorso_scheda"] = "scheda.scheda"
         percorso_scheda = st.session_state["percorso_scheda"]
         st.caption(f"File corrente: {percorso_scheda}")
-        cartella_lavoro = cartella_lavoro_per_bundle(percorso_scheda)
+        cartella_lavoro = cartella_lavoro_per_bundle(percorso_scheda, base_dir=APP_BASE_DIR)
         st.session_state["cartella_lavoro"] = cartella_lavoro
 
         if st.button("📂 Importa scheda", use_container_width=True):
@@ -911,7 +919,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
             elif percorso:
                 if os.path.exists(percorso):
                     try:
-                        lavoro_importato = cartella_lavoro_per_bundle(percorso)
+                        lavoro_importato = cartella_lavoro_per_bundle(percorso, base_dir=APP_BASE_DIR)
                         righe, _ = carica_scheda(percorso, lavoro_importato)
                     except (SchedaFileError, ValueError) as errore:
                         st.error(str(errore))
@@ -959,7 +967,9 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                     st.session_state["esercizi"] = list(pendente["esercizi"])
                     if pendente["tipo"] == "scheda":
                         st.session_state["percorso_scheda"] = pendente["sorgente"]
-                        st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(pendente["sorgente"])
+                        st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(
+                            pendente["sorgente"], base_dir=APP_BASE_DIR
+                        )
                         if pendente.get("titolo") is not None:
                             st.session_state["titolo_scheda_da_caricare"] = pendente["titolo"]
                             st.session_state["snapshot_salvato"] = _snapshot_esercizi(
@@ -1002,7 +1012,7 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                     # Sincronizza la cache di lavoro della destinazione: il bundle è la fonte
                     # di verità ma l'UI legge subito da <destinazione>.work/state.json.
                     if os.path.exists(stato_corrente):
-                        dest_lavoro = cartella_lavoro_per_bundle(destinazione)
+                        dest_lavoro = cartella_lavoro_per_bundle(destinazione, base_dir=APP_BASE_DIR)
                         try:
                             os.makedirs(dest_lavoro, exist_ok=True)
                             shutil.copy2(stato_corrente, percorso_stato(dest_lavoro))
@@ -1012,7 +1022,9 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
                     st.error(f"Errore durante il salvataggio della scheda: {errore}")
                 else:
                     st.session_state["percorso_scheda"] = destinazione
-                    st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(destinazione)
+                    st.session_state["cartella_lavoro"] = cartella_lavoro_per_bundle(
+                        destinazione, base_dir=APP_BASE_DIR
+                    )
                     st.session_state["snapshot_salvato"] = _snapshot_esercizi(st.session_state["esercizi"], titolo_scheda)
                     st.success(f"Scheda salvata in '{destinazione}' ({len(st.session_state['esercizi'])} esercizi).")
                     st.rerun()
@@ -1067,7 +1079,11 @@ def _sidebar(titolo_default="SCHEDA 1: GAMBE & GLUTEI"):
         st.subheader("Credenziali Google")
         credenziali_presenti = any(
             os.path.exists(percorso)
-            for percorso in ("credentials.json", "service_account.json", "token.json")
+            for percorso in (
+                GOOGLE_CREDENTIALS.credentials_path,
+                GOOGLE_CREDENTIALS.service_account_path,
+                GOOGLE_CREDENTIALS.token_path,
+            )
         )
         if credenziali_presenti:
             st.success("Credenziali Google trovate.")
@@ -1090,7 +1106,12 @@ def _esegui_esportazione(titolo_scheda):
     try:
         with st.spinner("Generazione del documento su Google Docs in corso..."):
             stato_scheda = percorso_stato(st.session_state["cartella_lavoro"])
-            risultato = create_workout_document(esercizi_pronti, titolo_scheda, state_path=stato_scheda)
+            risultato = create_workout_document(
+                esercizi_pronti,
+                titolo_scheda,
+                state_path=stato_scheda,
+                credential_provider=GOOGLE_CREDENTIALS,
+            )
         if risultato.get("documento_rigenerato"):
             st.info(
                 "Il documento generato in precedenza non esiste più su Drive: "

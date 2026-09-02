@@ -11,8 +11,8 @@ import sys
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-import google_docs_helper as gdh
-from csv_utils import parse_esercizi_csv
+import core.docs_helper as gdh
+from core.csv_utils import parse_esercizi_csv
 
 SCOPES = ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive.file"]
 DOC_STATE_PATH = "state/doc_state.json"

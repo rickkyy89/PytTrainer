@@ -1,7 +1,7 @@
 import sys
-from csv_utils import parse_esercizi_csv
-from video_helper import search_youtube, extract_start_finish_frames, VideoSearchError, FrameExtractionError
-from google_docs_helper import create_workout_document
+from core.csv_utils import parse_esercizi_csv
+from core.video_helper import search_youtube, extract_start_finish_frames, VideoSearchError, FrameExtractionError
+from core.docs_helper import create_workout_document
 
 esercizi = parse_esercizi_csv("scheda.csv")
 

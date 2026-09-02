@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** in-progress
+**Status:** blocked-user
 
 - [x] APK buildato con buildozer e installato su dispositivo reale Android 10+
 - [x] Ricerca yt-dlp sul device ritorna risultati (titolo/durata/URL) per una query di prova
@@ -25,3 +25,6 @@ Android con package `org.ptt.pttspike` e SHA-1 debug:
 ```text
 BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
 ```
+
+Riprendere dopo che Drive API e Docs API sono abilitate, l'account e' aggiunto
+come test user e il client OAuth Android e' stato creato nel progetto Cloud.

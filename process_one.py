@@ -2,8 +2,8 @@ import json
 import os
 import sys
 
-from csv_utils import parse_esercizi_csv
-from video_helper import search_youtube, extract_start_finish_frames, VideoSearchError, FrameExtractionError
+from core.csv_utils import parse_esercizi_csv
+from core.video_helper import search_youtube, extract_start_finish_frames, VideoSearchError, FrameExtractionError
 
 idx = int(sys.argv[1])
 os.makedirs("state", exist_ok=True)

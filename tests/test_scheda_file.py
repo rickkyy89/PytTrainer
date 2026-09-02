@@ -17,9 +17,9 @@ RADICE_PROGETTO = Path(__file__).resolve().parent.parent
 if str(RADICE_PROGETTO) not in sys.path:
     sys.path.insert(0, str(RADICE_PROGETTO))
 
-import scheda_file  # noqa: E402
-from csv_utils import parse_esercizi_csv, slugify  # noqa: E402
-from scheda_file import (  # noqa: E402
+from core import scheda_file  # noqa: E402
+from core.csv_utils import parse_esercizi_csv, slugify  # noqa: E402
+from core.scheda_file import (  # noqa: E402
     CARTELLA_FRAMES,
     NOME_MANIFEST,
     NOME_STATO,
@@ -291,3 +291,32 @@ def test_cartella_frames_e_percorso_stato(tmp_path):
     assert os.path.isdir(percorso_frames)
     assert percorso_stato(cartella_lavoro) == os.path.join(cartella_lavoro, NOME_STATO)
     assert cartella_lavoro_per_bundle("x/y/scheda.scheda") == "x/y/scheda.scheda.work"
+
+
+def test_cartella_lavoro_per_bundle_usa_base_dir_esplicita(tmp_path):
+    base_dir = tmp_path / "cache"
+    assert cartella_lavoro_per_bundle("C:/schede/scheda.scheda", base_dir=base_dir) == (
+        "C:/schede/scheda.scheda.work"
+    )
+
+
+def test_bundle_relativo_con_base_dir_non_dipende_dalla_cwd(tmp_path, monkeypatch):
+    base_dir = tmp_path / "schede"
+    base_dir.mkdir()
+    (base_dir / "archivio").mkdir()
+    esercizi = [_crea_esercizio_con_frame("Squat", tmp_path)]
+
+    monkeypatch.chdir(tmp_path)
+    salva_scheda(esercizi, "archivio/scheda.scheda", base_dir=base_dir)
+
+    percorso_bundle = base_dir / "archivio" / "scheda.scheda"
+    assert percorso_bundle.exists()
+
+    altra_cwd = tmp_path / "altra_cwd"
+    altra_cwd.mkdir()
+    monkeypatch.chdir(altra_cwd)
+    caricati, lavoro = carica_scheda("archivio/scheda.scheda", base_dir=base_dir)
+
+    assert caricati[0]["nome"] == "Squat"
+    assert os.path.normpath(lavoro) == os.path.normpath(str(percorso_bundle) + ".work")
+    assert Path(caricati[0]["frame_start"]).is_file()

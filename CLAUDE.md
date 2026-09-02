@@ -20,21 +20,22 @@ ricompatta tutto in modo atomico.
 
 | Funzione | Modulo | Scopo |
 |---|---|---|
-| `carica_scheda(percorso)` → `(list[dict], cartella_lavoro)` | `scheda_file.py` | Apre un `.scheda`, estrae frames/stato in `<percorso>.work/` e ritorna gli esercizi con i percorsi frame già puntati ai file estratti (solleva `SchedaFileError` / `ValueError`) |
-| `salva_scheda(esercizi, percorso, state_path=None)` | `scheda_file.py` | Riscrive il `.scheda` (manifest + frames esistenti + stato se presente), scrittura atomica |
-| `cartella_frames(cartella_lavoro)` → `str` | `scheda_file.py` | Cartella dei frame del bundle: è l'`output_dir` da passare a `scegli_ed_estrai` / `extract_start_finish_frames` |
-| `percorso_stato(cartella_lavoro)` → `str` | `scheda_file.py` | Percorso dello `state.json` del bundle: è lo `state_path` da passare a `create_workout_document` / `update_exercise_media` |
-| `scheda_bytes(esercizi, state_path=None)` → `bytes` | `scheda_file.py` | Stesso archivio di `salva_scheda` ma in memoria (download da UI) |
-| `parse_esercizi_csv(file)` → `list[dict]` | `csv_utils.py` | Legge/valida un CSV manifest nudo (solleva `ValueError` se malformato) — utile per creare una scheda da un CSV |
-| `search_youtube(nome, max_results=3)` → `list[dict]` | `video_helper.py` | Risultati con `id`, `title`, `duration`, `webpage_url` |
-| `extract_start_finish_frames(url, ts_start, ts_finish, nome, output_dir)` → `(path_start, path_finish)` | `video_helper.py` | Estrae i 2 frame in `output_dir` senza scaricare il video |
-| `get_video_info(url)` → `{"duration", "title"}` | `video_helper.py` | Info di un video puntuale (senza download), per l'euristica timestamp |
-| `scegli_ed_estrai(esercizio, output_dir="frames", logger=print)` → `dict` | `video_helper.py` | Orchestrazione: rispetta VideoURL/timestamp/frame già nel manifest, altrimenti cerca+filtra+estrae |
-| `create_workout_document(esercizi, titolo, state_path=None, ...)` → `{"document_id", "url", "esercizi_inseriti"}` | `google_docs_helper.py` | Genera (o riprende) il Google Doc A4 raggruppato per sezioni |
-| `update_exercise_media(doc_id, nome_esercizio, video_url, ..., output_dir=...)` → `dict` | `google_docs_helper.py` | Sostituisce mirata mente i frame di UN esercizio già nel documento |
-| `get_credentials_manual_flow(auth_code=None)` | `google_docs_helper.py` | OAuth headless: prima chiamata dà l'URL, seconda con `auth_code` completa il login |
-| `crop_frame(path, sinistra_pct, alto_pct, destra_pct, basso_pct)` | `video_helper.py` | Ritaglia un frame estratto (percentuali per lato, sovrascrive il file) |
-| `importa_frame_da_immagine(path_immagine, nome_esercizio, suffisso, output_dir)` → `str` | `video_helper.py` | Usa un'immagine dell'utente al posto del frame estratto: la converte in JPEG col nome canonico `<slug>_start.jpg`/`<slug>_finish.jpg` (`suffisso` = `"start"`/`"finish"`), sostituendo il frame esistente |
+| `carica_scheda(percorso)` → `(list[dict], cartella_lavoro)` | `core.scheda_file` | Apre un `.scheda`, estrae frames/stato in `<percorso>.work/` e ritorna gli esercizi con i percorsi frame già puntati ai file estratti (solleva `SchedaFileError` / `ValueError`) |
+| `salva_scheda(esercizi, percorso, state_path=None)` | `core.scheda_file` | Riscrive il `.scheda` (manifest + frames esistenti + stato se presente), scrittura atomica |
+| `cartella_frames(cartella_lavoro)` → `str` | `core.scheda_file` | Cartella dei frame del bundle: è l'`output_dir` da passare a `scegli_ed_estrai` / `extract_start_finish_frames` |
+| `percorso_stato(cartella_lavoro)` → `str` | `core.scheda_file` | Percorso dello `state.json` del bundle: è lo `state_path` da passare a `create_workout_document` / `update_exercise_media` |
+| `scheda_bytes(esercizi, state_path=None)` → `bytes` | `core.scheda_file` | Stesso archivio di `salva_scheda` ma in memoria (download da UI) |
+| `parse_esercizi_csv(file)` → `list[dict]` | `core.csv_utils` | Legge/valida un CSV manifest nudo (solleva `ValueError` se malformato) — utile per creare una scheda da un CSV |
+| `search_youtube(nome, max_results=3)` → `list[dict]` | `core.video_helper` | Risultati con `id`, `title`, `duration`, `webpage_url` |
+| `extract_start_finish_frames(url, ts_start, ts_finish, nome, output_dir)` → `(path_start, path_finish)` | `core.video_helper` | Estrae i 2 frame in `output_dir` senza scaricare il video |
+| `get_video_info(url)` → `{"duration", "title"}` | `core.video_helper` | Info di un video puntuale (senza download), per l'euristica timestamp |
+| `scegli_ed_estrai(esercizio, output_dir="frames", logger=print)` → `dict` | `core.video_helper` | Orchestrazione: rispetta VideoURL/timestamp/frame già nel manifest, altrimenti cerca+filtra+estrae |
+| `create_workout_document(esercizi, titolo, state_path=None, ...)` → `{"document_id", "url", "esercizi_inseriti"}` | `core.docs_helper` | Genera (o riprende) il Google Doc A4 raggruppato per sezioni |
+| `update_exercise_media(doc_id, nome_esercizio, video_url, ..., output_dir=...)` → `dict` | `core.docs_helper` | Sostituisce mirata mente i frame di UN esercizio già nel documento |
+| `get_credentials_manual_flow(auth_code=None)` | `core.docs_helper` | OAuth headless: prima chiamata dà l'URL, seconda con `auth_code` completa il login |
+| `crop_frame(path, sinistra_pct, alto_pct, destra_pct, basso_pct)` | `core.video_helper` | Ritaglia un frame estratto (percentuali per lato, sovrascrive il file) |
+| `importa_frame_da_immagine(path_immagine, nome_esercizio, suffisso, output_dir)` → `str` | `core.video_helper` | Usa un'immagine dell'utente al posto del frame estratto: la converte in JPEG col nome canonico `<slug>_start.jpg`/`<slug>_finish.jpg` (`suffisso` = `"start"`/`"finish"`), sostituendo il frame esistente |
+| `LocalCredentialsProvider(base_dir)` / `PcFfmpegBackend()` | `core.platform` | Implementazioni PC iniettabili per credenziali Google e ffmpeg; il core non cerca più credenziali rispetto alla CWD |
 
 (`scrivi_esercizi_csv` e `percorso_stato_per_titolo` esistono ancora solo per
 il flusso legacy a CSV sciolto: nel flusso a bundle usa `salva_scheda` e
@@ -70,19 +71,27 @@ rispetta le scelte già presenti (VideoURL/timestamp/frame) e `salva_scheda`
 le ricompatta nel bundle, così rilanciare lo stesso script è idempotente.
 
 ```python
-from scheda_file import carica_scheda, salva_scheda, cartella_frames, percorso_stato
-from video_helper import scegli_ed_estrai
-from google_docs_helper import create_workout_document
+from core.scheda_file import carica_scheda, salva_scheda, cartella_frames, percorso_stato
+from core.video_helper import scegli_ed_estrai
+from core.docs_helper import create_workout_document
+from core.platform import LocalCredentialsProvider, PcFfmpegBackend
+from pathlib import Path
 
-esercizi, lavoro = carica_scheda("mia_scheda.scheda")
+base_dir = Path(__file__).resolve().parent
+credential_provider = LocalCredentialsProvider(base_dir)
+ffmpeg_backend = PcFfmpegBackend()
+
+esercizi, lavoro = carica_scheda("mia_scheda.scheda", base_dir=base_dir)
 for e in esercizi:
-    scegli_ed_estrai(e, output_dir=cartella_frames(lavoro))
-salva_scheda(esercizi, "mia_scheda.scheda")            # checkpoint: frame nel bundle
+    scegli_ed_estrai(e, output_dir=cartella_frames(lavoro), ffmpeg_backend=ffmpeg_backend)
+salva_scheda(esercizi, "mia_scheda.scheda", base_dir=base_dir)  # checkpoint: frame nel bundle
 
 pronti = [e for e in esercizi if e.get("frame_start") and e.get("frame_finish")]
 stato = percorso_stato(lavoro)
-risultato = create_workout_document(pronti, "SCHEDA 1: GAMBE & GLUTEI", state_path=stato)
-salva_scheda(esercizi, "mia_scheda.scheda", state_path=stato)  # stato dentro il bundle
+risultato = create_workout_document(
+    pronti, "SCHEDA 1: GAMBE & GLUTEI", state_path=stato,
+    credential_provider=credential_provider, base_dir=base_dir)
+salva_scheda(esercizi, "mia_scheda.scheda", state_path=stato, base_dir=base_dir)  # stato dentro il bundle
 print(risultato["url"])                                # riporta questo URL all'utente
 ```
 
@@ -129,16 +138,24 @@ Correggi `video_url` e/o `ts_start`/`ts_finish` dell'esercizio (negli
 esercizi caricati o a mano nel manifest), poi:
 
 ```python
-from scheda_file import carica_scheda, salva_scheda, cartella_frames, percorso_stato
-from google_docs_helper import update_exercise_media
+from core.scheda_file import carica_scheda, salva_scheda, cartella_frames, percorso_stato
+from core.docs_helper import update_exercise_media
+from core.platform import LocalCredentialsProvider, PcFfmpegBackend
+from pathlib import Path
 
-esercizi, lavoro = carica_scheda("mia_scheda.scheda")
+base_dir = Path(__file__).resolve().parent
+credential_provider = LocalCredentialsProvider(base_dir)
+ffmpeg_backend = PcFfmpegBackend()
+
+esercizi, lavoro = carica_scheda("mia_scheda.scheda", base_dir=base_dir)
 update_exercise_media(
     doc_id, "Nome esercizio", video_url="https://...",
     ts_start=12.0, ts_finish=48.0,
     state_path=percorso_stato(lavoro),
-    output_dir=cartella_frames(lavoro))
-salva_scheda(esercizi, "mia_scheda.scheda", state_path=percorso_stato(lavoro))
+    output_dir=cartella_frames(lavoro),
+    credential_provider=credential_provider, base_dir=base_dir,
+    ffmpeg_backend=ffmpeg_backend)
+salva_scheda(esercizi, "mia_scheda.scheda", state_path=percorso_stato(lavoro), base_dir=base_dir)
 ```
 
 Sostituisce solo le due immagini di quell'esercizio nel documento già

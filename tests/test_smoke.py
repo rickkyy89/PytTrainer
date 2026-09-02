@@ -27,13 +27,10 @@ RADICE_PROGETTO = Path(__file__).resolve().parent.parent
 if str(RADICE_PROGETTO) not in sys.path:
     sys.path.insert(0, str(RADICE_PROGETTO))
 
-import csv_utils  # noqa: E402
-import google_docs_helper  # noqa: E402
-import scheda_file  # noqa: E402
-import video_helper  # noqa: E402
-from csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv, slugify  # noqa: E402
-from google_docs_helper import create_workout_document, update_exercise_media  # noqa: E402
-from video_helper import (  # noqa: E402
+from core import csv_utils, docs_helper as google_docs_helper, scheda_file, video_helper  # noqa: E402
+from core.csv_utils import esercizi_csv_bytes, parse_esercizi_csv, scrivi_esercizi_csv, slugify  # noqa: E402
+from core.docs_helper import create_workout_document, get_credentials, update_exercise_media  # noqa: E402
+from core.video_helper import (  # noqa: E402
     FrameExtractionError,
     box_ritaglio,
     crop_frame,
@@ -42,6 +39,8 @@ from video_helper import (  # noqa: E402
     get_stream_info,
     importa_frame_da_immagine,
 )
+from core import platform  # noqa: E402
+from core.platform import CredentialProviderError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +500,47 @@ def test_extract_frame_inoltra_gli_header_yt_dlp_a_ffmpeg(tmp_path, monkeypatch)
     indice_header = comando.index("-headers")
     assert comando[indice_header + 1] == "User-Agent: yt-dlp-test\r\nReferer: https://www.youtube.com/\r\n"
     assert comando[indice_header + 2 : indice_header + 4] == ["-i", "https://googlevideo.example/stream"]
+
+
+def test_extract_frame_usa_backend_iniettato(tmp_path):
+    output_path = tmp_path / "out.jpg"
+
+    class BackendFinto:
+        def __init__(self):
+            self.comandi = []
+
+        def run(self, comando, *, timeout):
+            self.comandi.append((comando, timeout))
+            output_path.write_bytes(b"\xff\xd8frame")
+            return subprocess.CompletedProcess(comando, returncode=0, stderr=b"")
+
+    backend = BackendFinto()
+    assert extract_frame("video.mp4", 3.0, str(output_path), ffmpeg_backend=backend) == str(output_path)
+    assert backend.comandi[0][0][0] == "ffmpeg"
+    assert backend.comandi[0][1] == 90
+
+
+def test_get_credentials_usa_provider_iniettato(tmp_path):
+    class ProviderFinto:
+        def __init__(self):
+            self.scopes = None
+
+        def get_credentials(self, scopes):
+            self.scopes = scopes
+            return "credenziali-finte"
+
+    provider = ProviderFinto()
+    assert get_credentials(credential_provider=provider, base_dir=tmp_path) == "credenziali-finte"
+    assert provider.scopes
+
+
+def test_get_credentials_traduce_errore_del_provider():
+    class ProviderFinto:
+        def get_credentials(self, scopes):
+            raise CredentialProviderError("credenziali mancanti")
+
+    with pytest.raises(google_docs_helper.GoogleAuthError, match="credenziali mancanti"):
+        get_credentials(credential_provider=ProviderFinto())
 
 
 def test_get_stream_info_restituisce_gli_header_yt_dlp(monkeypatch):
@@ -1366,17 +1406,15 @@ class _FakeInstalledAppFlow:
 
 
 def test_get_credentials_manual_flow_senza_credentials_json(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     with pytest.raises(google_docs_helper.GoogleAuthError):
-        google_docs_helper.get_credentials_manual_flow()
+        google_docs_helper.get_credentials_manual_flow(base_dir=tmp_path)
 
 
 def test_get_credentials_manual_flow_restituisce_url_autorizzazione(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     (tmp_path / "credentials.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(google_docs_helper, "InstalledAppFlow", _FakeInstalledAppFlow)
+    monkeypatch.setattr(platform, "InstalledAppFlow", _FakeInstalledAppFlow)
 
     with pytest.raises(google_docs_helper.GoogleAuthError) as errore:
-        google_docs_helper.get_credentials_manual_flow()
+        google_docs_helper.get_credentials_manual_flow(base_dir=tmp_path)
 
     assert "https://" in str(errore.value)

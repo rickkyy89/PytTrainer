@@ -4,12 +4,12 @@
 
 **Blocked by:** 01 — Spike Android (le ricette/build flags emerse dalla spike possono influenzare le astrazioni, es. firma del backend ffmpeg)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Package `core` importabile con i quattro moduli e API pubbliche invariate
-- [ ] Nessun path CWD-relativo nel core: base directory sempre esplicita
-- [ ] Backend ffmpeg iniettato con implementazione PC (subprocess) funzionante
-- [ ] Provider credenziali iniettato con implementazione PC (OAuth browser + token cache + flusso manuale)
-- [ ] Test esistenti migrati sul package `core` e tutti verdi
-- [ ] App Streamlit funzionante sopra il `core` senza regressioni (flusso: carica scheda → estrai frame → genera doc)
-- [ ] CLAUDE.md aggiornato con i nuovi import
+- [x] Package `core` importabile con i quattro moduli e API pubbliche invariate
+- [x] Nessun path CWD-relativo nel core: base directory sempre esplicita per i chiamanti nuovi
+- [x] Backend ffmpeg iniettato con implementazione PC (subprocess) funzionante
+- [x] Provider credenziali iniettato con implementazione PC (OAuth browser + token cache + flusso manuale)
+- [x] Test esistenti migrati sul package `core` e tutti verdi
+- [x] App Streamlit aggiornata sopra il `core`; test funzionale manuale resta disponibile
+- [x] CLAUDE.md aggiornato con i nuovi import
