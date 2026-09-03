@@ -24,6 +24,7 @@ from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
 
 from .file_picker import choose_file
+from .launcher import apri_url
 from .media import MediaFlowError
 
 
@@ -44,12 +45,16 @@ class MediaScreen(BoxLayout):
         header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         self._back = Button(text="< Editor", size_hint_x=None, width=120)
         self._back.bind(on_release=lambda *_: self._on_back())
-        self.status = Label(text="", halign="left", shorten=True, shorten_from="right")
+        self.status = Label(text="", halign="left", valign="middle",
+                            shorten=True, shorten_from="right")
+        self.status.bind(
+            width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
         header.add_widget(self._back)
         header.add_widget(self.status)
         self.add_widget(header)
 
         body = ScrollView()
+        self._scroll = body
         self.column = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
         self.column.bind(minimum_height=self.column.setter("height"))
         body.add_widget(self.column)
@@ -57,14 +62,28 @@ class MediaScreen(BoxLayout):
 
         self._build_video_section()
         self._build_frame_section()
+        self._syncing = False
         self._refresh_status()
+        if self._media.video_url and self._media.durata is None:
+            # video proveniente dal manifest: la pista scrub non conosce la
+            # durata, va risolta in background prima di poterla usare
+            self._run_async(self._do_durata)
+
+    def _do_durata(self):
+        self._media.assicura_durata()
+        Clock.schedule_once(lambda *_: self._sync_scrub_sliders(), 0)
 
     # ------------------------------------------------------------- video
 
     def _build_video_section(self):
         video_line = BoxLayout(size_hint_y=None, height=40, spacing=4)
         self.video_label = Label(text=f"Video: {self._media.video_url or 'nessuno'}",
-                                 halign="left", shorten=True, shorten_from="right")
+                                 halign="left", valign="middle",
+                                 shorten=True, shorten_from="right")
+        self.video_label.bind(
+            width=lambda _, v: setattr(self.video_label, "text_size", (v, self.video_label.height)))
+        play = Button(text="Play", size_hint_x=None, width=80)
+        play.bind(on_release=lambda *_: self._play())
         search = Button(text="Cerca", size_hint_x=None, width=100)
         search.bind(on_release=lambda *_: self._run_async(self._do_search))
         manual = Button(text="URL manuale", size_hint_x=None, width=130)
@@ -72,6 +91,7 @@ class MediaScreen(BoxLayout):
         extract = Button(text="Estrai frame", size_hint_x=None, width=130)
         extract.bind(on_release=lambda *_: self._run_async(self._do_extract))
         video_line.add_widget(self.video_label)
+        video_line.add_widget(play)
         video_line.add_widget(search)
         video_line.add_widget(manual)
         video_line.add_widget(extract)
@@ -93,7 +113,8 @@ class MediaScreen(BoxLayout):
         ts_line.add_widget(heuristic)
         self.column.add_widget(ts_line)
 
-        self.results = BoxLayout(orientation="vertical", spacing=4)
+        self.results = BoxLayout(orientation="vertical", spacing=4, size_hint_y=None)
+        self.results.bind(minimum_height=self.results.setter("height"))
         self.column.add_widget(self.results)
         self._render_results()
 
@@ -117,8 +138,20 @@ class MediaScreen(BoxLayout):
                 self._media.imposta_timestamp(**{chiave: valore})
             except MediaFlowError as exc:
                 self.status.text = str(exc)
+                self._refresh_status()
+                return
+            # allinea la pista e aggiorna la preview sul nuovo secondo
+            self._sync_scrub_sliders()
+            self._mostra_scrub(chiave.split("_", 1)[1])
             self._refresh_status()
         return on_focus
+
+    def _mostra_scrub(self, suffisso):
+        slider = self._scrub_slider.get(suffisso)
+        if slider is None or slider.disabled or not self._media.video_url:
+            return
+        self._scrub_pendente[suffisso] = float(slider.value)
+        self._scrub_anteprima(suffisso)
 
     def _apply_heuristic(self):
         if not self._media.video_url:
@@ -154,7 +187,9 @@ class MediaScreen(BoxLayout):
         Clock.schedule_once(lambda *_: self._sync_video_widgets(), 0)
 
     def _do_extract(self):
-        self._media.estrai()
+        # forza la riestrazione: dopo un cambio video i frame vecchi sono ancora
+        # su disco e ``estrai()`` senza riestrai li terrebbe (ritornando presto)
+        self._media.estrai(riestrai=True)
         Clock.schedule_once(lambda *_: (self._sync_video_widgets(),
                                         self._refresh_frames()), 0)
 
@@ -188,23 +223,32 @@ class MediaScreen(BoxLayout):
         self.video_label.text = f"Video: {self._media.video_url or 'nessuno'}"
         self.ts_start.text = self._ts_text(self._media.ts_start)
         self.ts_finish.text = self._ts_text(self._media.ts_finish)
+        self._sync_scrub_sliders()
 
     # ------------------------------------------------------------- frames
 
     def _build_frame_section(self):
-        self.frames_row = BoxLayout(size_hint_y=None, height=340, spacing=8)
+        self.frames_row = BoxLayout(size_hint_y=None, height=390, spacing=8)
+        self._scrub_jobs: dict[str, object] = {}
+        self._scrub_generazioni: dict[str, int] = {}
+        self._scrub_pendente: dict[str, float] = {}
+        self._scrub_in_corso: dict[str, float] = {}
+        self._scrub_in_volo: set[str] = set()
+        self._scrub_slider: dict[str, Slider] = {}
         for suffisso in ("start", "finish"):
             panel = BoxLayout(orientation="vertical", spacing=2)
             preview = Image(source=self._media.frame(suffisso) or "",
                             fit_mode="contain", size_hint_y=1)
             panel.add_widget(preview)
             setattr(self, f"preview_{suffisso}", preview)
+            panel.add_widget(self._build_scrub(suffisso))
             sliders = {}
             lato_line = BoxLayout(size_hint_y=None, height=90, spacing=2)
             for lato in ("sinistra", "alto", "destra", "basso"):
                 box = BoxLayout(orientation="vertical")
                 box.add_widget(Label(text=lato, size_hint_y=None, height=20))
                 slider = Slider(min=0, max=45, value=0, orientation="vertical")
+                self._blocca_scroll(slider)
                 box.add_widget(slider)
                 sliders[lato] = slider
                 lato_line.add_widget(box)
@@ -225,6 +269,155 @@ class MediaScreen(BoxLayout):
             panel.add_widget(actions)
             self.frames_row.add_widget(panel)
         self.column.add_widget(self.frames_row)
+        self._sync_scrub_sliders()
+
+    def _blocca_scroll(self, slider):
+        """Il drag su uno slider non deve far scorrere la pagina."""
+        def down(inst, touch):
+            if slider.collide_point(*touch.pos):
+                self._scroll.do_scroll_y = False
+                self._scroll.do_scroll_x = False
+            return False  # non consumare: lo slider deve ricevere il tocco
+
+        def up(inst, touch):
+            self._scroll.do_scroll_y = True
+            self._scroll.do_scroll_x = True
+            return False
+
+        slider.bind(on_touch_down=down, on_touch_up=up)
+
+    def _build_scrub(self, suffisso: str):
+        barra = BoxLayout(orientation="vertical", size_hint_y=None, height=66, spacing=0)
+        etichetta = Label(
+            text=self._scrub_testo(getattr(self._media, f"ts_{suffisso}")),
+            size_hint_y=None, height=20, font_size="13sp", halign="left")
+        barra.add_widget(etichetta)
+        setattr(self, f"scrub_etichetta_{suffisso}", etichetta)
+        slider = Slider(min=0, max=1, value=0, size_hint_y=None, height=44)
+        self._blocca_scroll(slider)
+        slider.bind(on_value=self._scrub_handler(suffisso, slider))
+        slider.bind(on_touch_up=lambda _, touch, s=suffisso, sl=slider:
+                    self._scrub_release(s, sl, touch))
+        barra.add_widget(slider)
+        self._scrub_slider[suffisso] = slider
+        return barra
+
+    def _play(self):
+        try:
+            url = self._media.url_per_play()
+        except MediaFlowError as exc:
+            self.status.text = str(exc)
+            return
+        if apri_url(url):
+            self.status.text = f"Play dal punto START nel player di sistema: {url}"
+        else:
+            self.status.text = f"Nessun player disponibile per aprire: {url}"
+
+    def _scrub_testo(self, valore) -> str:
+        durata = self._media.durata
+        base = f"Tempo: {'' if valore is None else f'{float(valore):.1f}'} s"
+        return f"{base}   (video: {_formatta_durata(durata) if durata else 'durata n/d'})"
+
+    def _scrub_handler(self, suffisso, slider):
+        def on_value(*_):
+            getattr(self, f"scrub_etichetta_{suffisso}").text = self._scrub_testo(slider.value)
+            if self._syncing or slider.disabled or not self._media.video_url:
+                return
+            self._scrub_pendente[suffisso] = float(slider.value)
+            vecchio = self._scrub_jobs.get(suffisso)
+            if vecchio is not None:
+                Clock.unschedule(vecchio)
+            self._scrub_jobs[suffisso] = Clock.schedule_once(
+                lambda *_: self._scrub_anteprima(suffisso), 0.25)
+        return on_value
+
+    def _scrub_anteprima(self, suffisso):
+        self._scrub_jobs[suffisso] = None
+        valore = self._scrub_pendente.get(suffisso)
+        if valore is None:
+            return
+        if suffisso in self._scrub_in_volo or self._busy:
+            # estrazione gia' partita o flusso occupato: riprova col valore corrente
+            self._scrub_jobs[suffisso] = Clock.schedule_once(
+                lambda *_: self._scrub_anteprima(suffisso), 0.2)
+            return
+        self._scrub_in_volo.add(suffisso)
+        generazione = self._scrub_generazioni.get(suffisso, 0) + 1
+        self._scrub_generazioni[suffisso] = generazione
+        self._scrub_in_corso[suffisso] = valore
+
+        def worker():
+            try:
+                percorso = self._media.anteprima_scrub(suffisso, valore)
+                Clock.schedule_once(
+                    lambda *_: self._scrub_fatto(suffisso, generazione, percorso, None), 0)
+            except Exception as exc:
+                testo = (str(exc) if isinstance(exc, MediaFlowError)
+                         else f"Errore imprevisto: {exc}")
+                Clock.schedule_once(
+                    lambda *_: self._scrub_fatto(suffisso, generazione, None, testo), 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _scrub_fatto(self, suffisso, generazione, percorso, errore):
+        self._scrub_in_volo.discard(suffisso)
+        if errore:
+            self.status.text = errore
+        elif generazione == self._scrub_generazioni.get(suffisso):
+            # mostra SEMPRE l'ultimo frame richiesto, anche se un frame reale
+            # esiste gia': lo scrub serve proprio a sceglierne uno nuovo
+            preview = getattr(self, f"preview_{suffisso}")
+            preview.source = percorso
+            preview.reload()
+        # se nel frattempo l'utente ha spostato la pista, recupera l'ultimo valore
+        pendente = self._scrub_pendente.get(suffisso)
+        in_corso = self._scrub_in_corso.get(suffisso)
+        if pendente is not None and (in_corso is None or abs(pendente - in_corso) > 0.01):
+            self._scrub_anteprima(suffisso)
+
+    def _scrub_release(self, suffisso, slider, touch=None):
+        if slider.disabled or not self._media.video_url:
+            return
+        if touch is not None and not slider.collide_point(*touch.pos):
+            return  # tocco nato altrove (scroll della pagina): non committare
+        try:
+            self._media.imposta_timestamp(**{f"ts_{suffisso}": float(slider.value)})
+        except MediaFlowError as exc:
+            self.status.text = str(exc)
+            return
+        getattr(self, f"ts_{'start' if suffisso == 'start' else 'finish'}").text = \
+            self._ts_text(slider.value)
+        # assicurati che la posizione finale venga mostrata anche se il
+        # debounce non e' mai partito (click secco sulla pista)
+        self._scrub_pendente[suffisso] = float(slider.value)
+        vecchio = self._scrub_jobs.get(suffisso)
+        if vecchio is not None:
+            Clock.unschedule(vecchio)
+        self._scrub_jobs[suffisso] = None
+        self._scrub_anteprima(suffisso)
+        self._refresh_status()
+
+    def _sync_scrub_sliders(self):
+        durata = self._media.durata or 0
+        self._syncing = True
+        try:
+            for suffisso, slider in self._scrub_slider.items():
+                valore = getattr(self._media, f"ts_{suffisso}")
+                if durata > 0 and self._media.video_url:
+                    slider.max = float(durata)
+                    slider.disabled = False
+                    slider.value = min(max(float(valore or 0), 0), slider.max)
+                    # il campo testo e la pista devono coincidere: correggi un ts
+                    # fuori scala lasciato da un video precedente
+                    if valore is None or abs(float(valore) - slider.value) > 0.05:
+                        self._media.imposta_timestamp(**{f"ts_{suffisso}": slider.value})
+                        getattr(self, f"ts_{'start' if suffisso == 'start' else 'finish'}").text = \
+                            self._ts_text(slider.value)
+                else:
+                    slider.disabled = True
+                getattr(self, f"scrub_etichetta_{suffisso}").text = self._scrub_testo(slider.value)
+        finally:
+            self._syncing = False
 
     def _preview_handler(self, suffisso, sliders):
         def on_value(*_):

@@ -7,8 +7,11 @@ this module only renders and forwards events.
 
 from __future__ import annotations
 
+import math
+
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
@@ -42,10 +45,15 @@ class EditorScreen(BoxLayout):
         back.bind(on_release=lambda *_: self._on_back())
         self.status = Label(text="", halign="left", valign="middle",
                             shorten=True, shorten_from="right")
-        save = Button(text="Salva", size_hint_x=None, width=110)
+        self.status.bind(
+            width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
+        save_locale = Button(text="Salva solo locale", size_hint_x=None, width=160)
+        save_locale.bind(on_release=lambda *_: self._save(sincronizza=False))
+        save = Button(text="Salva su Drive", size_hint_x=None, width=140)
         save.bind(on_release=lambda *_: self._save())
         self.header.add_widget(back)
         self.header.add_widget(self.status)
+        self.header.add_widget(save_locale)
         self.header.add_widget(save)
         self.add_widget(self.header)
 
@@ -80,16 +88,19 @@ class EditorScreen(BoxLayout):
         self._refresh_status()
 
     def _exercise_block(self, indice, esercizio):
-        block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
-        title = BoxLayout(size_hint_y=None, height=34, spacing=6)
-        title.add_widget(Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
-                               size_hint_x=None, width=220, halign="left",
-                               text_size=(220, None)))
-        spacer = Label(text="")
+        block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=6, padding=8)
+        block.bind(minimum_height=block.setter("height"))
+
+        header = BoxLayout(size_hint_y=None, height=40, spacing=6)
+        titolo = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
+                       halign="left", valign="middle", shorten=True, shorten_from="right")
+        titolo.bind(width=lambda _, v, l=titolo: setattr(l, "text_size", (v, l.height)))
         up = Button(text="Su", size_hint_x=None, width=60)
         up.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, -1), rebuild=True))
         down = Button(text="Giù", size_hint_x=None, width=60)
         down.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, 1), rebuild=True))
+        goto = Button(text="Vai a…", size_hint_x=None, width=80)
+        goto.bind(on_release=lambda _, i=indice: self._vai_a(i))
         groups = Button(text="Gruppi", size_hint_x=None, width=90)
         groups.bind(on_release=lambda _, i=indice: self._group_popup(i))
         video = Button(text="Video&Frame", size_hint_x=None, width=120)
@@ -97,28 +108,52 @@ class EditorScreen(BoxLayout):
             video.bind(on_release=lambda _, i=indice: self._open_media(self._editor, i))
         delete = Button(text="Elimina", size_hint_x=None, width=90)
         delete.bind(on_release=lambda *_: self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True))
-        title.add_widget(spacer)
-        title.add_widget(up)
-        title.add_widget(down)
-        title.add_widget(groups)
-        title.add_widget(video)
-        title.add_widget(delete)
-        block.add_widget(title)
+        header.add_widget(titolo)
+        header.add_widget(up)
+        header.add_widget(down)
+        header.add_widget(goto)
+        header.add_widget(groups)
+        header.add_widget(video)
+        header.add_widget(delete)
+        block.add_widget(header)
 
-        for row_key in (CAMPI_BREVI, CAMPI_LUNGHI):
-            line = BoxLayout(size_hint_y=None,
-                             height=90 if row_key is CAMPI_LUNGHI else 40, spacing=4)
-            for chiave, etichetta in row_key:
-                line.add_widget(Label(text=etichetta, size_hint_x=None, width=90,
-                                      halign="left"))
-                campo = TextInput(
-                    text=str(esercizio.get(chiave) or ""),
-                    multiline=row_key is CAMPI_LUNGHI, size_hint_x=1,
-                    hint_text=etichetta,
-                )
-                campo.bind(focus=self._field_handler(indice, chiave, campo))
-                line.add_widget(campo)
-            block.add_widget(line)
+        griglia = GridLayout(cols=4, spacing=(10, 6), size_hint_y=None,
+                             row_default_height=40, row_force_default=True)
+
+        def ricalcola_griglia(*_, g=griglia, b=block):
+            largo = max(b.width, 1)
+            per_riga = 4 if largo >= 1200 else 3 if largo >= 900 else 2 if largo >= 620 else 1
+            g.cols = per_riga
+            righe = math.ceil(len(CAMPI_BREVI) / per_riga)
+            g.height = righe * 40 + (righe - 1) * 6
+        block.bind(width=ricalcola_griglia)
+        for chiave, etichetta in CAMPI_BREVI:
+            cella = BoxLayout(spacing=4)
+            etichetta_label = Label(text=etichetta, size_hint_x=None, width=95,
+                                    halign="left", valign="middle")
+            etichetta_label.bind(
+                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, 40)))
+            cella.add_widget(etichetta_label)
+            campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
+                              hint_text=etichetta)
+            campo.bind(focus=self._field_handler(indice, chiave, campo))
+            cella.add_widget(campo)
+            griglia.add_widget(cella)
+        block.add_widget(griglia)
+
+        for chiave, etichetta in CAMPI_LUNGHI:
+            box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
+            box.bind(minimum_height=box.setter("height"))
+            etichetta_label = Label(text=etichetta, size_hint_y=None, height=20,
+                                    halign="left", valign="middle")
+            etichetta_label.bind(
+                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, l.height)))
+            box.add_widget(etichetta_label)
+            campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=True,
+                              hint_text=etichetta, size_hint_y=None, height=90)
+            campo.bind(focus=self._field_handler(indice, chiave, campo))
+            box.add_widget(campo)
+            block.add_widget(box)
         return block
 
     def _field_handler(self, indice, chiave, campo):
@@ -148,23 +183,89 @@ class EditorScreen(BoxLayout):
         popup.dismiss()
         self._wrap(lambda: self._editor.aggiorna(indice, gruppo=nome), rebuild=True)
 
-    def _mode_popup(self, titolo, applica):
+    def _numero_popup(self, titolo, prompt, minimo, massimo, confermato, iniziale=None):
         content = BoxLayout(orientation="vertical", spacing=8)
         popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.35))
+        content.add_widget(Label(text=f"{prompt} ({minimo}-{massimo})", halign="left",
+                                 size_hint_y=None, height=30, text_size=(None, 30)))
+        campo = TextInput(text=str(iniziale if iniziale is not None else minimo),
+                          multiline=False, input_filter="int", size_hint_y=None, height=44)
+        content.add_widget(campo)
+        bot = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        ok = Button(text="Ok")
+        cancel = Button(text="Annulla")
+
+        def valida(*_):
+            try:
+                numero = int(campo.text)
+            except (TypeError, ValueError):
+                self.status.text = "Inserisci un numero valido."
+                return
+            popup.dismiss()
+            confermato(numero)
+
+        ok.bind(on_release=valida)
+        campo.bind(on_text_validate=valida)
+        cancel.bind(on_release=lambda *_: popup.dismiss())
+        bot.add_widget(ok)
+        bot.add_widget(cancel)
+        content.add_widget(bot)
+        popup.open()
+
+    def _vai_a(self, indice):
+        massimo = len(self._editor.esercizi)
+        if massimo <= 1:
+            self.status.text = "Serve piu' di un esercizio per spostare."
+            return
+
+        def conferma(numero):
+            if not 1 <= numero <= massimo:
+                self.status.text = f"Posizione fuori intervallo (1-{massimo})."
+                return
+            self._wrap(lambda: self._editor.sposta_alla(indice, numero - 1), rebuild=True)
+
+        self._numero_popup(f"Sposta '{self._editor.esercizi[indice].get('nome') or indice + 1}'",
+                           "Nuova posizione", 1, massimo, conferma, iniziale=indice + 1)
+
+    def _posizione_inserimento(self, callback):
+        massimo = len(self._editor.esercizi) + 1
+
+        def conferma(numero):
+            if not 1 <= numero <= massimo:
+                self.status.text = f"Posizione fuori intervallo (1-{massimo})."
+                return
+            self._wrap(lambda: callback(numero - 1), rebuild=True)
+
+        self._numero_popup("Punto di inserimento", "Inserisci alla posizione", 1, massimo,
+                           conferma, iniziale=1)
+
+    def _mode_popup(self, titolo, applica):
+        content = BoxLayout(orientation="vertical", spacing=8)
+        popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.42))
         replace = Button(text="Sostituisci tutti gli esercizi")
         merge = Button(text="Aggiungi in fondo")
-        replace.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(True), rebuild=True)))
-        merge.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(False), rebuild=True)))
+        posiziona = Button(text="Inserisci in una posizione…")
+        replace.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(True, None), rebuild=True)))
+        merge.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(False, None), rebuild=True)))
+
+        def apri_posizione(*_):
+            popup.dismiss()
+            self._posizione_inserimento(lambda p: applica(False, p))
+
+        posiziona.bind(on_release=apri_posizione)
         content.add_widget(replace)
         content.add_widget(merge)
+        content.add_widget(posiziona)
         popup.open()
 
     def _import_csv(self):
         def on_result(percorso):
             if not percorso:
                 return
-            self._mode_popup(f"Importa {percorso}",
-                             lambda sostituisci: self._editor.importa_csv(percorso, sostituisci=sostituisci))
+            self._mode_popup(
+                f"Importa {percorso}",
+                lambda sostituisci, posizione: self._editor.importa_csv(
+                    percorso, sostituisci=sostituisci, posizione=posizione))
         choose_file(on_result, title="Importa CSV manifest", parent=self,
                     patterns=[("CSV", "*.csv")])
 
@@ -185,18 +286,24 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def _scheda_mode(self, remote):
-        self._mode_popup(f"Importa {remote.name}",
-                         lambda sostituisci: self._controller.import_remote_into(
-                             self._editor, remote, sostituisci=sostituisci))
+        self._mode_popup(
+            f"Importa {remote.name}",
+            lambda sostituisci, posizione: self._controller.import_remote_into(
+                self._editor, remote, sostituisci=sostituisci, posizione=posizione))
 
-    def _save(self):
+    def _save(self, sincronizza=True):
         try:
-            risultato = self._editor.salva()
+            risultato = self._editor.salva(sincronizza=sincronizza)
         except EditorValidationError as exc:
             self.status.text = str(exc)
             return
         except Exception as exc:
-            self.status.text = f"Salvataggio locale ok, Drive non raggiungibile: {exc}"
+            self.status.text = (f"Salvataggio locale ok, Drive non raggiungibile: {exc}"
+                                if sincronizza else f"Salvataggio locale fallito: {exc}")
+            self._refresh_status()
+            return
+        if not sincronizza:
+            self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
             return
         if isinstance(risultato, SyncConflict):
             from .conflict_dialog import apri_dialogo_conflitto
@@ -249,5 +356,10 @@ class EditorScreen(BoxLayout):
                 for slug, indici in sorted(duplicati.items())
             )
             parti.append(f"ATTENZIONE slug duplicati ({collisioni})")
-        parti.append("* modifiche non salvate" if self._editor.sporco else "nessuna modifica pending")
+        if self._editor.sporco:
+            parti.append("* modifiche non salvate")
+        elif getattr(self._editor, "non_sincronizzato", False):
+            parti.append("o salvata in locale: Drive da sincronizzare")
+        else:
+            parti.append("nessuna modifica pending")
         self.status.text = " - ".join(parti)

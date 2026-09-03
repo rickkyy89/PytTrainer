@@ -185,11 +185,12 @@ class DriveHomeController:
                 return candidate
             n += 1
 
-    def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool) -> int:
+    def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool,
+                           posizione: int | None = None) -> int:
         """Download another bundle and merge its exercises into the editor."""
         def operation():
             esercizi, _, _ = self._download_editable(remote)
-            editor.importa_esercizi(esercizi, sostituisci=sostituisci)
+            editor.importa_esercizi(esercizi, sostituisci=sostituisci, posizione=posizione)
             return len(esercizi)
         return self._call("importare la scheda", operation)
 

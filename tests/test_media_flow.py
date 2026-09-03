@@ -10,7 +10,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.video_helper import FrameExtractionError, VideoSearchError, extract_frame
-from kivy_app.media import MediaFlowController, MediaFlowError, percorso_backup_frame
+from kivy_app.media import (
+    MediaFlowController,
+    MediaFlowError,
+    url_con_inizio,
+    percorso_backup_frame,
+)
 from kivy_app.platform_android import AndroidFrameExtractor
 
 
@@ -69,6 +74,9 @@ def make_media(esercizio=None, tmp_path=None, **iniettati):
         cropper=lambda path, *pct: path,
         image_importer=_fake_image_importer,
         copier=lambda src, dst: Path(dst).write_bytes(Path(src).read_bytes()),
+        stream_resolver=lambda url: (f"stream://{url}", {"User-Agent": "fake"}),
+        single_extractor=lambda stream, ts, out, headers=None, ffmpeg_backend=None:
+        Path(out).write_bytes(b"\xff\xd8jpeg"),
     )
     defaults.update(iniettati)
     controller = MediaFlowController(esercizio, str(tmp_path or "."), **defaults)
@@ -346,3 +354,117 @@ def test_android_frame_extractor_senza_frame_diventa_errore(tmp_path):
 
     with pytest.raises(FrameExtractionError, match="nessun frame"):
         extractor.extract("https://stream", 5, str(tmp_path / "x.jpg"))
+
+
+# ---------------------------------------------------------------- scrub slider
+
+def test_url_con_inizio_posisziona_il_playback():
+    assert url_con_inizio("https://youtu.be/abc", 50) == "https://youtu.be/abc#t=50s"
+    assert url_con_inizio("https://www.youtube.com/watch?v=abc", 12) == \
+        "https://www.youtube.com/watch?v=abc&t=12s"
+    assert url_con_inizio("https://www.youtube.com/watch?v=abc&t=3s&x=1", 40) == \
+        "https://www.youtube.com/watch?v=abc&t=40s&x=1"
+    assert url_con_inizio("https://www.youtube.com/watch?v=abc#frag", 5) == \
+        "https://www.youtube.com/watch?v=abc&t=5s"
+    assert url_con_inizio("", 5) == ""
+
+
+def test_url_per_play_usa_il_timestamp_inizio():
+    e = _esercizio()
+    e["video_url"] = "https://youtu.be/abc"
+    e["ts_start"] = 33.6
+    media, _, _ = make_media(esercizio=e)
+
+    assert media.url_per_play() == "https://youtu.be/abc#t=34s"
+    assert media.url_per_play(10) == "https://youtu.be/abc#t=10s"
+
+
+def test_url_per_play_senza_video_e_un_errore():
+    media, _, _ = make_media()
+    with pytest.raises(MediaFlowError, match="Seleziona prima un video"):
+        media.url_per_play()
+
+
+def test_assicura_durata_completa_i_video_del_manifest(tmp_path):
+    e = _esercizio()
+    e["video_url"] = "https://youtu.be/xyz"
+    chiamate = []
+
+    def info(url):
+        chiamate.append(url)
+        return {"duration": 100.0, "title": "t"}
+
+    media, _, _ = make_media(esercizio=e, tmp_path=tmp_path, info_getter=info)
+
+    assert media.durata is None
+    assert media.assicura_durata() == 100.0
+    assert media.assicura_durata() == 100.0
+    assert chiamate == ["https://youtu.be/xyz"]
+
+
+def test_anteprima_scrub_risolve_lo_stream_una_sola_volta(tmp_path):
+    risoluzioni = []
+
+    def resolver(url):
+        risoluzioni.append(url)
+        return f"stream://{url}", {"User-Agent": "fake"}
+
+    estrazioni = []
+
+    def single(stream, ts, out, headers=None, ffmpeg_backend=None):
+        estrazioni.append((stream, ts, out))
+        Path(out).write_bytes(b"\xff\xd8jpeg")
+
+    media, esercizio, _ = make_media(tmp_path=tmp_path, stream_resolver=resolver,
+                                     single_extractor=single)
+    media.url_manuale("https://youtu.be/a")
+
+    percorso = media.anteprima_scrub("start", 33.0)
+    percorso2 = media.anteprima_scrub("finish", 44.0)
+
+    assert percorso.endswith("_scrub_preview_start.jpg")
+    assert percorso2.endswith("_scrub_preview_finish.jpg")
+    assert Path(percorso).exists()
+    assert risoluzioni == ["https://youtu.be/a"]
+    assert [ts for _, ts, _ in estrazioni] == [33.0, 44.0]
+    assert esercizio["frame_start"] is None and esercizio["frame_finish"] is None
+
+
+def test_anteprima_scrub_clampa_sulla_durata_e_esige_un_video(tmp_path):
+    estratti = []
+    media, _, _ = make_media(tmp_path=tmp_path,
+                             single_extractor=lambda stream, ts, out, headers=None,
+                             ffmpeg_backend=None: estratti.append(ts) or Path(out).write_bytes(b"x"))
+    with pytest.raises(MediaFlowError, match="Seleziona prima un video"):
+        media.anteprima_scrub("start", 10)
+    media.url_manuale("https://youtu.be/a")  # info_getter dice durata 100
+    media.anteprima_scrub("start", 150)
+    assert estratti == [pytest.approx(99.9)]
+
+
+def test_anteprima_scrub_ri_risolve_lo_stream_scaduto(tmp_path):
+    tentativi = {"n": 0}
+
+    def single(stream, ts, out, headers=None, ffmpeg_backend=None):
+        tentativi["n"] += 1
+        if tentativi["n"] == 1:
+            raise FrameExtractionError("403")
+        Path(out).write_bytes(b"\xff\xd8jpeg")
+
+    media, _, _ = make_media(tmp_path=tmp_path, single_extractor=single)
+    media.url_manuale("https://youtu.be/a")
+
+    percorso = media.anteprima_scrub("start", 5)
+
+    assert Path(percorso).exists() and tentativi["n"] == 2
+
+
+def test_anteprima_scrub_doppio_fallimento_diventa_mediaflow_error(tmp_path):
+    def single(stream, ts, out, headers=None, ffmpeg_backend=None):
+        raise FrameExtractionError("boom")
+
+    media, _, _ = make_media(tmp_path=tmp_path, single_extractor=single)
+    media.url_manuale("https://youtu.be/a")
+
+    with pytest.raises(MediaFlowError, match="Anteprima scrub fallita"):
+        media.anteprima_scrub("start", 5)

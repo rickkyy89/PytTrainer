@@ -14,6 +14,7 @@ from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.image import Image
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.utils import escape_markup
 
@@ -21,10 +22,11 @@ from .notify import notifica_fine_recupero
 
 
 def _etichetta(texto, target, delta=48, **kw):
-    """Wrapping label: text_size follows the container width, size the text."""
+    """Wrapping label: text_size follows the container width, height the texture."""
+    kw.setdefault("size_hint_y", None)
     label = Label(text=texto, halign="left", valign="top", markup=True, **kw)
-    label.bind(texture_size=label.setter("size"))
-    target.bind(width=lambda _, v: setattr(label, "text_size", (max(v - delta, 10), None)))
+    target.bind(width=lambda _, v, l=label: setattr(l, "text_size", (max(v - delta, 10), None)))
+    label.bind(texture_size=lambda l, ts: setattr(l, "height", ts[1]))
     return label
 
 
@@ -38,7 +40,7 @@ class WorkoutScreen(BoxLayout):
         self._checkboxes: dict[int, CheckBox] = {}
 
         header = BoxLayout(size_hint_y=None, height=48, spacing=8)
-        back = Button(text="< Menu", size_hint_x=None, width=110)
+        back = Button(text="< Scheda", size_hint_x=None, width=110)
         back.bind(on_release=lambda *_: self._exit())
         self.progress_label = Label(text=self._progress_text(), font_size="20sp")
         reset = Button(text="Azzera", size_hint_x=None, width=100)
@@ -88,18 +90,34 @@ class WorkoutScreen(BoxLayout):
         frames = BoxLayout(size_hint_y=None, height=280, spacing=4)
         for chiave in ("frame_start", "frame_finish"):
             percorso = esercizio.get(chiave)
-            frames.add_widget(Image(source=percorso or "", fit_mode="contain",
-                                    allow_stretch=True))
+            frames.add_widget(Image(source=percorso or "", fit_mode="contain"))
         card.add_widget(frames)
 
         note = str(esercizio.get("note") or "").strip()
         if note:
             card.add_widget(_etichetta(escape_markup(note), card, font_size="18sp",
                                        size_hint_y=None))
-        avvia = Button(text=f"▶ Recupero {indice + 1}", size_hint_y=None, height=56)
+        azioni = BoxLayout(size_hint_y=None, height=56, spacing=6)
+        avvia = Button(text=f"▶ Recupero {indice + 1}")
         avvia.bind(on_release=lambda *_: self._start_timer(indice))
-        card.add_widget(avvia)
+        azioni.add_widget(avvia)
+        if str(esercizio.get("video_url") or "").strip():
+            video = Button(text="▶ Video", size_hint_x=None, width=120)
+            video.bind(on_release=lambda _, e=esercizio: self._play_video(e))
+            azioni.add_widget(video)
+        card.add_widget(azioni)
         return card
+
+    def _play_video(self, esercizio):
+        from .launcher import apri_url
+        from .media import url_con_inizio
+        url = url_con_inizio(str(esercizio.get("video_url")), esercizio.get("ts_start"))
+        if apri_url(url):
+            return
+        label = Label(text=f"Nessun player disponibile.\n{url}", markup=False,
+                      halign="center", valign="middle")
+        popup = Popup(title="Video", content=label, size_hint=(0.9, 0.4))
+        popup.open()
 
     # -------------------------------------------------------- interazioni
 

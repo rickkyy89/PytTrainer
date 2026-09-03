@@ -43,6 +43,7 @@ class SchedaEditorController:
         self._upload = upload
         self._path_cls = path_cls
         self._dirty = False
+        self._non_sync = False
 
     @property
     def esercizi(self) -> list[dict]:
@@ -68,6 +69,11 @@ class SchedaEditorController:
     def sporco(self) -> bool:
         return self._dirty
 
+    @property
+    def non_sincronizzato(self) -> bool:
+        """True when the local bundle is newer than the copy on Drive."""
+        return self._non_sync
+
     def marca_modifica(self) -> None:
         """Flag external mutations (video & frame flow of ticket 07) as unsaved."""
         self._dirty = True
@@ -75,6 +81,7 @@ class SchedaEditorController:
     def conferma_salvataggio(self) -> None:
         """Clear the dirty flag once an out-of-band conflict resolution synced the bundle."""
         self._dirty = False
+        self._non_sync = False
 
     @property
     def titolo(self) -> str | None:
@@ -117,6 +124,26 @@ class SchedaEditorController:
         self._dirty = True
         return destinatario
 
+    def sposta_alla(self, indice: int, destinazione: int) -> int:
+        """Ricolloca l'esercizio alla posizione assoluta ``destinazione`` (0-based).
+
+        A differenza di ``sposta`` non scambia con il vicino: estrae l'elemento
+        e lo reinserisce, cosicche l'ordine relativo degli altri esercizi resta
+        invariato. Ritorna l'indice finale (clampato al range valido).
+        """
+        self._esame(indice)
+        totale = len(self._esercizi)
+        if destinazione < 0 or destinazione >= totale:
+            raise EditorValidationError(
+                f"Posizione di destinazione non valida: {destinazione + 1} (1-{totale})."
+            )
+        if indice == destinazione:
+            return indice
+        esercizio = self._esercizi.pop(indice)
+        self._esercizi.insert(destinazione, esercizio)
+        self._dirty = True
+        return destinazione
+
     def gruppi_esistenti(self) -> list[str]:
         """Distinct non-empty group names, in first-appearance order."""
         visti: list[str] = []
@@ -130,7 +157,8 @@ class SchedaEditorController:
         """Slug -> indices of the exercises that would collide on frame names."""
         return trova_duplicati_slug(self._esercizi)
 
-    def importa_csv(self, percorso: str | Path, *, sostituisci: bool = False) -> int:
+    def importa_csv(self, percorso: str | Path, *, sostituisci: bool = False,
+                    posizione: int | None = None) -> int:
         """Parse a plain manifest CSV and merge it in; returns imported count.
 
         Frame paths are manifest-internal (bundle layout), so a bare CSV can
@@ -149,33 +177,45 @@ class SchedaEditorController:
                     continue
                 risolto = cartella_csv / str(valore)
                 esercizio[chiave] = str(risolto) if risolto.is_file() else None
-        self.importa_esercizi(esercizi, sostituisci=sostituisci)
+        self.importa_esercizi(esercizi, sostituisci=sostituisci, posizione=posizione)
         return len(esercizi)
 
     def importa_scheda(self, percorso_bundle: str, *, sostituisci: bool = False,
-                       loader=None) -> int:
+                       posizione: int | None = None, loader=None) -> int:
         """Import exercises from another .scheda bundle (already downloaded)."""
         if loader is None:
             from core.scheda_file import carica_scheda
             loader = carica_scheda
         esercizi, _ = loader(percorso_bundle)
-        self.importa_esercizi(esercizi, sostituisci=sostituisci)
+        self.importa_esercizi(esercizi, sostituisci=sostituisci, posizione=posizione)
         return len(esercizi)
 
-    def importa_esercizi(self, esercizi: list[dict], *, sostituisci: bool = False) -> None:
+    def importa_esercizi(self, esercizi: list[dict], *, sostituisci: bool = False,
+                         posizione: int | None = None) -> None:
         if sostituisci:
             self._esercizi[:] = [dict(esercizio) for esercizio in esercizi]
-        else:
+        elif posizione is None:
             self._esercizi.extend(dict(esercizio) for esercizio in esercizi)
+        else:
+            if posizione < 0 or posizione > len(self._esercizi):
+                raise EditorValidationError(
+                    f"Posizione di inserimento non valida: {posizione + 1} "
+                    f"(1-{len(self._esercizi) + 1})."
+                )
+            for offset, esercizio in enumerate(esercizi):
+                self._esercizi.insert(posizione + offset, dict(esercizio))
         self._dirty = True
 
-    def salva(self):
-        """Rewrite the bundle and upload it.
+    def salva(self, sincronizza: bool = True):
+        """Rewrite the bundle and (optionally) upload it.
 
         Returns the UploadResult on success, or the SyncConflict emitted by
         ``drive_sync``.  The bundle is always written locally first; the dirty
         flag is cleared only once the remote accepted the upload, so a failed
         or conflicting save keeps asking the user to retry.
+
+        With ``sincronizza=False`` the bundle is saved only on disk: the local
+        copy stays flagged as ``non_sincronizzato`` until the next real sync.
         """
         for indice, esercizio in enumerate(self._esercizi):
             if not str(esercizio.get("nome") or "").strip():
@@ -188,12 +228,19 @@ class SchedaEditorController:
             state_path = str(candidato) if candidato.exists() else None
         self._save_scheda(self._esercizi, self._percorso, state_path=state_path,
                           titolo=self._titolo)
+        if not sincronizza:
+            self._dirty = False
+            self._non_sync = True
+            return None
         if self._upload is None:
             self._dirty = False
             return None
         risultato = self._upload(self._percorso)
-        if not isinstance(risultato, SyncConflict):
+        if isinstance(risultato, SyncConflict):
+            self._non_sync = True
+        else:
             self._dirty = False
+            self._non_sync = False
         return risultato
 
     @classmethod

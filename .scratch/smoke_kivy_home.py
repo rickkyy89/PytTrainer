@@ -35,6 +35,9 @@ def build_side_screens():
     screen = EditorScreen(controller, editor, remote, on_back=lambda: None,
                           open_media=lambda ed, i: None, on_export=lambda ed: None)
     media = MediaFlowController(esercizio, ".", search=lambda n: [],
+                                info_getter=lambda url: {"duration": 65.0, "title": "probe"},
+                                stream_resolver=lambda url: ("rtmp://fake", {}),
+                                single_extractor=lambda *a, **k: None,
                                 extractor=lambda *a, **k: ("a.jpg", "b.jpg"))
     media_screen = MediaScreen(media, on_back=lambda: None)
     export = DocExportController(editor, credential_provider="CP")

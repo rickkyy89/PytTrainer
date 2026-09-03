@@ -44,12 +44,16 @@ class ExportScreen(BoxLayout):
                   f"Esercizi pronti (frame START+FINISH): {riepilogo.pronti}/{riepilogo.totali}\n"
                   "La generazione crea un Google Doc A4 e sincronizza lo stato sul bundle."),
             halign="left", valign="top", size_hint_y=None, height=110,
-            text_size=(self.width, None),
         )
-        self.bind(width=lambda *_: setattr(self.info, "text_size", (self.info.width, None)))
+        self.info.bind(width=lambda _, v: setattr(self.info, "text_size", (v, None)))
+        self.info.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], 110)))
         self.add_widget(self.info)
 
-        self.progress = Label(text="Premi Avvia per iniziare.", size_hint_y=None, height=40)
+        self.progress = Label(text="Premi Avvia per iniziare.", size_hint_y=None,
+                              height=24, halign="left", valign="top")
+        self.progress.bind(
+            width=lambda _, v: setattr(self.progress, "text_size", (v, None)))
+        self.progress.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], 24)))
         self.add_widget(self.progress)
 
         self.actions = BoxLayout(size_hint_y=None, height=48, spacing=8)

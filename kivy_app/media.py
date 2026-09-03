@@ -22,8 +22,10 @@ from core.video_helper import (
     FrameExtractionError,
     VideoSearchError,
     crop_frame,
+    extract_frame,
     extract_start_finish_frames,
     filtra_risultati_pertinenti,
+    get_stream_info,
     get_video_info,
     importa_frame_da_immagine,
     search_youtube,
@@ -39,6 +41,35 @@ def percorso_backup_frame(percorso_frame: str) -> str:
     """Conventional pre-crop backup path of a frame (``<frame>_orig.jpg``)."""
     radice, _ = os.path.splitext(percorso_frame)
     return f"{radice}_orig.jpg"
+
+
+def url_con_inizio(url: str, secondi) -> str:
+    """Ricostruisce l'URL YouTube con il frammento ``#t=SS`` (o ``&t=SSs``).
+
+    Serve al pulsante Play: apre il video già posizionato sul secondo scelto.
+    ``youtu.be`` usa il frammento ``#t``, gli altri formati il parametro
+    ``t=<secondi>s`` preservando gli altri parametri della query.
+    """
+    url = str(url or "").strip()
+    if not url:
+        return url
+    secondo = max(0, int(round(float(secondi or 0))))
+    base, _, _frammento = url.partition("#")
+    if "youtu.be/" in base:
+        return f"{base}#t={secondo}s"
+    testata, sep, query = base.partition("?")
+    coppia_vista = False
+    pezzi: list[str] = []
+    for pezzo in query.split("&") if query else []:
+        chiave, _, valore = pezzo.partition("=")
+        if chiave in ("t", "start"):
+            pezzi.append(f"{chiave}={secondo}s")
+            coppia_vista = True
+        else:
+            pezzi.append(pezzo)
+    if not coppia_vista:
+        pezzi.append(f"t={secondo}s")
+    return f"{testata}{sep}{'&'.join(pezzi)}" if pezzi else testata
 
 
 @dataclass(frozen=True)
@@ -58,7 +89,8 @@ class MediaFlowController:
                  relevance_filter=filtra_risultati_pertinenti,
                  info_getter=get_video_info, extractor=extract_start_finish_frames,
                  auto_selector=scegli_ed_estrai, cropper=crop_frame,
-                 image_importer=importa_frame_da_immagine, copier=shutil.copy2):
+                 image_importer=importa_frame_da_immagine, copier=shutil.copy2,
+                 stream_resolver=get_stream_info, single_extractor=extract_frame):
         self._e = esercizio
         self._output_dir = output_dir
         self._backend = backend
@@ -72,9 +104,12 @@ class MediaFlowController:
         self._cropper = cropper
         self._image_importer = image_importer
         self._copier = copier
+        self._stream_resolver = stream_resolver
+        self._single_extractor = single_extractor
         self._scelte: list[SceltaVideo] = []
         self._durata: float | None = None
         self._titolo_video: str | None = None
+        self._stream_cache: tuple[str, str, dict] | None = None
 
     # ------------------------------------------------------------------ stato
 
@@ -176,6 +211,26 @@ class MediaFlowController:
         self._applica_euristica_timestamp()
         self._on_change()
 
+    def assicura_durata(self) -> float | None:
+        """Risolve la durata per un video proveniente dal manifest.
+
+        Il controller costruito su un esercizio già completo non ha mai
+        chiamato ``get_video_info``: lo scrub ne ha bisogno per l'escursione
+        della pista e per il clamp dei timestamp.
+        """
+        if self._durata is None and self.video_url:
+            self._durata = self._prova_durata(self.video_url, None)
+        return self._durata
+
+    def url_per_play(self, secondi=None) -> str:
+        """URL del video posizionato a ``secondi`` (default: il timestamp start)."""
+        url = self.video_url
+        if not url:
+            raise MediaFlowError("Seleziona prima un video.")
+        if secondi is None:
+            secondi = self.ts_start if self.ts_start is not None else 0
+        return url_con_inizio(url, secondi)
+
     def imposta_timestamp(self, ts_start: float | None = None,
                           ts_finish: float | None = None) -> None:
         for chiave, valore in (("ts_start", ts_start), ("ts_finish", ts_finish)):
@@ -265,6 +320,53 @@ class MediaFlowController:
     def percorso_anteprima(self, suffisso: str) -> str:
         """Scratch path (outside the manifest) for the live crop preview."""
         return os.path.join(self._output_dir, f"_crop_preview_{suffisso}.jpg")
+
+    def percorso_scrub(self, suffisso: str) -> str:
+        """Scratch path for the scrub slider's live frame preview."""
+        return os.path.join(self._output_dir, f"_scrub_preview_{suffisso}.jpg")
+
+    def anteprima_scrub(self, suffisso: str, timestamp: float) -> str:
+        """Extract a throwaway frame at ``timestamp`` for the scrub preview.
+
+        Never mutates the manifest: it only resolves the stream (cached across
+        calls, re-resolved once on a failed extraction like the real extractor)
+        and writes a scratch JPEG under ``_scrub_preview_<suffisso>.jpg``.
+        """
+        if suffisso not in ("start", "finish"):
+            raise MediaFlowError(f"Suffisso frame non valido: {suffisso}.")
+        url = self.video_url
+        if not url:
+            raise MediaFlowError("Seleziona prima un video.")
+        ts = max(0.0, float(timestamp))
+        self.assicura_durata()
+        if self._durata:
+            ts = min(ts, max(0.0, self._durata - 0.1))
+        os.makedirs(self._output_dir, exist_ok=True)
+        dest = self.percorso_scrub(suffisso)
+        stream_url, headers = self._stream_corrente(url)
+        try:
+            self._single_extractor(stream_url, ts, dest, headers,
+                                   ffmpeg_backend=self._backend)
+        except FrameExtractionError:
+            self._stream_cache = None
+            stream_url, headers = self._stream_corrente(url)
+            try:
+                self._single_extractor(stream_url, ts, dest, headers,
+                                       ffmpeg_backend=self._backend)
+            except (FrameExtractionError, VideoSearchError) as exc:
+                raise MediaFlowError(f"Anteprima scrub fallita: {exc}") from exc
+        return dest
+
+    def _stream_corrente(self, url: str) -> tuple[str, dict]:
+        """Resolve (and cache) the stream URL/headers for ``url``."""
+        if self._stream_cache and self._stream_cache[0] == url:
+            return self._stream_cache[1], self._stream_cache[2]
+        try:
+            stream_url, headers = self._stream_resolver(url)
+        except VideoSearchError as exc:
+            raise MediaFlowError(f"Stream non disponibile: {exc}") from exc
+        self._stream_cache = (url, stream_url, headers)
+        return stream_url, headers
 
     def anteprima_crop(self, suffisso: str, sinistra: float, alto: float,
                        destra: float, basso: float) -> str:

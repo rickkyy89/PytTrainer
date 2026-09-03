@@ -173,6 +173,84 @@ def test_upload_fallito_lascia_il_bundle_salvato_e_lo_stato_sporco(tmp_path):
     assert editor.sporco is True
 
 
+def test_sposta_alla_riordina_senza_spostare_gli_altri():
+    editor = make_editor()
+    editor.aggiungi()
+    editor.aggiorna(2, nome="Panca")
+
+    assert editor.sposta_alla(0, 2) == 2
+    assert [e["nome"] for e in editor.esercizi] == ["Affondo", "Panca", "Squat"]
+    assert editor.sposta_alla(1, 0) == 0
+    assert [e["nome"] for e in editor.esercizi] == ["Panca", "Affondo", "Squat"]
+    assert editor.sposta_alla(1, 1) == 1
+    assert editor.sporco is True
+
+
+def test_sposta_alla_valida_indici():
+    editor = make_editor()
+    with pytest.raises(EditorValidationError, match="Posizione di destinazione"):
+        editor.sposta_alla(0, 2)
+    with pytest.raises(EditorValidationError, match="Indice esercizio non valido"):
+        editor.sposta_alla(9, 0)
+
+
+def test_importa_esercizi_in_posizione():
+    editor = make_editor()
+    nuovo = {"nome": "Nuovo", "spiegazione": "", "note": "", "ripetizioni": "",
+             "recupero": "", "gruppo": ""}
+
+    editor.importa_esercizi([dict(nuovo)], posizione=1)
+
+    assert [e["nome"] for e in editor.esercizi] == ["Squat", "Nuovo", "Affondo"]
+    with pytest.raises(EditorValidationError, match="Posizione di inserimento"):
+        editor.importa_esercizi([dict(nuovo)], posizione=99)
+
+
+def test_importa_csv_in_posizione(tmp_path):
+    csv_path = tmp_path / "import.csv"
+    csv_path.write_text(
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero\nStacco,Tira.,,3x8,120 SEC\n",
+        encoding="utf-8",
+    )
+    editor = make_editor()
+
+    assert editor.importa_csv(str(csv_path), posizione=0) == 1
+    assert [e["nome"] for e in editor.esercizi] == ["Stacco", "Squat", "Affondo"]
+
+
+def test_salva_solo_locale_non_carica_su_drive(tmp_path):
+    caricati = []
+    editor = make_editor(percorso_bundle=str(tmp_path / "s.scheda"),
+                         save_scheda=lambda e, p, state_path=None, titolo=None: Path(p).write_bytes(b"zip"),
+                         upload=lambda path: caricati.append(path))
+
+    editor.aggiorna(0, note="Esplosive.")
+    assert editor.salva(sincronizza=False) is None
+
+    assert (tmp_path / "s.scheda").exists()
+    assert caricati == []
+    assert editor.sporco is False
+    assert editor.non_sincronizzato is True
+
+    editor.salva()
+    assert caricati == [str(tmp_path / "s.scheda")]
+    assert editor.non_sincronizzato is False
+
+
+def test_conflitto_marca_non_sincronizzato_e_conferma_azzera():
+    conflict = SyncConflict("id1", "s.scheda", "2026-09-01T00:00:00Z",
+                            "2026-09-02T00:00:00Z", "2026-08-31T00:00:00Z")
+    editor = make_editor(save_scheda=lambda *a, **k: None,
+                         upload=lambda path: conflict)
+
+    editor.aggiorna(0, note="X")
+    assert editor.salva() is conflict
+    assert editor.non_sincronizzato is True
+    editor.conferma_salvataggio()
+    assert editor.non_sincronizzato is False
+    assert editor.sporco is False
+
+
 class FakeSync:
     def __init__(self, service, folder_id, cache_dir):
         self.records = [RemoteScheda("gambe.scheda", "one", "2026-09-02T10:00:00Z"),
@@ -240,6 +318,18 @@ def test_import_remote_into_sostituisce_o_aggiunge_via_drive(tmp_path):
 
     count = controller.import_remote_into(editor, controller.refresh()[1], sostituisci=True)
     assert [e["nome"] for e in editor.esercizi] == ["Squat"]
+
+
+def test_import_remote_into_in_posizione(tmp_path):
+    controller, _ = make_home(tmp_path)
+    editor = controller.open_for_edit(controller.refresh()[0])
+    editor.aggiungi()
+    editor.aggiorna(1, nome="Panca")
+
+    controller.import_remote_into(editor, controller.refresh()[1],
+                                  sostituisci=False, posizione=1)
+
+    assert [e["nome"] for e in editor.esercizi] == ["Squat", "Squat", "Panca"]
 
 
 def test_import_remote_into_errori_drive_diventano_disponibilita(tmp_path, monkeypatch):
