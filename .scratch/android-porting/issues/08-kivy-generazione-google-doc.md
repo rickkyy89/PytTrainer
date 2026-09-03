@@ -36,6 +36,22 @@ riprende comunque dai checkpoint su disco.
 **Residuo:** esecuzione reale con rete su PC (login Google + Drive) e
 valida su dispositivo Android (provider nativo + share sheet).
 
+**Verifica desktop completata (2026-09-03, script
+`.scratch/verify_export_08.py` + `verify_export_08b.py`, Drive/Docs reali):**
+- ripresa da stato nel bundle: `genera()` riusa lo STESSO documento con 0
+  reinserimenti (scheda "1 di 4 - Anca e Core", 18/18 gia'Checkpoint);
+- creazione reale: 16 esercizi con tabelle+frame inseriti, URL apribile,
+  `UploadResult` e stato persistito nel bundle;
+- 404 reale (stato orientato a doc inesistente): `documento_rigenerato=True`,
+  nuovo doc con tutti i 16 esercizi reinseriti e nuovo URL;
+- cleanup non distruttivo: doc di test cancellati, `state.json` rimosso e
+  bundle risincronizzato (le schede dell'utente sono tornate come prima).
+- nota: cancellare il doc e rilanciare subito puo' non rilevare il 404 per
+  consistenza finale di Drive (~pochi secondi in cui l'API risponde ancora
+  200); non e' un bug dell'app e la scelta giusta (fallire il riuso) non e'
+  compromessa. Costo collaterale dei test reali: le immagini caricate su
+  Drive dai doc di test restano orfane nel cestino (purgate a 30 giorni).
+
 - [x] Esportazione con conteggio pronti e conferma
 - [x] Progress per esercizio durante la generazione
 - [x] Ripresa da stato: rilanciare dopo interruzione inserisce solo i mancanti
