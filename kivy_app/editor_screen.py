@@ -26,13 +26,14 @@ CAMPI_LUNGHI = (("spiegazione", "Spiegazione"), ("note", "Note"))
 
 
 class EditorScreen(BoxLayout):
-    def __init__(self, controller, editor, remote, on_back, open_media=None):
+    def __init__(self, controller, editor, remote, on_back, open_media=None, on_export=None):
         super().__init__(orientation="vertical", padding=10, spacing=6)
         self._controller = controller
         self._editor = editor
         self._remote = remote
         self._on_back = on_back
         self._open_media = open_media
+        self._on_export = on_export
 
         self.header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         back = Button(text="< Indietro", size_hint_x=None, width=120)
@@ -62,6 +63,10 @@ class EditorScreen(BoxLayout):
         tools.add_widget(add)
         tools.add_widget(csv)
         tools.add_widget(scheda)
+        if self._on_export is not None:
+            export = Button(text="Genera Google Doc", size_hint_x=None, width=170)
+            export.bind(on_release=lambda *_: self._on_export(self._editor))
+            tools.add_widget(export)
         self.add_widget(tools)
 
         self._rebuild()

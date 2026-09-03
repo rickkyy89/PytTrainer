@@ -46,9 +46,11 @@ class DriveHomeController:
 
     def __init__(self, config_store: FolderConfigStore, cache_dir: str | Path, *,
                  credential_provider, drive_service_factory, sync_factory=DriveSync,
-                 load_scheda=carica_scheda, save_scheda=salva_scheda):
+                 load_scheda=carica_scheda, save_scheda=salva_scheda,
+                 base_dir: str | Path | None = None):
         self._config_store = config_store
         self._cache_dir = Path(cache_dir)
+        self._base_dir = Path(base_dir) if base_dir is not None else self._cache_dir.parent
         self._credential_provider = credential_provider
         self._drive_service_factory = drive_service_factory
         self._sync_factory = sync_factory
@@ -60,6 +62,15 @@ class DriveHomeController:
     @property
     def folder_config(self) -> DriveFolderConfig:
         return self._config
+
+    @property
+    def credential_provider(self):
+        """Provider shared with the document generation flow (ticket 08)."""
+        return self._credential_provider
+
+    @property
+    def base_dir(self) -> Path:
+        return self._base_dir
 
     def refresh(self) -> list[RemoteScheda]:
         return self._call("aggiornare la lista delle schede", lambda: self._drive().list_schede())

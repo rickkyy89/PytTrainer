@@ -36,6 +36,7 @@ def build_controller(
         FolderConfigStore(base / "drive-folders.json"), base / "drive-cache",
         credential_provider=credential_provider,
         drive_service_factory=drive_service_factory,
+        base_dir=base,
     )
 
 
@@ -55,6 +56,8 @@ def run() -> None:
     from kivy.uix.textinput import TextInput
 
     from .editor_screen import EditorScreen
+    from .export import DocExportController
+    from .export_screen import ExportScreen
     from .media import MediaFlowController
     from .media_screen import MediaScreen
 
@@ -106,7 +109,20 @@ def run() -> None:
             self.stack.add_widget(EditorScreen(
                 controller, editor, remote, on_back=self.show_home,
                 open_media=lambda ed, i: self.open_media(remote, ed, i),
+                on_export=lambda ed: self.open_export(remote, ed),
             ))
+
+        def open_export(self, remote, editor):
+            try:
+                export = DocExportController(
+                    editor, credential_provider=controller.credential_provider,
+                    base_dir=controller.base_dir,
+                )
+            except Exception as exc:
+                self.status.text = str(exc)
+                return
+            self.stack.clear_widgets()
+            self.stack.add_widget(ExportScreen(export, on_back=lambda: self.show_editor(remote, editor)))
 
         def open_media(self, remote, editor, indice):
             try:

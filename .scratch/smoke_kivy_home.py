@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 def build_side_screens():
     from kivy_app.editor_screen import EditorScreen
+    from kivy_app.export import DocExportController
+    from kivy_app.export_screen import ExportScreen
     from kivy_app.media import MediaFlowController
     from kivy_app.media_screen import MediaScreen
 
@@ -25,20 +27,24 @@ def build_side_screens():
                  "frame_finish": None}
     editor = SimpleNamespace(esercizi=[esercizio], output_frames=lambda: ".",
                              marca_modifica=lambda: None, duplicati_slug=lambda: {},
-                             sporco=False, gruppi_esistenti=list)
+                             sporco=False, gruppi_esistenti=list, titolo=None,
+                             percorso_bundle="s.scheda", cartella_lavoro=None,
+                             salva=lambda: None)
     remote = SimpleNamespace(name="s.scheda", id="one")
     controller = SimpleNamespace(refresh=lambda: [remote])
     screen = EditorScreen(controller, editor, remote, on_back=lambda: None,
-                          open_media=lambda ed, i: None)
+                          open_media=lambda ed, i: None, on_export=lambda ed: None)
     media = MediaFlowController(esercizio, ".", search=lambda n: [],
                                 extractor=lambda *a, **k: ("a.jpg", "b.jpg"))
     media_screen = MediaScreen(media, on_back=lambda: None)
-    return screen, media_screen
+    export = DocExportController(editor, credential_provider="CP")
+    export_screen = ExportScreen(export, on_back=lambda: None)
+    return screen, media_screen, export_screen
 
 
 def _probe(dt):
-    screen, media_screen = build_side_screens()
-    print("SIDES OK", bool(screen.children) or True, bool(media_screen))
+    screen, media_screen, export_screen = build_side_screens()
+    print("SIDES OK", bool(screen.children) or True, bool(media_screen), bool(export_screen))
     App.get_running_app().stop()
 
 
