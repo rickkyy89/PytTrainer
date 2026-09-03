@@ -38,7 +38,6 @@ class EditorScreen(BoxLayout):
         back.bind(on_release=lambda *_: self._on_back())
         self.status = Label(text="", halign="left", valign="middle",
                             shorten=True, shorten_from="right")
-        self.status.text_size = (None, self.height)
         save = Button(text="Salva", size_hint_x=None, width=110)
         save.bind(on_release=lambda *_: self._save())
         self.header.add_widget(back)
@@ -78,6 +77,7 @@ class EditorScreen(BoxLayout):
         title.add_widget(Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
                                size_hint_x=None, width=220, halign="left",
                                text_size=(220, None)))
+        spacer = Label(text="")
         up = Button(text="Su", size_hint_x=None, width=60)
         up.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, -1), rebuild=True))
         down = Button(text="Giù", size_hint_x=None, width=60)
@@ -86,7 +86,7 @@ class EditorScreen(BoxLayout):
         groups.bind(on_release=lambda _, i=indice: self._group_popup(i))
         delete = Button(text="Elimina", size_hint_x=None, width=90)
         delete.bind(on_release=lambda *_: self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True))
-        title.add_widget(Label(text="", ))
+        title.add_widget(spacer)
         title.add_widget(up)
         title.add_widget(down)
         title.add_widget(groups)
@@ -102,21 +102,23 @@ class EditorScreen(BoxLayout):
                 campo = TextInput(
                     text=str(esercizio.get(chiave) or ""),
                     multiline=row_key is CAMPI_LUNGHI, size_hint_x=1,
-                    hint_text=f"{etichetta}",
+                    hint_text=etichetta,
                 )
-                campo.bind(on_focus_lost=self._field_handler(indice, chiave))
+                campo.bind(focus=self._field_handler(indice, chiave, campo))
                 line.add_widget(campo)
             block.add_widget(line)
         return block
 
-    def _field_handler(self, indice, chiave):
-        def handler(widget, *_):
-            valore = widget.text
+    def _field_handler(self, indice, chiave, campo):
+        def on_focus(instance, focused):
+            if focused:
+                return
+            valore = campo.text
             corrente = self._editor.esercizi[indice].get(chiave) or ""
             if valore == corrente:
                 return
             self._wrap(lambda: self._editor.aggiorna(indice, **{chiave: valore}))
-        return handler
+        return on_focus
 
     def _group_popup(self, indice):
         gruppi = self._editor.gruppi_esistenti()
@@ -134,26 +136,27 @@ class EditorScreen(BoxLayout):
         popup.dismiss()
         self._wrap(lambda: self._editor.aggiorna(indice, gruppo=nome), rebuild=True)
 
+    def _mode_popup(self, titolo, applica):
+        content = BoxLayout(orientation="vertical", spacing=8)
+        popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.35))
+        replace = Button(text="Sostituisci tutti gli esercizi")
+        merge = Button(text="Aggiungi in fondo")
+        replace.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(True), rebuild=True)))
+        merge.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(False), rebuild=True)))
+        content.add_widget(replace)
+        content.add_widget(merge)
+        popup.open()
+
     def _import_csv(self):
         def on_result(percorso):
             if not percorso:
                 return
-            self._wrap(lambda: self._editor.importa_csv(percorso), rebuild=True)
+            self._mode_popup(f"Importa {percorso}",
+                             lambda sostituisci: self._editor.importa_csv(percorso, sostituisci=sostituisci))
         choose_file(on_result, title="Importa CSV manifest", parent=self,
                     patterns=[("CSV", "*.csv")])
 
     def _import_scheda(self):
-        def scegli_poi_chiedi(remote):
-            content = BoxLayout(orientation="vertical", spacing=8)
-            replace = Button(text="Sostituisci tutti gli esercizi")
-            merge = Button(text="Aggiungi in fondo")
-            popup = Popup(title=f"Importa {remote.name}", content=content, size_hint=(0.8, 0.35))
-            replace.bind(on_release=lambda *_: self._do_import(remote, True, popup))
-            merge.bind(on_release=lambda *_: self._do_import(remote, False, popup))
-            content.add_widget(replace)
-            content.add_widget(merge)
-            popup.open()
-
         try:
             schede = [r for r in self._controller.refresh() if r.id != self._remote.id]
         except Exception as exc:  # HomeUnavailableError e simili
@@ -163,34 +166,41 @@ class EditorScreen(BoxLayout):
         popup = Popup(title="Importa da un'altra scheda", content=content, size_hint=(0.8, 0.6))
         for remote in schede:
             choice = Button(text=remote.name, size_hint_y=None, height=44)
-            choice.bind(on_release=lambda _, item=remote: (popup.dismiss(), scegli_poi_chiedi(item)))
+            choice.bind(on_release=lambda _, item=remote: (popup.dismiss(), self._scheda_mode(item)))
             content.add_widget(choice)
         if not schede:
             content.add_widget(Label(text="Ness'altra scheda trovata su Drive."))
         popup.open()
 
-    def _do_import(self, remote, sostituisci, popup):
-        popup.dismiss()
-        self._wrap(lambda: self._controller.import_remote_into(
-            self._editor, remote, sostituisci=sostituisci), rebuild=True)
+    def _scheda_mode(self, remote):
+        self._mode_popup(f"Importa {remote.name}",
+                         lambda sostituisci: self._controller.import_remote_into(
+                             self._editor, remote, sostituisci=sostituisci))
 
     def _save(self):
-        def operation():
+        try:
             risultato = self._editor.salva()
-            if isinstance(risultato, SyncConflict):
-                self.status.text = (
-                    f"CONFLITTO: remota modificata {risultato.remote_modified_time} > "
-                    f"ultimo sync {risultato.last_sync_remote_modified_time}. "
-                    "Versione locale salvata solo sul dispositivo."
-                )
-                return
+        except EditorValidationError as exc:
+            self.status.text = str(exc)
+            return
+        except Exception as exc:
+            self.status.text = f"Salvataggio locale ok, Drive non raggiungibile: {exc}"
+            return
+        if isinstance(risultato, SyncConflict):
+            self.status.text = (
+                f"CONFLITTO: la copia remota ({risultato.remote_modified_time}) e' piu recente "
+                f"dell'ultimo sync ({risultato.last_sync_remote_modified_time}). Locale salvata, "
+                "upload da ripetere dopo la scelta di risoluzione."
+            )
+        elif self._editor.sporco:
+            self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
+        else:
             self.status.text = "Salvato su Drive."
-        self._wrap(operation)
 
     def _wrap(self, operation, rebuild=False):
         try:
             operation()
-        except (EditorValidationError, Exception) as exc:
+        except Exception as exc:
             self._mostra_errore(exc)
             return
         if rebuild:

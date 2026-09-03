@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
+from core.drive_sync import SyncConflict
 from core.scheda_file import percorso_stato, salva_scheda, titolo_scheda
 
 
@@ -111,11 +112,24 @@ class SchedaEditorController:
         return trova_duplicati_slug(self._esercizi)
 
     def importa_csv(self, percorso: str | Path, *, sostituisci: bool = False) -> int:
-        """Parse a plain manifest CSV and merge it in; returns imported count."""
+        """Parse a plain manifest CSV and merge it in; returns imported count.
+
+        Frame paths are manifest-internal (bundle layout), so a bare CSV can
+        only reference files that exist next to it: keep them when resolvable
+        against the CSV folder, otherwise drop them for later re-extraction.
+        """
         try:
             esercizi = parse_esercizi_csv(percorso)
         except ValueError as exc:
             raise EditorValidationError(f"CSV non valido: {exc}") from exc
+        cartella_csv = self._path_cls(percorso).parent
+        for esercizio in esercizi:
+            for chiave in ("frame_start", "frame_finish"):
+                valore = esercizio.get(chiave)
+                if not valore:
+                    continue
+                risolto = cartella_csv / str(valore)
+                esercizio[chiave] = str(risolto) if risolto.is_file() else None
         self.importa_esercizi(esercizi, sostituisci=sostituisci)
         return len(esercizi)
 
@@ -131,13 +145,19 @@ class SchedaEditorController:
 
     def importa_esercizi(self, esercizi: list[dict], *, sostituisci: bool = False) -> None:
         if sostituisci:
-            self._esercizi = [dict(esercizio) for esercizio in esercizi]
+            self._esercizi[:] = [dict(esercizio) for esercizio in esercizi]
         else:
             self._esercizi.extend(dict(esercizio) for esercizio in esercizi)
         self._dirty = True
 
     def salva(self):
-        """Rewrite the bundle and upload it; returns the upload result or conflict."""
+        """Rewrite the bundle and upload it.
+
+        Returns the UploadResult on success, or the SyncConflict emitted by
+        ``drive_sync``.  The bundle is always written locally first; the dirty
+        flag is cleared only once the remote accepted the upload, so a failed
+        or conflicting save keeps asking the user to retry.
+        """
         for indice, esercizio in enumerate(self._esercizi):
             if not str(esercizio.get("nome") or "").strip():
                 raise EditorValidationError(
@@ -149,10 +169,13 @@ class SchedaEditorController:
             state_path = str(candidato) if candidato.exists() else None
         self._save_scheda(self._esercizi, self._percorso, state_path=state_path,
                           titolo=self._titolo)
-        self._dirty = False
         if self._upload is None:
+            self._dirty = False
             return None
-        return self._upload(self._percorso)
+        risultato = self._upload(self._percorso)
+        if not isinstance(risultato, SyncConflict):
+            self._dirty = False
+        return risultato
 
     @classmethod
     def da_bundle(cls, esercizi: list[dict], percorso_bundle: str, cartella_lavoro: str,

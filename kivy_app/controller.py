@@ -104,7 +104,9 @@ class DriveHomeController:
         return SchedaEditorController.da_bundle(
             esercizi, str(local_path), lavoro,
             save_scheda=self._save_scheda,
-            upload=lambda path: self._drive().upload_scheda(path),
+            # Pin the upload to the opened file id: same-name bundles must not
+            # cross-update each other even if the name-keyed cache collides.
+            upload=lambda path: self._drive().upload_scheda(path, file_id=remote.id),
         )
 
     def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool) -> int:

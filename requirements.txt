@@ -1,5 +1,6 @@
 streamlit
 kivy
+plyer
 yt-dlp
 pillow
 google-api-python-client

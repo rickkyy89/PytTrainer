@@ -149,7 +149,7 @@ def test_salva_blocca_esercizi_senza_nome():
         editor.salva()
 
 
-def test_salva_propaga_il_conflitto_di_upload_senza_nasconderlo():
+def test_salva_propaga_il_conflitto_e_mantiene_le_modifiche_pendenti():
     conflict = SyncConflict("id1", "s.scheda", "2026-09-01T00:00:00Z",
                             "2026-09-02T00:00:00Z", "2026-08-31T00:00:00Z")
     editor = make_editor(save_scheda=lambda *a, **k: None,
@@ -157,7 +157,20 @@ def test_salva_propaga_il_conflitto_di_upload_senza_nasconderlo():
 
     editor.aggiorna(0, note="Esplosive.")
     assert editor.salva() is conflict
-    assert editor.sporco is False
+    assert editor.sporco is True
+
+
+def test_upload_fallito_lascia_il_bundle_salvato_e_lo_stato_sporco(tmp_path):
+    bundle = tmp_path / "s.scheda"
+    editor = make_editor(percorso_bundle=str(bundle),
+                         save_scheda=lambda esercizi, path, state_path=None, titolo=None: Path(path).write_bytes(b"zip"),
+                         upload=lambda path: (_ for _ in ()).throw(OSError("offline")))
+
+    editor.aggiorna(0, note="Esplosive.")
+    with pytest.raises(OSError):
+        editor.salva()
+    assert bundle.exists()
+    assert editor.sporco is True
 
 
 class FakeSync:
@@ -173,9 +186,9 @@ class FakeSync:
     def download_scheda(self, file_id, name):
         return self.cache_dir / name
 
-    def upload_scheda(self, path):
-        self.uploads.append(Path(path))
-        return UploadResult(RemoteScheda(Path(path).name, "one", "2026-09-03T10:00:00Z"),
+    def upload_scheda(self, path, file_id=None):
+        self.uploads.append((Path(path), file_id))
+        return UploadResult(RemoteScheda(Path(path).name, file_id or "one", "2026-09-03T10:00:00Z"),
                             created=False)
 
 
@@ -213,7 +226,7 @@ def test_open_for_edit_returns_editor_wired_to_drive_upload(tmp_path):
     editor.aggiorna(0, nome="Squat profondo")
     result = editor.salva()
     assert result.remote.id == "one"
-    assert instances[0].uploads == [tmp_path / "cache" / "gambe.scheda"]
+    assert instances[0].uploads == [(tmp_path / "cache" / "gambe.scheda", "one")]
 
 
 def test_import_remote_into_sostituisce_o_aggiunge_via_drive(tmp_path):

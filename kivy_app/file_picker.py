@@ -78,7 +78,39 @@ def _win32_filter(patterns):
     return "\0".join(parts) + "\0"
 
 
+def _plyer_chooser(callback, title: str, patterns) -> bool:
+    """Try the native plyer/SAF chooser on Android; False when unavailable."""
+    try:
+        from plyer import filechooser
+    except Exception:
+        return False
+
+    globs = None
+    if patterns:
+        globs = [g for _, glob in patterns for g in ([glob] if isinstance(glob, str) else glob)]
+
+    def on_selection(selection):
+        if not selection:
+            callback(None)
+            return
+        primo = selection[0]
+        percorso = primo.get("filename") if isinstance(primo, dict) else str(primo)
+        callback(percorso or None)
+
+    try:
+        if globs:
+            filechooser.open_file(title=title, filters=globs, on_selection=on_selection)
+        else:
+            filechooser.open_file(title=title, on_selection=on_selection)
+        return True
+    except Exception:
+        return False
+
+
 def _kivy_chooser(callback, title: str, parent, patterns):
+    if sys.platform == "android" and _plyer_chooser(callback, title, patterns):
+        return
+
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.button import Button
     from kivy.uix.filechooser import FileChooserListView
