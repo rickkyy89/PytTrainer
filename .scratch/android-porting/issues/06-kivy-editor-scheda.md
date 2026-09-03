@@ -4,15 +4,25 @@
 
 **Blocked by:** 05 — App Kivy: lista schede
 
-**Status:** blocked-dependency
+**Status:** in-progress
 
-**Blocco attuale:** richiede la home Kivy del ticket 05, sospesa finche' non
-sono configurati cartella Drive e OAuth Android dell'app di produzione.
+**Implementato nel codice:** `kivy_app/editor.py` (SchedaEditorController,
+testato: editing campi, aggiungi/rimuovi/sposta, gruppi esistenti +
+completamento, import CSV/scheda con sostituisci/aggiungi, duplicati slug,
+indicatore sporco, salva atomico + upload con conflitto propagato) e
+`kivy_app/editor_screen.py` (UI Kivy) agganciata alla home tramite il nuovo
+`DriveHomeController.open_for_edit`/`import_remote_into`. File picker di
+piattaforma in `kivy_app/file_picker.py` (win32 GetOpenFileNameW via ctypes,
+FileChooser Kivy altrove, niente tkinter). `kivy` aggiunto a requirements.txt.
+106 test verdi, smoke import UI su PC ok.
 
-- [ ] Editing di tutti i campi esercizio incluso gruppo (con completamento)
-- [ ] Aggiungi/rimuovi/riordina esercizi
-- [ ] Import da CSV e da altra scheda con scelta sostituisci/aggiungi
-- [ ] Avviso slug duplicati
-- [ ] Indicatore modifiche non salvate
-- [ ] Salvataggio → bundle atomico + upload Drive
-- [ ] File picker di piattaforma funzionante su PC e Android
+**Residuo:** verifica manuale dell'editor su PC (finestra reale) e su
+dispositivo Android, che dipende dalla build/E2E del ticket 05.
+
+- [x] Editing di tutti i campi esercizio incluso gruppo (con completamento)
+- [x] Aggiungi/rimuovi/riordina esercizi
+- [x] Import da CSV e da altra scheda con scelta sostituisci/aggiungi
+- [x] Avviso slug duplicati
+- [x] Indicatore modifiche non salvate
+- [x] Salvataggio → bundle atomico + upload Drive
+- [ ] File picker di piattaforma funzionante su PC e Android (codice pronto, non verificato a mano)

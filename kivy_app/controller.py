@@ -85,18 +85,41 @@ class DriveHomeController:
         return self._config
 
     def open(self, remote: RemoteScheda) -> ReadonlyScheda:
+        esercizi, _, local_path = self._download_editable(remote)
+        return ReadonlyScheda(
+            remote.name,
+            local_path,
+            tuple(ExerciseView(
+                exercise["nome"], exercise["spiegazione"], exercise["note"],
+                exercise["ripetizioni"], exercise["recupero"], exercise.get("gruppo", ""),
+                exercise.get("frame_start"), exercise.get("frame_finish"),
+            ) for exercise in esercizi),
+        )
+
+    def open_for_edit(self, remote: RemoteScheda):
+        """Download the bundle and return an editor over its live exercises."""
+        from .editor import SchedaEditorController
+
+        esercizi, lavoro, local_path = self._download_editable(remote)
+        return SchedaEditorController.da_bundle(
+            esercizi, str(local_path), lavoro,
+            save_scheda=self._save_scheda,
+            upload=lambda path: self._drive().upload_scheda(path),
+        )
+
+    def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool) -> int:
+        """Download another bundle and merge its exercises into the editor."""
+        def operation():
+            esercizi, _, _ = self._download_editable(remote)
+            editor.importa_esercizi(esercizi, sostituisci=sostituisci)
+            return len(esercizi)
+        return self._call("importare la scheda", operation)
+
+    def _download_editable(self, remote: RemoteScheda):
         def operation():
             local_path = self._drive().download_scheda(remote.id, remote.name)
-            exercises, _ = self._load_scheda(str(local_path))
-            return ReadonlyScheda(
-                remote.name,
-                local_path,
-                tuple(ExerciseView(
-                    exercise["nome"], exercise["spiegazione"], exercise["note"],
-                    exercise["ripetizioni"], exercise["recupero"], exercise.get("gruppo", ""),
-                    exercise.get("frame_start"), exercise.get("frame_finish"),
-                ) for exercise in exercises),
-            )
+            esercizi, lavoro = self._load_scheda(str(local_path))
+            return esercizi, lavoro, local_path
         return self._call("aprire la scheda", operation)
 
     def create(self, name: str) -> RemoteScheda:

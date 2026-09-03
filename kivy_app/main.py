@@ -54,12 +54,15 @@ def run() -> None:
     from kivy.uix.popup import Popup
     from kivy.uix.textinput import TextInput
 
+    from .editor_screen import EditorScreen
+
     controller = build_controller()
 
     class PyTrainerApp(App):
         def build(self):
             self.title = "pyTrainer"
-            self.root_layout = BoxLayout(orientation="vertical", padding=12, spacing=8)
+            self.stack = BoxLayout(orientation="vertical")
+            self.home = BoxLayout(orientation="vertical", padding=12, spacing=8)
             toolbar = BoxLayout(size_hint_y=None, height=48, spacing=8)
             refresh = Button(text="Aggiorna")
             refresh.bind(on_release=lambda *_: self.refresh())
@@ -70,12 +73,26 @@ def run() -> None:
             toolbar.add_widget(refresh)
             toolbar.add_widget(create)
             toolbar.add_widget(folders)
-            self.root_layout.add_widget(toolbar)
+            self.home.add_widget(toolbar)
             self.status = Label(text="Premi Aggiorna per caricare le schede.", size_hint_y=None, height=32)
-            self.root_layout.add_widget(self.status)
+            self.home.add_widget(self.status)
             self.listing = BoxLayout(orientation="vertical", spacing=4)
-            self.root_layout.add_widget(self.listing)
-            return self.root_layout
+            self.home.add_widget(self.listing)
+            self.stack.add_widget(self.home)
+            return self.stack
+
+        def show_home(self):
+            self.stack.clear_widgets()
+            self.stack.add_widget(self.home)
+
+        def edit(self, remote):
+            try:
+                editor = controller.open_for_edit(remote)
+            except HomeUnavailableError as exc:
+                self.status.text = str(exc)
+                return
+            self.stack.clear_widgets()
+            self.stack.add_widget(EditorScreen(controller, editor, remote, on_back=self.show_home))
 
         def refresh(self):
             self.listing.clear_widgets()
@@ -106,6 +123,9 @@ def run() -> None:
             back = Button(text="Torna alla lista", size_hint_y=None, height=44)
             back.bind(on_release=lambda *_: self.refresh())
             self.listing.add_widget(back)
+            edit = Button(text="Modifica", size_hint_y=None, height=44)
+            edit.bind(on_release=lambda *_: self.edit(remote))
+            self.listing.add_widget(edit)
             for exercise in scheda.exercises:
                 detail = BoxLayout(orientation="vertical", size_hint_y=None, height=110)
                 detail.add_widget(Label(text=f"{exercise.name} - {exercise.repetitions} - {exercise.recovery}"))
