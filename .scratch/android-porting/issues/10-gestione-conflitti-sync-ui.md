@@ -35,10 +35,31 @@ esplicita, quindi non e' un last-write-wins silenzioso); (b) "duplicata" non
 e' atomica: se il download finale fallisce dopo la creazione della copia, un
 retry crea una seconda copia suffissata.
 
-**Residuo:** prova manuale su due device/browser con Drive reale.
+**Residuo:** verifica del dialog e del flusso di conflitto su dispositivo
+Android (lato PC completato, vedi sotto).
+
+**Verifica "due dispositivi" completata (2026-09-03, script
+`.scratch/verify_conflict_10.py`, Drive reale):** tre controller con
+cache separate (A/B/C) simulano i dispositivi su una scheda di test
+"TEST VERIFICA 10.scheda" creata e distrutta dallo script (nessun
+impatto sulle schede utente). Esiti:
+- conflitto al salvataggio: `editor.salva()` restituisce `SyncConflict`
+  senza caricare (niente last-write-wins silenzioso);
+- risoluzione "locale": upload forzato, il remoto diventa la versione B;
+- risoluzione "remota": la cache B viene riallineata al remoto e la
+  modifica locale risulta scartata;
+- check all'apertura: `controller.check_conflict` rileva il conflitto in
+  corso SENZA download;
+- risoluzione "duplicata": copia "TEST VERIFICA 10 (2).scheda" con la
+  versione B, originale riallineato alla versione A, conflitto chiuso
+  (`check_conflict` ritorna None dopo ciascuna risoluzione);
+- cleanup: schedine di test eliminate da Drive, cache rimosse.
+Script idempotente (pre-cleanup dei residui di esecuzioni interrotte).
+Nota: il dialog Kivy a tre scelte è coperto da tests/test_kivy_conflict.py
+(logica); la resa visiva su dispositivo resta nel residuo Android.
 
 - [x] Controllo conflitto all'apertura scheda
 - [x] Controllo conflitto al salvataggio
 - [x] Dialogo con timestamp e tre scelte (locale / remota / duplica)
 - [x] Ogni scelta produce l'esito atteso su Drive e in locale
-- [ ] Test manuali documentati dello scenario a due dispositivi
+- [x] Test manuali documentati dello scenario a due dispositivi
