@@ -41,3 +41,14 @@ cross-install per la cache p4a di produzione
 - [ ] Login Google funzionante su Android (client OAuth `org.ptt.pytrainer` dichiarato configurato; da verificare su dispositivo)
 - [x] Build debug APK interna generata (41 MB, arm64-v8a)
 - [ ] App installata e verificata su dispositivo Android reale
+
+**Rebuild APK 16:07 (2026-09-03):** dopo i fix desktop del pomeriggio
+(commit `bf68f94`, codice condiviso con Android) l'APK delle 11:53 era
+obsoleto; `buildozer -v android debug` rigenerato in WSL (log
+`.scratch/android-porting/rebuild_desktop_fixes.log`), `check_apk.sh`
+conferma package `org.ptt.pytrainer` e `LEAKS: none` (41 MB, 16:07).
+
+**Prossimo passo dispositivo:** seguire
+`.scratch/android-porting/CHECKLIST-test-dispositivo.md` (prerequisiti
+OAuth/SHA-1, installazione, verifica di tutte le schermate 05-10 sul
+telefono, registro risultati).
