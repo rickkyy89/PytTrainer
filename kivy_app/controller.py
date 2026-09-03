@@ -120,6 +120,15 @@ class DriveHomeController:
             upload=lambda path: self._drive().upload_scheda(path, file_id=remote.id),
         )
 
+    def open_for_workout(self, remote: RemoteScheda) -> list[dict]:
+        """Download the bundle and return the raw exercise dicts for workout mode.
+
+        Workout mode is read-only session state (ticket 09): no editor, no
+        save path, nothing persisted back to the bundle.
+        """
+        esercizi, _, _ = self._download_editable(remote)
+        return esercizi
+
     def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool) -> int:
         """Download another bundle and merge its exercises into the editor."""
         def operation():

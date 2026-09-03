@@ -60,6 +60,8 @@ def run() -> None:
     from .export_screen import ExportScreen
     from .media import MediaFlowController
     from .media_screen import MediaScreen
+    from .workout import WorkoutSessionController
+    from .workout_screen import WorkoutScreen
 
     controller = build_controller()
     if sys.platform == "android":
@@ -168,6 +170,9 @@ def run() -> None:
             edit = Button(text="Modifica", size_hint_y=None, height=44)
             edit.bind(on_release=lambda *_: self.edit(remote))
             self.listing.add_widget(edit)
+            workout = Button(text="Allenati", size_hint_y=None, height=44)
+            workout.bind(on_release=lambda *_: self.open_workout(remote))
+            self.listing.add_widget(workout)
             for exercise in scheda.exercises:
                 detail = BoxLayout(orientation="vertical", size_hint_y=None, height=110)
                 detail.add_widget(Label(text=f"{exercise.name} - {exercise.repetitions} - {exercise.recovery}"))
@@ -177,6 +182,16 @@ def run() -> None:
                         frames.add_widget(Image(source=frame, allow_stretch=True))
                 detail.add_widget(frames)
                 self.listing.add_widget(detail)
+
+        def open_workout(self, remote):
+            try:
+                esercizi = controller.open_for_workout(remote)
+            except HomeUnavailableError as exc:
+                self.status.text = str(exc)
+                return
+            session = WorkoutSessionController(esercizi)
+            self.stack.clear_widgets()
+            self.stack.add_widget(WorkoutScreen(session, on_back=self.show_home))
 
         def create_dialog(self):
             input_name = TextInput(hint_text="Nome scheda")

@@ -39,12 +39,21 @@ def build_side_screens():
     media_screen = MediaScreen(media, on_back=lambda: None)
     export = DocExportController(editor, credential_provider="CP")
     export_screen = ExportScreen(export, on_back=lambda: None)
-    return screen, media_screen, export_screen
+    from kivy_app.workout import WorkoutSessionController
+    from kivy_app.workout_screen import WorkoutScreen
+    session = WorkoutSessionController(
+        [{"nome": "Squat", "ripetizioni": "3x12", "recupero": "90 SEC",
+          "note": "Tieni la schiena.", "frame_start": None, "frame_finish": None}])
+    workout_screen = WorkoutScreen(session, on_back=lambda: None,
+                                   notifier=lambda *a: None)
+    workout_screen._tick()
+    return screen, media_screen, export_screen, workout_screen
 
 
 def _probe(dt):
-    screen, media_screen, export_screen = build_side_screens()
-    print("SIDES OK", bool(screen.children) or True, bool(media_screen), bool(export_screen))
+    screen, media_screen, export_screen, workout_screen = build_side_screens()
+    print("SIDES OK", bool(screen.children), bool(media_screen),
+          bool(export_screen), bool(workout_screen.children))
     App.get_running_app().stop()
 
 
