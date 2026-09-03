@@ -114,6 +114,56 @@ def test_progresso_legge_i_checkpoint_del_state(tmp_path):
     assert controller.progresso() == (2, 2)
 
 
+def test_genera_passa_snapshot_isolato_all_creator(tmp_path):
+    editor = make_editor(tmp_path)
+    visti = []
+
+    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
+        visti.extend(esercizi)
+        return {"document_id": "d", "url": "u", "esercizi_inseriti": [],
+                "documento_rigenerato": False}
+
+    controller, _, _ = make_export(tmp_path, editor=editor)
+    controller._creator = creator
+
+    controller.genera()
+
+    assert all(d is not e for d, e in zip(visti, editor.esercizi[:2]))
+    editor.esercizi[0]["nome"] = "Mutato dopo lo start"
+    assert visti[0]["nome"] == "E0"  # la generazione lavora sullo snapshot
+
+
+def test_errore_di_generazione_persiste_il_checkpoint_nel_bundle(tmp_path):
+    editor = make_editor(tmp_path)
+
+    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
+        from core.docs_helper import salva_stato
+        salva_stato(state_path, {"doc_id": "d1", "titolo": titolo,
+                                 "esercizi": [{"nome": "E0", "slug": "e0"}]})
+        raise OSError("drive perso a meta')")
+
+    bundle = Path(tmp_path / "my.scheda")
+    controller, _, _ = make_export(tmp_path, editor=editor)
+    controller._creator = creator
+    controller._state_path = None
+    editor._upload = lambda path: bundle.write_bytes(b"zip") and None
+
+    with pytest.raises(OSError):
+        controller.genera()
+
+    assert bundle.exists()  # il bundle e' stato riscritto con lo stato parziale
+
+
+def test_salva_stato_e_atomico_e_carica_stato_riapre(tmp_path):
+    from core.docs_helper import carica_stato, salva_stato
+
+    stato = tmp_path / "work" / "state.json"
+    salva_stato(str(stato), {"doc_id": "x", "esercizi": [{"slug": "a"}]})
+
+    assert carica_stato(str(stato))["doc_id"] == "x"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_genera_in_conflitto_propaga_esito_e_lascia_retry_su_salva(tmp_path):
     conflict = SyncConflict("x", "my.scheda", "2026-09-01T00:00:00Z",
                             "2026-09-02T00:00:00Z", "2026-08-31T00:00:00Z")

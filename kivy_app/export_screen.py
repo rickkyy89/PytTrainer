@@ -31,10 +31,10 @@ class ExportScreen(BoxLayout):
         self._poll = None
 
         header = BoxLayout(size_hint_y=None, height=44, spacing=8)
-        back = Button(text="< Editor", size_hint_x=None, width=120)
-        back.bind(on_release=lambda *_: self._exit())
+        self._back = Button(text="< Editor", size_hint_x=None, width=120)
+        self._back.bind(on_release=lambda *_: self._exit())
         title = Label(text="Generazione Google Doc")
-        header.add_widget(back)
+        header.add_widget(self._back)
         header.add_widget(title)
         self.add_widget(header)
 
@@ -63,6 +63,7 @@ class ExportScreen(BoxLayout):
             return
         self._url = None
         self.start_button.disabled = True
+        self._back.disabled = True  # niente editor (e niente Salva) durante il worker
         self.progress.text = "0% — avvio…"
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
@@ -133,6 +134,7 @@ class ExportScreen(BoxLayout):
             self._poll = None
         self._worker = None
         self.start_button.disabled = True
+        self._back.disabled = False  # il worker e' terminato: si puo' tornare
 
     def _exit(self):
         if self._poll is not None:

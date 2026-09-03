@@ -45,6 +45,8 @@ class DocExportController:
         self._stato_loader = stato_loader
         self._state_path: str | None = None
         self._totale_sessione: int = 0
+        self._baseline: int = 0
+        self._ultimo_inseriti: int = 0
 
     # ------------------------------------------------------------- prepara
 
@@ -75,6 +77,9 @@ class DocExportController:
 
         Returns the ``create_workout_document`` result plus a ``salvataggio``
         entry carrying the editor save outcome (UploadResult or SyncConflict).
+        The creator receives a snapshot of the ready exercises so concurrent
+        UI edits cannot mutate the document mid-generation, and a failed
+        generation still pushes the latest checkpoint into the bundle.
         """
         if not self._editor.cartella_lavoro:
             raise DocExportError("Scheda senza cartella di lavoro: impossibile esportare.")
@@ -85,23 +90,42 @@ class DocExportController:
             )
         self._state_path = percorso_stato(self._editor.cartella_lavoro)
         self._totale_sessione = len(pronti)
+        self._baseline = self._conteggio_stato()
+        self._ultimo_inseriti = 0
         riepilogo = self.riepilogo()
-        risultato = self._creator(
-            pronti, riepilogo.titolo, state_path=self._state_path,
-            credential_provider=self._credential_provider,
-            base_dir=self._base_dir,
-        )
+        try:
+            risultato = self._creator(
+                [dict(esercizio) for esercizio in pronti], riepilogo.titolo,
+                state_path=self._state_path,
+                credential_provider=self._credential_provider,
+                base_dir=self._base_dir,
+            )
+        except Exception:
+            self._persisti_checkpoint()  # meglio un bundle con checkpoint parziale
+            raise
         risultato["salvataggio"] = self._editor.salva()
         return risultato
 
     def progresso(self) -> tuple[int, int]:
         """(checkpointed exercises, total of this session) for the UI poll."""
         totale = self._totale_sessione or len(self.esercizi_pronti())
+        current = self._conteggio_stato()
+        inseriti = min(totale, max(self._ultimo_inseriti, current - self._baseline))
+        self._ultimo_inseriti = inseriti
+        return inseriti, totale
+
+    def _conteggio_stato(self) -> int:
+        """Exercises recorded in the checkpoint state; 0 when missing/broken."""
         if not self._state_path:
-            return 0, totale
+            return 0
         try:
             stato = self._stato_loader(self._state_path)
         except Exception:
-            return 0, totale
-        inseriti = len(stato.get("esercizi", [])) if stato else 0
-        return inseriti, totale
+            return self._ultimo_inseriti + self._baseline
+        return len(stato.get("esercizi", [])) if stato else 0
+
+    def _persisti_checkpoint(self) -> None:
+        try:
+            self._editor.salva()
+        except Exception:
+            pass

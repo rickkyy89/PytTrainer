@@ -113,7 +113,10 @@ def delete_drive_file(drive_service, file_id: str) -> None:
 
 
 def carica_stato(percorso: str) -> dict | None:
-    """Carica lo stato (JSON, UTF-8) di una scheda da file, o None se il file non esiste."""
+    """Carica lo stato (JSON, UTF-8) di una scheda da file, o None se il file non esiste.
+
+    Solleva json.JSONDecodeError se il contenuto non e' (piu') JSON valido.
+    """
     if not os.path.exists(percorso):
         return None
     with open(percorso, "r", encoding="utf-8") as file_stato:
@@ -121,9 +124,19 @@ def carica_stato(percorso: str) -> dict | None:
 
 
 def salva_stato(percorso: str, stato: dict) -> None:
-    """Salva su file (JSON, UTF-8) lo stato di una scheda: doc_id, titolo ed esercizi inseriti."""
-    with open(percorso, "w", encoding="utf-8") as file_stato:
+    """Salva su file (JSON, UTF-8) lo stato di una scheda: doc_id, titolo ed esercizi inseriti.
+
+    Scrittura atomica (temporaneo nella stessa cartella + os.replace): un
+    reader concorrente non osserva mai un JSON troncato a meta'.
+    """
+    cartella = os.path.dirname(os.path.abspath(percorso))
+    os.makedirs(cartella, exist_ok=True)
+    temporaneo = f"{percorso}.tmp"
+    with open(temporaneo, "w", encoding="utf-8") as file_stato:
         json.dump(stato, file_stato, ensure_ascii=False, indent=2)
+        file_stato.flush()
+        os.fsync(file_stato.fileno())
+    os.replace(temporaneo, percorso)
 
 
 def percorso_stato_per_titolo(doc_title: str) -> str:

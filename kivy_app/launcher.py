@@ -32,11 +32,12 @@ def _android_intent(action: str, *, uri: str | None = None, type_: str | None = 
         from jnius import autoclass
 
         Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         activity = PythonActivity.mActivity
         intent = Intent(action)
         if uri:
-            intent.setDataString(uri)
+            intent.setData(Uri.parse(uri))
         if type_:
             intent.setType(type_)
         if extra_text is not None:

@@ -19,6 +19,20 @@ URL, avviso rigenerazione, azioni Apri/Condividi/Riprendi).
 `kivy_app/launcher.py`: `apri_url`/`condividi_url` con browser su PC e intent
 ACTION_VIEW / ACTION_SEND chooser su Android (jnius lazy).
 
+**Fix di review applicati (2026-09-03):** ExportScreen disabilita il tasto
+"< Editor" durante il worker (niente Salva concorrente con la generazione);
+`genera()` passa al creator uno snapshot dei pronti (le modifiche UI non
+corrompono la generazione in corso) e, se il creator fallisce, persiste
+comunque l'ultimo `state.json` nel bundle prima di rialzare; `progresso()` usa
+un baseline di sessione + clamp (niente >100% ne' regressioni) e il polling
+tiene l'ultimo valore valido su JSON transitorio; `core.docs_helper.salva_stato`
+ora e' atomico (tmp + `os.fsync` + `os.replace`), quindi il poll non legge mai
+uno stato troncato; `launcher.py` ACTION_VIEW usa `Intent.setData(Uri.parse(url))`
+(`setDataString` non esiste sulla classe Intent). Limite noto: un crash del
+processo a meta' generazione non salva il checkpoint nel bundle (serve un
+callback nel core, non in questo scope); il rilancio nello STESSO work dir
+riprende comunque dai checkpoint su disco.
+
 **Residuo:** esecuzione reale con rete su PC (login Google + Drive) e
 valida su dispositivo Android (provider nativo + share sheet).
 
