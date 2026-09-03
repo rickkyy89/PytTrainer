@@ -26,7 +26,8 @@ CAMPI_LUNGHI = (("spiegazione", "Spiegazione"), ("note", "Note"))
 
 
 class EditorScreen(BoxLayout):
-    def __init__(self, controller, editor, remote, on_back, open_media=None, on_export=None):
+    def __init__(self, controller, editor, remote, on_back, open_media=None, on_export=None,
+                 on_conflict_exit=None):
         super().__init__(orientation="vertical", padding=10, spacing=6)
         self._controller = controller
         self._editor = editor
@@ -34,6 +35,7 @@ class EditorScreen(BoxLayout):
         self._on_back = on_back
         self._open_media = open_media
         self._on_export = on_export
+        self._on_conflict_exit = on_conflict_exit or (lambda message: self._on_back())
 
         self.header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         back = Button(text="< Indietro", size_hint_x=None, width=120)
@@ -198,7 +200,8 @@ class EditorScreen(BoxLayout):
             return
         if isinstance(risultato, SyncConflict):
             from .conflict_dialog import apri_dialogo_conflitto
-            apri_dialogo_conflitto(self._controller, risultato, self._esito_conflitto)
+            apri_dialogo_conflitto(self._controller, risultato, self._esito_conflitto,
+                                   local_path=self._editor.percorso_bundle)
             return
         if self._editor.sporco:
             self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
@@ -213,11 +216,9 @@ class EditorScreen(BoxLayout):
         if choice == "locale":
             self.status.text = "Versione locale inviata a Drive."
         elif choice == "remota":
-            self._on_back()
-            self.status.text = "Ricaricata la versione remota: le modifiche locali sono scartate."
+            self._on_conflict_exit("Ricaricata la versione remota: modifiche locali scartate.")
         else:
-            self._on_back()
-            self.status.text = "Duplicata su Drive; l'originale ora coincide con la versione remota."
+            self._on_conflict_exit("Versione locale duplicata su Drive; originale riallineato.")
 
     def _wrap(self, operation, rebuild=False):
         try:

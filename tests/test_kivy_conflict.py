@@ -20,12 +20,17 @@ CONFLICT = SyncConflict("fid", "gambe.scheda", "2026-09-02T12:00:00Z",
 
 
 class RecordingSync:
-    def __init__(self, service, folder_id, cache_dir, *, conflict=None):
+    def __init__(self, service, folder_id, cache_dir, *, conflict=None, remote_names=None):
         self.cache_dir = Path(cache_dir)
         self.conflict = conflict
+        self.remote_names = remote_names or ["gambe.scheda"]
         self.uploads = []
         self.downloads = []
         self.creates = []
+
+    def list_schede(self):
+        return [RemoteScheda(name, "id-" + name, "2026-09-02T10:00:00Z")
+                for name in self.remote_names]
 
     def check_conflict(self, local_path, file_id=None):
         return self.conflict
@@ -115,6 +120,32 @@ def test_risoluzione_duplicata_copia_rinomina_carica_e_ripristina(tmp_path):
     controller._duplicate_path("gambe.scheda")
     copia.touch()
     assert controller._duplicate_path("gambe.scheda").name == "gambe (3).scheda"
+
+
+def test_risoluzione_locale_usa_il_percorso_aperto_se_il_remoto_e_stato_rinominato(tmp_path):
+    controller, instances = make_home(tmp_path)
+    aperto = tmp_path / "cache" / "vecchio_nome.scheda"
+    aperto.write_bytes(b"local edit")
+    rinominato = SyncConflict("fid", "nuovo_nome.scheda", "2026-09-02T12:00:00Z",
+                              "2026-09-02T11:00:00Z", "2026-09-02T10:00:00Z")
+
+    controller.resolve_conflict(rinominato, choice="locale", local_path=aperto)
+
+    assert instances[0].uploads == [(aperto, "fid", True)]
+
+    instances[0].creates.clear()
+    controller.resolve_conflict(rinominato, choice="duplicata", local_path=aperto)
+    assert instances[0].creates == [tmp_path / "cache" / "nuovo_nome (2).scheda"]
+
+
+def test_risoluzione_duplicata_evita_nomi_gia_usati_su_drive(tmp_path):
+    controller, instances = make_home(
+        tmp_path, {"remote_names": ["gambe.scheda", "gambe (2).scheda", "gambe (3).scheda"]})
+    (tmp_path / "cache" / "gambe.scheda").write_bytes(b"local edit")
+
+    controller.resolve_conflict(CONFLICT, choice="duplicata")
+
+    assert instances[0].creates == [tmp_path / "cache" / "gambe (4).scheda"]
 
 
 def test_scelta_sconosciuta_o_drive_giu_risalgono_come_errore_utente(tmp_path):

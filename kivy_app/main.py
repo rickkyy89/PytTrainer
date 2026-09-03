@@ -98,6 +98,11 @@ def run() -> None:
             self.stack.clear_widgets()
             self.stack.add_widget(self.home)
 
+        def go_home_message(self, message):
+            self.show_home()
+            self.refresh()
+            self.status.text = message
+
         def edit(self, remote):
             try:
                 editor = controller.open_for_edit(remote)
@@ -112,6 +117,7 @@ def run() -> None:
                 controller, editor, remote, on_back=self.show_home,
                 open_media=lambda ed, i: self.open_media(remote, ed, i),
                 on_export=lambda ed: self.open_export(remote, ed),
+                on_conflict_exit=self.go_home_message,
             ))
 
         def open_export(self, remote, editor):
@@ -174,7 +180,8 @@ def run() -> None:
                     }[choice]
                     self._apri_in_lettura(remote)
                 from .conflict_dialog import apri_dialogo_conflitto
-                apri_dialogo_conflitto(controller, conflitto, esito)
+                apri_dialogo_conflitto(controller, conflitto, esito,
+                                       local_path=controller.cache_path(remote.name))
                 return
             self._apri_in_lettura(remote)
 

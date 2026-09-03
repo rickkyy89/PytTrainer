@@ -135,24 +135,31 @@ class DriveHomeController:
     def check_conflict(self, remote: RemoteScheda):
         """Open-time conflict check without downloading (ticket 10)."""
         def operation():
-            local = self._cache_dir / remote.name
+            local = self.cache_path(remote.name)
             if not local.exists():
                 return None
             return self._drive().check_conflict(local, remote.id)
         return self._call("verificare i conflitti", operation)
 
-    def resolve_conflict(self, conflict, *, choice: str):
+    def cache_path(self, name: str) -> Path:
+        """Absolute cache path of a bundle name (single source of truth)."""
+        return self._cache_dir / name
+
+    def resolve_conflict(self, conflict, *, choice: str, local_path: str | Path | None = None):
         """Apply one of the three user choices for a SyncConflict.
 
-        ``locale`` overwrites the remote with the (already saved) local
-        bundle, ``remota`` re-downloads the remote discarding local edits and
-        returns its path, ``duplicata`` uploads the local bundle under a new
-        suffixed name and then restores the original file from the remote
-        (whose content must survive), so the conflict cannot loop forever.
+        ``local_path`` is the authoritative path of the opened bundle (the one
+        the editor saves to); it is used instead of ``cache/conflict.name`` so
+        a remote rename between detection and resolution cannot break the
+        "locale"/"duplicata" choices. ``locale`` overwrites the remote with
+        the (already saved) local bundle, ``remota`` re-downloads the remote
+        discarding local edits and returns its path, ``duplicata`` uploads the
+        local bundle under a new remote-unique suffixed name and then restores
+        the original from the remote, so the conflict cannot loop forever.
         """
         def operation():
             drive = self._drive()
-            local = self._cache_dir / conflict.name
+            local = Path(local_path) if local_path is not None else self.cache_path(conflict.name)
             if choice == "locale":
                 return drive.upload_scheda(local, conflict.file_id, force=True)
             if choice == "remota":
@@ -167,11 +174,14 @@ class DriveHomeController:
         return self._call("risolvere il conflitto", operation)
 
     def _duplicate_path(self, name: str) -> Path:
+        """A cache path whose ``.scheda`` name is unused both locally and remotely."""
         stem = name[: -len(".scheda")] if name.endswith(".scheda") else name
+        taken = {scheda.name for scheda in self._drive().list_schede()}
         n = 2
         while True:
-            candidate = self._cache_dir / f"{stem} ({n}).scheda"
-            if not candidate.exists():
+            candidate_name = f"{stem} ({n}).scheda"
+            candidate = self._cache_dir / candidate_name
+            if candidate_name not in taken and not candidate.exists():
                 return candidate
             n += 1
 

@@ -20,6 +20,21 @@ agganciato all'apertura scheda (home) e al salvataggio (editor, con
 `editor.conferma_salvataggio()` e ritorno alla lista quando l'editor in
 memoria non coincide piu' col disco). Mai last-write-wins silenzioso.
 
+**Fix di review applicati (2026-09-03):** `resolve_conflict` accetta il
+`local_path` aperto (una rinomina remota non rompe piu' locale/duplicata);
+`_duplicate_path` sceglie il suffisso evitando sia i nomi remoti esistenti
+(`list_schede`) sia la cache; il dialogo risolve in un worker thread con
+pulsanti disabilitati (niente congelamento UI/ANR); dopo remota/duplicata
+dall'editor si torna alla LISTA aggiornata con messaggio sulla home
+(`go_home_message`), non su un widget smontato.
+
+**Limiti noti documentati:** (a) tra apertura dialogo e "tieni locale" una
+nuova modifica remota cadrebbe schiacciata senza ri-mostra: servirebbero
+ETag/If-Match su Drive (il conflitto mostrato richiede comunque una scelta
+esplicita, quindi non e' un last-write-wins silenzioso); (b) "duplicata" non
+e' atomica: se il download finale fallisce dopo la creazione della copia, un
+retry crea una seconda copia suffissata.
+
 **Residuo:** prova manuale su due device/browser con Drive reale.
 
 - [x] Controllo conflitto all'apertura scheda
