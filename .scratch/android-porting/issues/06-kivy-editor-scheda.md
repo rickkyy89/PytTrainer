@@ -17,7 +17,12 @@ FileChooser Kivy altrove, niente tkinter). `kivy` aggiunto a requirements.txt.
 106 test verdi, smoke import UI su PC ok.
 
 **Residuo:** verifica manuale dell'editor su PC (finestra reale) e su
-dispositivo Android, che dipende dalla build/E2E del ticket 05.
+dispositivo Android, che dipende dalla build/E2E del ticket 05. L'APK debug
+e' stato ricostruito (2026-09-03) con editor, fix di review e requirements
+aggiornato a includere `plyer` (check_apk.sh: LEAKS: none, package
+`org.ptt.pytrainer`). Nota per il test su dispositivo: il picker Android usa
+plyer/SAF; se restituisce URI `content://` da convertire in path leggibile,
+va aggiunto uno step di copia nella cache.
 
 - [x] Editing di tutti i campi esercizio incluso gruppo (con completamento)
 - [x] Aggiungi/rimuovi/riordina esercizi
