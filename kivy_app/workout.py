@@ -17,40 +17,39 @@ import time
 
 DEFAULT_RECUPERO_SECONDI = 60
 
-_TRE_CIFRE = re.compile(r"^(\d+):([0-5]?\d)$")
-_MIN_SEC = re.compile(r"^(\d+(?:[.,]\d+)?)\s*min(?:uti?)?\b.*?(\d+)?\s*s?ec", re.IGNORECASE)
-_MINUTO = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:m(?:in|inuti|on)?|')\s*$", re.IGNORECASE)
-_PURE_SEC = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:sec?|s|secondi|''?)?\s*$", re.IGNORECASE)
+_COLON = re.compile(r"^(\d+):([0-5]?\d)$")
+_MIN_SEC = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:min(?:ut[oi])?|m)\s*(\d+)\s*(?:sec(?:ondi)?|s)?$",
+                      re.IGNORECASE)
+_MIN_ONLY = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:min(?:ut[oi])?|m)$", re.IGNORECASE)
+_SEC_ONLY = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:sec(?:ondi)?|s)?$", re.IGNORECASE)
 
 
 def parse_recupero_secondi(testo: str | None) -> int | None:
     """Return whole seconds from the free-text Recupero field, or None.
 
-    Supported shapes: "90 SEC", "90s", "1:30" (m:ss), "1m30", "2 min",
-    "90" (bare number = seconds). Anything unparseable returns None so the
+    Supported (anchored, full-string) shapes: "90", "90 SEC", "90s", "1:30"
+    (m:ss), "1m30", "2 min", "1 min 30 sec". Anything else returns None so the
     caller can fall back to a default or disable the timer.
     """
-    if not testo:
+    if testo is None:
         return None
     testo = str(testo).strip().replace(",", ".")
     if not testo:
         return None
 
-    m = _TRE_CIFRE.match(testo)
+    m = _COLON.match(testo)
     if m:
         return int(m.group(1)) * 60 + int(m.group(2))
 
     m = _MIN_SEC.match(testo)
     if m:
-        minuti = float(m.group(1))
-        extra = int(m.group(2) or 0)
-        return round(minuti * 60 + extra)
+        return round(float(m.group(1)) * 60 + float(m.group(2)))
 
-    m = _MINUTO.match(testo)
+    m = _MIN_ONLY.match(testo)
     if m:
         return round(float(m.group(1)) * 60)
 
-    m = _PURE_SEC.match(testo)
+    m = _SEC_ONLY.match(testo)
     if m:
         return round(float(m.group(1)))
 

@@ -49,11 +49,19 @@ def make_session(orari=None, **kw):
     ("0:45", 45),
     ("2 min", 120),
     ("1 min 30 sec", 90),
+    ("1m30", 90),
+    ("1m30s", 90),
     ("2m", 120),
+    ("1,5 min", 90),
+    ("60min", 3600),
+    ("1 minuto", 60),
     ("", None),
     (None, None),
     ("bizzarro", None),
     ("3x12", None),
+    ("90 se", None),          # abbreviazione accidentale non accettata
+    ("1mon", None),           # non deve confondersi con i minuti
+    ("1 min garbage 30 sec trailing", None),  # niente wildcard lasche
 ])
 def test_parse_recupero_secondi_formatti(testo, atteso):
     assert parse_recupero_secondi(testo) == atteso

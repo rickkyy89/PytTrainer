@@ -15,6 +15,7 @@ from kivy.uix.checkbox import CheckBox
 from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.scrollview import ScrollView
+from kivy.utils import escape_markup
 
 from .notify import notifica_fine_recupero
 
@@ -78,9 +79,9 @@ class WorkoutScreen(BoxLayout):
         self._checkboxes[indice] = checkbox
         top.add_widget(checkbox)
         top.add_widget(_etichetta(
-            f"[b][size=26]{esercizio.get('nome') or '(senza nome)'}[/size][/b]  "
-            f"[size=22]{esercizio.get('ripetizioni') or ''}[/size]  "
-            f"[color=00bfa5][size=22]{esercizio.get('recupero') or ''}[/size][/color]",
+            f"[b][size=26]{escape_markup(str(esercizio.get('nome') or '(senza nome)'))}[/size][/b]  "
+            f"[size=22]{escape_markup(str(esercizio.get('ripetizioni') or ''))}[/size]  "
+            f"[color=00bfa5][size=22]{escape_markup(str(esercizio.get('recupero') or ''))}[/size][/color]",
             top, size_hint_x=1))
         card.add_widget(top)
 
@@ -93,7 +94,7 @@ class WorkoutScreen(BoxLayout):
 
         note = str(esercizio.get("note") or "").strip()
         if note:
-            card.add_widget(_etichetta(note, card, font_size="18sp",
+            card.add_widget(_etichetta(escape_markup(note), card, font_size="18sp",
                                        size_hint_y=None))
         avvia = Button(text=f"▶ Recupero {indice + 1}", size_hint_y=None, height=56)
         avvia.bind(on_release=lambda *_: self._start_timer(indice))

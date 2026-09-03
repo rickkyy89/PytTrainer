@@ -12,7 +12,7 @@ orientation = portrait
 android.api = 33
 android.minapi = 24
 android.archs = arm64-v8a
-android.permissions = INTERNET
+android.permissions = INTERNET,VIBRATE,POST_NOTIFICATIONS
 android.gradle_dependencies = com.google.android.gms:play-services-auth:21.2.0
 android.add_src = kivy_app/android/src
 
