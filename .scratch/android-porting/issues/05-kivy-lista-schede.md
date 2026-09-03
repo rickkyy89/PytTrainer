@@ -12,24 +12,32 @@ lista/refresh, download e lettura sola, creazione/upload, conferma
 eliminazione e stato Drive non disponibile. La composizione PC usa
 `LocalCredentialsProvider` e la build del client Drive in modo lazy/iniettabile.
 
-**Blocco residuo:** la verifica su dispositivo e l'OAuth di produzione restano
-da fare. Il client dello spike (`org.ptt.pttspike`) non e' riusabile: in Google
-Cloud va aggiunto un client OAuth Android per il package esatto
-`org.ptt.pyTrainer`, usando per la build debug questo SHA-1:
+**Blocco residuo:** rimangono l'installazione/verifica su dispositivo e
+l'OAuth di produzione. ATTENZIONE: l'APK debug ha `applicationId`
+**`org.ptt.pytrainer`** (tutto minuscolo, p4a normalizza il nome): in Google
+Cloud il client OAuth Android va registrato con package esatto
+`org.ptt.pytrainer` (NON `org.ptt.pyTrainer`), SHA-1 debug:
 
 ```text
 BC:F1:89:B3:03:20:ED:2D:2B:07:CA:C9:5D:B1:0C:6D:C9:B2:D2:E1
 ```
 
-La prima build debug con `buildozer -v android debug` ha raggiunto la
-compilazione di OpenSSL ma e' stata interrotta dal limite temporale
-dell'ambiente prima di generare l'APK; la cache `.buildozer/` permette di
-riprenderla.
+**Build debug completata (2026-09-03):** `buildozer -v android debug` ha
+prodotto `bin/pyTrainer-0.1-arm64-v8a-debug.apk` (41 MB, arm64-v8a, API 24-33,
+verify assente di file sensibili dalla dist). Fix applicati per arrivarci:
+`main.py` root come entry point verso `kivy_app.main.run()`; esclusione da
+`source.exclude_dirs`/`exclude_patterns` di `.buildozer`, `bin`, `drive-cache`,
+cartelle `.work`, `token.json`, `credentials.json`, `*.scheda`; patch pip
+cross-install per la cache p4a di produzione
+(`.scratch/android-porting/patch_build_prod.py`, log
+`.scratch/android-porting/prod_build2.log`).
 
 - [x] Home con lista schede da Drive (nome + data modifica), aggiornabile
 - [x] Apertura scheda in sola lettura: esercizi e frame visibili
 - [x] Creazione nuova scheda vuota sincronizzata su Drive
 - [x] Eliminazione scheda con conferma
 - [x] Avviso offline visibile
-- [ ] Login Google funzionante su PC e su Android
-- [ ] App avviabile su PC e installabile su Android (build interna)
+- [x] Login Google funzionante su PC (token refresh + flusso loopback verificati)
+- [ ] Login Google funzionante su Android (client OAuth `org.ptt.pytrainer` dichiarato configurato; da verificare su dispositivo)
+- [x] Build debug APK interna generata (41 MB, arm64-v8a)
+- [ ] App installata e verificata su dispositivo Android reale
