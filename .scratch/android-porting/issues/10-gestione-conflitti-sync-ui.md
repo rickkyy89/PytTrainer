@@ -4,13 +4,26 @@
 
 **Blocked by:** 05 — App Kivy: lista schede
 
-**Status:** blocked-dependency
+**Status:** in-progress
 
-**Blocco attuale:** richiede la home Kivy del ticket 05, sospesa finche' non
-sono configurati cartella Drive e OAuth Android dell'app di produzione.
+**Implementato nel codice (2026-09-03):** `core.drive_sync` espone
+`check_conflict(local_path, file_id)` (sola lettura; nessun file locale =
+nessun conflitto) e `upload_scheda(..., force=True)` per la scelta "tieni
+locale". `DriveHomeController.check_conflict(remote)` controlla la cache senza
+download e `resolve_conflict(conflict, choice)` applica le tre scelte:
+`locale` = upload forzato sul file id aperto; `remota` = riscaricamento che
+scarta le modifiche locali; `duplicata` = copia locale caricata su Drive con
+nome suffissato "(2)/(3)/..." e ripristino dell'originale dalla remota (il
+conflitto non puo' rigenerarsi). Dialogo Kivy condiviso
+`kivy_app/conflict_dialog.py` con entrambi i timestamp e i tre pulsanti;
+agganciato all'apertura scheda (home) e al salvataggio (editor, con
+`editor.conferma_salvataggio()` e ritorno alla lista quando l'editor in
+memoria non coincide piu' col disco). Mai last-write-wins silenzioso.
 
-- [ ] Controllo conflitto all'apertura scheda
-- [ ] Controllo conflitto al salvataggio
-- [ ] Dialogo con timestamp e tre scelte (locale / remota / duplica)
-- [ ] Ogni scelta produce l'esito atteso su Drive e in locale
+**Residuo:** prova manuale su due device/browser con Drive reale.
+
+- [x] Controllo conflitto all'apertura scheda
+- [x] Controllo conflitto al salvataggio
+- [x] Dialogo con timestamp e tre scelte (locale / remota / duplica)
+- [x] Ogni scelta produce l'esito atteso su Drive e in locale
 - [ ] Test manuali documentati dello scenario a due dispositivi

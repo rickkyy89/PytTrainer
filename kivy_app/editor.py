@@ -72,6 +72,10 @@ class SchedaEditorController:
         """Flag external mutations (video & frame flow of ticket 07) as unsaved."""
         self._dirty = True
 
+    def conferma_salvataggio(self) -> None:
+        """Clear the dirty flag once an out-of-band conflict resolution synced the bundle."""
+        self._dirty = False
+
     @property
     def titolo(self) -> str | None:
         return self._titolo

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 
 from core.drive_sync import DriveSync, RemoteScheda
 from core.scheda_file import carica_scheda, salva_scheda
@@ -128,6 +129,51 @@ class DriveHomeController:
         """
         esercizi, _, _ = self._download_editable(remote)
         return esercizi
+
+    # ----------------------------------------------------- conflitti (10)
+
+    def check_conflict(self, remote: RemoteScheda):
+        """Open-time conflict check without downloading (ticket 10)."""
+        def operation():
+            local = self._cache_dir / remote.name
+            if not local.exists():
+                return None
+            return self._drive().check_conflict(local, remote.id)
+        return self._call("verificare i conflitti", operation)
+
+    def resolve_conflict(self, conflict, *, choice: str):
+        """Apply one of the three user choices for a SyncConflict.
+
+        ``locale`` overwrites the remote with the (already saved) local
+        bundle, ``remota`` re-downloads the remote discarding local edits and
+        returns its path, ``duplicata`` uploads the local bundle under a new
+        suffixed name and then restores the original file from the remote
+        (whose content must survive), so the conflict cannot loop forever.
+        """
+        def operation():
+            drive = self._drive()
+            local = self._cache_dir / conflict.name
+            if choice == "locale":
+                return drive.upload_scheda(local, conflict.file_id, force=True)
+            if choice == "remota":
+                return drive.download_scheda(conflict.file_id, conflict.name)
+            if choice == "duplicata":
+                duplicate = self._duplicate_path(conflict.name)
+                shutil.copy2(local, duplicate)
+                risultato = drive.create_scheda(duplicate)
+                drive.download_scheda(conflict.file_id, conflict.name)
+                return risultato
+            raise HomeUnavailableError(f"Scelta di conflitto sconosciuta: {choice}.")
+        return self._call("risolvere il conflitto", operation)
+
+    def _duplicate_path(self, name: str) -> Path:
+        stem = name[: -len(".scheda")] if name.endswith(".scheda") else name
+        n = 2
+        while True:
+            candidate = self._cache_dir / f"{stem} ({n}).scheda"
+            if not candidate.exists():
+                return candidate
+            n += 1
 
     def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool) -> int:
         """Download another bundle and merge its exercises into the editor."""

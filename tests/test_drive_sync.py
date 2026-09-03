@@ -215,3 +215,43 @@ def test_delete_removes_remote_file_and_cached_sync_record(tmp_path):
     assert file_id not in client.files_api.records
     state = json.loads((tmp_path / "cache" / ".drive-sync-state.json").read_text())
     assert state == {}
+
+
+def _conflicted_setup(tmp_path):
+    service, client = sync(tmp_path)
+    file_id = client.files_api.add("gambe.scheda", b"original", "2026-09-02T10:00:00Z")
+    local = service.download_scheda(file_id)
+    local.write_bytes(b"local edit")
+    os.utime(local, ns=(local.stat().st_atime_ns, local.stat().st_mtime_ns + 1))
+    client.files_api.records[file_id]["modifiedTime"] = "2026-09-02T11:00:00Z"
+    return service, client, file_id, local
+
+
+def test_check_conflict_espone_conflitto_senza_toccare_rete_in_scrittura(tmp_path):
+    service, client, file_id, local = _conflicted_setup(tmp_path)
+
+    conflitto = service.check_conflict(local, file_id)
+
+    assert isinstance(conflitto, SyncConflict)
+    assert conflitto.file_id == file_id
+    assert client.files_api.records[file_id]["content"] == b"original"
+
+
+def test_check_conflict_torna_none_senza_edit_locali_o_senza_stato(tmp_path):
+    service, client = sync(tmp_path)
+    file_id = client.files_api.add("gambe.scheda", b"original", "2026-09-02T10:00:00Z")
+    local = service.download_scheda(file_id)
+
+    assert service.check_conflict(local, file_id) is None
+    assert service.check_conflict(tmp_path / "altro.scheda", None) is None
+
+
+def test_upload_force_sovrascrive_il_remoto_ignorando_il_conflitto(tmp_path):
+    service, client, file_id, local = _conflicted_setup(tmp_path)
+
+    risultato = service.upload_scheda(local, file_id, force=True)
+
+    assert isinstance(risultato, UploadResult)
+    assert client.files_api.records[file_id]["content"] == b"local edit"
+    # dopo il force, lo stato è riallineato: nessun conflitto residuo
+    assert service.check_conflict(local, file_id) is None

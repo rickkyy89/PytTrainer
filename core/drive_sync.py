@@ -126,8 +126,14 @@ class DriveSync:
         self._save_state(state)
         return destination
 
-    def upload_scheda(self, local_path: str | os.PathLike, file_id: str | None = None) -> UploadResult | SyncConflict:
-        """Create or update a bundle, returning a conflict instead of overwriting one."""
+    def upload_scheda(self, local_path: str | os.PathLike, file_id: str | None = None,
+                      *, force: bool = False) -> UploadResult | SyncConflict:
+        """Create or update a bundle, returning a conflict instead of overwriting one.
+
+        With ``force=True`` the conflict check is skipped and the local copy
+        overwrites the remote one (used when the user resolves a conflict by
+        keeping the local version).
+        """
         path = self._validate_local_path(local_path)
         state = self._load_state()
         entry = state.get(str(path))
@@ -138,14 +144,8 @@ class DriveSync:
         remote = self._remote(self._drive_service.files().get(
             fileId=remote_id, fields="id,name,modifiedTime"
         ).execute())
-        if entry and self._has_conflict(path, entry, remote):
-            return SyncConflict(
-                file_id=remote.id,
-                name=remote.name,
-                local_modified_time=self._format_local_time(path.stat().st_mtime_ns),
-                remote_modified_time=remote.modified_time,
-                last_sync_remote_modified_time=entry["remote_modified_time"],
-            )
+        if not force and entry and self._has_conflict(path, entry, remote):
+            return self._conflict(path, entry, remote)
 
         response = self._drive_service.files().update(
             fileId=remote_id,
@@ -156,6 +156,37 @@ class DriveSync:
         uploaded = self._remote(response)
         self._record_sync(path, uploaded)
         return UploadResult(uploaded, created=False)
+
+    def check_conflict(self, local_path: str | os.PathLike,
+                       file_id: str | None = None) -> SyncConflict | None:
+        """Return a SyncConflict for a local bundle vs its remote, else None.
+
+        Read-only: used to detect conflicts before opening or overwriting a
+        scheda without triggering any upload. No local bundle (never
+        downloaded) can never conflict.
+        """
+        path = Path(local_path).resolve()
+        if not path.is_file() or path.suffix != ".scheda":
+            return None
+        entry = self._load_state().get(str(path))
+        remote_id = file_id or (entry or {}).get("file_id")
+        if remote_id is None or not entry:
+            return None
+        remote = self._remote(self._drive_service.files().get(
+            fileId=remote_id, fields="id,name,modifiedTime"
+        ).execute())
+        if self._has_conflict(path, entry, remote):
+            return self._conflict(path, entry, remote)
+        return None
+
+    def _conflict(self, path: Path, entry: dict, remote: RemoteScheda) -> SyncConflict:
+        return SyncConflict(
+            file_id=remote.id,
+            name=remote.name,
+            local_modified_time=self._format_local_time(path.stat().st_mtime_ns),
+            remote_modified_time=remote.modified_time,
+            last_sync_remote_modified_time=entry["remote_modified_time"],
+        )
 
     def create_scheda(self, local_path: str | os.PathLike) -> UploadResult:
         """Create a new bundle in the configured folder."""

@@ -158,6 +158,28 @@ def run() -> None:
 
         def open(self, remote):
             try:
+                conflitto = controller.check_conflict(remote)
+            except HomeUnavailableError as exc:
+                self.status.text = str(exc)
+                return
+            if conflitto is not None:
+                def esito(choice, risultato):
+                    if isinstance(risultato, Exception):
+                        self.status.text = str(risultato)
+                        return
+                    self.status.text = {
+                        "locale": "Conflitto risolto con la versione locale.",
+                        "remota": "Conflitto risolto con la versione remota.",
+                        "duplicata": "Versione locale duplicata su Drive.",
+                    }[choice]
+                    self._apri_in_lettura(remote)
+                from .conflict_dialog import apri_dialogo_conflitto
+                apri_dialogo_conflitto(controller, conflitto, esito)
+                return
+            self._apri_in_lettura(remote)
+
+        def _apri_in_lettura(self, remote):
+            try:
                 scheda = controller.open(remote)
             except HomeUnavailableError as exc:
                 self.status.text = str(exc)

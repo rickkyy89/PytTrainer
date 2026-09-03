@@ -197,15 +197,27 @@ class EditorScreen(BoxLayout):
             self.status.text = f"Salvataggio locale ok, Drive non raggiungibile: {exc}"
             return
         if isinstance(risultato, SyncConflict):
-            self.status.text = (
-                f"CONFLITTO: la copia remota ({risultato.remote_modified_time}) e' piu recente "
-                f"dell'ultimo sync ({risultato.last_sync_remote_modified_time}). Locale salvata, "
-                "upload da ripetere dopo la scelta di risoluzione."
-            )
-        elif self._editor.sporco:
+            from .conflict_dialog import apri_dialogo_conflitto
+            apri_dialogo_conflitto(self._controller, risultato, self._esito_conflitto)
+            return
+        if self._editor.sporco:
             self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
         else:
             self.status.text = "Salvato su Drive."
+
+    def _esito_conflitto(self, choice, esito):
+        if isinstance(esito, Exception):
+            self.status.text = str(esito)
+            return
+        self._editor.conferma_salvataggio()
+        if choice == "locale":
+            self.status.text = "Versione locale inviata a Drive."
+        elif choice == "remota":
+            self._on_back()
+            self.status.text = "Ricaricata la versione remota: le modifiche locali sono scartate."
+        else:
+            self._on_back()
+            self.status.text = "Duplicata su Drive; l'originale ora coincide con la versione remota."
 
     def _wrap(self, operation, rebuild=False):
         try:
