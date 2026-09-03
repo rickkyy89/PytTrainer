@@ -20,7 +20,10 @@ sessione, niente persistenza nel bundle). Ingresso "Allenati" dalla scheda in
 sola lettura.
 
 **Residuo:** verifica su dispositivo (tasti grandi/una mano, vibrazione) e
-con frame reali.
+con frame reali. L'APK debug e' stato ricostruito (2026-09-03) con la
+generazione del documento (08) e la modalita' allenamento (09): package
+`org.ptt.pytrainer`, `check_apk.sh` = LEAKS: none, `check_perms.sh` conferma
+INTERNET + VIBRATE + POST_NOTIFICATIONS nel manifest.
 
 - [x] Vista con frame grandi + nome/ripetizioni/recupero/note per ogni esercizio
 - [x] Spunta esercizi completati (solo sessione)
