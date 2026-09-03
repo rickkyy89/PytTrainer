@@ -26,12 +26,13 @@ CAMPI_LUNGHI = (("spiegazione", "Spiegazione"), ("note", "Note"))
 
 
 class EditorScreen(BoxLayout):
-    def __init__(self, controller, editor, remote, on_back):
+    def __init__(self, controller, editor, remote, on_back, open_media=None):
         super().__init__(orientation="vertical", padding=10, spacing=6)
         self._controller = controller
         self._editor = editor
         self._remote = remote
         self._on_back = on_back
+        self._open_media = open_media
 
         self.header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         back = Button(text="< Indietro", size_hint_x=None, width=120)
@@ -84,12 +85,16 @@ class EditorScreen(BoxLayout):
         down.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, 1), rebuild=True))
         groups = Button(text="Gruppi", size_hint_x=None, width=90)
         groups.bind(on_release=lambda _, i=indice: self._group_popup(i))
+        video = Button(text="Video&Frame", size_hint_x=None, width=120)
+        if self._open_media is not None:
+            video.bind(on_release=lambda _, i=indice: self._open_media(self._editor, i))
         delete = Button(text="Elimina", size_hint_x=None, width=90)
         delete.bind(on_release=lambda *_: self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True))
         title.add_widget(spacer)
         title.add_widget(up)
         title.add_widget(down)
         title.add_widget(groups)
+        title.add_widget(video)
         title.add_widget(delete)
         block.add_widget(title)
 

@@ -171,9 +171,25 @@ def extract_frame(
     Se ffmpeg fallisce con 403 (YouTube rifiuta il client http di ffmpeg),
     ritenta scaricando lo stream via Python http con gli stessi header di
     yt-dlp su file temporaneo e riestraendo localmente.
+
+    Il backend può anche essere un extractor completo (oggetto con metodo
+    ``extract(stream_url, timestamp_seconds, output_path, http_headers)``):
+    è il caso del dispositivo Android, dove non esiste il binario ffmpeg e
+    l'estrazione avviene via API native (MediaMetadataRetriever). In questo
+    caso il comando ffmpeg non viene mai costruito.
     """
 
     backend = ffmpeg_backend or PcFfmpegBackend()
+
+    extractor = getattr(backend, "extract", None)
+    if callable(extractor):
+        extractor(stream_url, timestamp_seconds, output_path, http_headers or {})
+        if not (os.path.exists(output_path) and os.path.getsize(output_path) > 0):
+            raise FrameExtractionError(
+                f"L'extractor del backend non ha prodotto alcun file per il frame "
+                f"al secondo {timestamp_seconds}."
+            )
+        return output_path
 
     def _run_ffmpeg(input_path: str, use_headers: bool) -> subprocess.CompletedProcess:
         cmd = ["ffmpeg", "-ss", str(timestamp_seconds)]

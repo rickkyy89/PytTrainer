@@ -54,8 +54,23 @@ class SchedaEditorController:
         return self._percorso
 
     @property
+    def cartella_lavoro(self) -> str | None:
+        return self._lavoro
+
+    def output_frames(self) -> str:
+        """Frames directory of this bundle (ticket 07 extraction target)."""
+        if not self._lavoro:
+            raise EditorValidationError("Editor senza cartella di lavoro: frame non gestibili.")
+        from core.scheda_file import cartella_frames
+        return cartella_frames(self._lavoro)
+
+    @property
     def sporco(self) -> bool:
         return self._dirty
+
+    def marca_modifica(self) -> None:
+        """Flag external mutations (video & frame flow of ticket 07) as unsaved."""
+        self._dirty = True
 
     @property
     def titolo(self) -> str | None:

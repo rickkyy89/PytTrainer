@@ -55,8 +55,16 @@ def run() -> None:
     from kivy.uix.textinput import TextInput
 
     from .editor_screen import EditorScreen
+    from .media import MediaFlowController
+    from .media_screen import MediaScreen
 
     controller = build_controller()
+    if sys.platform == "android":
+        from .platform_android import AndroidFrameExtractor
+        media_backend = AndroidFrameExtractor()
+    else:
+        from core.platform import PcFfmpegBackend
+        media_backend = PcFfmpegBackend()
 
     class PyTrainerApp(App):
         def build(self):
@@ -91,8 +99,26 @@ def run() -> None:
             except HomeUnavailableError as exc:
                 self.status.text = str(exc)
                 return
+            self.show_editor(remote, editor)
+
+        def show_editor(self, remote, editor):
             self.stack.clear_widgets()
-            self.stack.add_widget(EditorScreen(controller, editor, remote, on_back=self.show_home))
+            self.stack.add_widget(EditorScreen(
+                controller, editor, remote, on_back=self.show_home,
+                open_media=lambda ed, i: self.open_media(remote, ed, i),
+            ))
+
+        def open_media(self, remote, editor, indice):
+            try:
+                media = MediaFlowController(
+                    editor.esercizi[indice], editor.output_frames(),
+                    backend=media_backend, on_change=editor.marca_modifica,
+                )
+            except Exception as exc:  # EditorValidationError e simili
+                self.status.text = str(exc)
+                return
+            self.stack.clear_widgets()
+            self.stack.add_widget(MediaScreen(media, on_back=lambda: self.show_editor(remote, editor)))
 
         def refresh(self):
             self.listing.clear_widgets()
