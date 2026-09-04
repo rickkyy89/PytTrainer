@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+from kivy.metrics import dp
+from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.gridlayout import GridLayout
@@ -40,16 +42,16 @@ class EditorScreen(BoxLayout):
         self._on_export = on_export
         self._on_conflict_exit = on_conflict_exit or (lambda message: self._on_back())
 
-        self.header = BoxLayout(size_hint_y=None, height=44, spacing=8)
-        back = Button(text="< Indietro", size_hint_x=None, width=120)
+        self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        back = Button(text="< Indietro", size_hint_x=None, width=dp(120))
         back.bind(on_release=lambda *_: self._on_back())
         self.status = Label(text="", halign="left", valign="middle",
                             shorten=True, shorten_from="right")
         self.status.bind(
             width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
-        save_locale = Button(text="Salva solo locale", size_hint_x=None, width=160)
+        save_locale = Button(text="Salva solo locale", size_hint_x=None, width=dp(160))
         save_locale.bind(on_release=lambda *_: self._save(sincronizza=False))
-        save = Button(text="Salva su Drive", size_hint_x=None, width=140)
+        save = Button(text="Salva su Drive", size_hint_x=None, width=dp(140))
         save.bind(on_release=lambda *_: self._save())
         self.header.add_widget(back)
         self.header.add_widget(self.status)
@@ -57,13 +59,13 @@ class EditorScreen(BoxLayout):
         self.header.add_widget(save)
         self.add_widget(self.header)
 
-        self.rows = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
+        self.rows = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
         self.rows.bind(minimum_height=self.rows.setter("height"))
         scroll = ScrollView()
         scroll.add_widget(self.rows)
         self.add_widget(scroll)
 
-        tools = BoxLayout(size_hint_y=None, height=48, spacing=8)
+        tools = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         add = Button(text="Aggiungi esercizio")
         add.bind(on_release=lambda *_: self._wrap(self._editor.aggiungi, rebuild=True))
         csv = Button(text="Importa CSV")
@@ -74,7 +76,7 @@ class EditorScreen(BoxLayout):
         tools.add_widget(csv)
         tools.add_widget(scheda)
         if self._on_export is not None:
-            export = Button(text="Genera Google Doc", size_hint_x=None, width=170)
+            export = Button(text="Genera Google Doc", size_hint_x=None, width=dp(170))
             export.bind(on_release=lambda *_: self._on_export(self._editor))
             tools.add_widget(export)
         self.add_widget(tools)
@@ -88,25 +90,25 @@ class EditorScreen(BoxLayout):
         self._refresh_status()
 
     def _exercise_block(self, indice, esercizio):
-        block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=6, padding=8)
+        block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(8))
         block.bind(minimum_height=block.setter("height"))
 
-        header = BoxLayout(size_hint_y=None, height=40, spacing=6)
+        header = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
         titolo = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
                        halign="left", valign="middle", shorten=True, shorten_from="right")
         titolo.bind(width=lambda _, v, l=titolo: setattr(l, "text_size", (v, l.height)))
-        up = Button(text="Su", size_hint_x=None, width=60)
+        up = Button(text="Su", size_hint_x=None, width=dp(60))
         up.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, -1), rebuild=True))
-        down = Button(text="Giù", size_hint_x=None, width=60)
+        down = Button(text="Giù", size_hint_x=None, width=dp(60))
         down.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, 1), rebuild=True))
-        goto = Button(text="Vai a…", size_hint_x=None, width=80)
+        goto = Button(text="Vai a…", size_hint_x=None, width=dp(80))
         goto.bind(on_release=lambda _, i=indice: self._vai_a(i))
-        groups = Button(text="Gruppi", size_hint_x=None, width=90)
+        groups = Button(text="Gruppi", size_hint_x=None, width=dp(90))
         groups.bind(on_release=lambda _, i=indice: self._group_popup(i))
-        video = Button(text="Video&Frame", size_hint_x=None, width=120)
+        video = Button(text="Video&Frame", size_hint_x=None, width=dp(120))
         if self._open_media is not None:
             video.bind(on_release=lambda _, i=indice: self._open_media(self._editor, i))
-        delete = Button(text="Elimina", size_hint_x=None, width=90)
+        delete = Button(text="Elimina", size_hint_x=None, width=dp(90))
         delete.bind(on_release=lambda *_: self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True))
         header.add_widget(titolo)
         header.add_widget(up)
@@ -117,22 +119,23 @@ class EditorScreen(BoxLayout):
         header.add_widget(delete)
         block.add_widget(header)
 
-        griglia = GridLayout(cols=4, spacing=(10, 6), size_hint_y=None,
-                             row_default_height=40, row_force_default=True)
+        griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
+                             row_default_height=dp(40), row_force_default=True)
 
         def ricalcola_griglia(*_, g=griglia, b=block):
-            largo = max(b.width, 1)
-            per_riga = 4 if largo >= 1200 else 3 if largo >= 900 else 2 if largo >= 620 else 1
+            densita = getattr(Window, "density", None) or 1.0
+            largo_dp = max(b.width, 1) / densita
+            per_riga = 4 if largo_dp >= 1200 else 3 if largo_dp >= 900 else 2 if largo_dp >= 620 else 1
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
-            g.height = righe * 40 + (righe - 1) * 6
+            g.height = righe * dp(40) + (righe - 1) * dp(6)
         block.bind(width=ricalcola_griglia)
         for chiave, etichetta in CAMPI_BREVI:
-            cella = BoxLayout(spacing=4)
-            etichetta_label = Label(text=etichetta, size_hint_x=None, width=95,
+            cella = BoxLayout(spacing=dp(4))
+            etichetta_label = Label(text=etichetta, size_hint_x=None, width=dp(95),
                                     halign="left", valign="middle")
             etichetta_label.bind(
-                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, 40)))
+                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, dp(40))))
             cella.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
                               hint_text=etichetta)
@@ -142,15 +145,15 @@ class EditorScreen(BoxLayout):
         block.add_widget(griglia)
 
         for chiave, etichetta in CAMPI_LUNGHI:
-            box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=2)
+            box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(2))
             box.bind(minimum_height=box.setter("height"))
-            etichetta_label = Label(text=etichetta, size_hint_y=None, height=20,
+            etichetta_label = Label(text=etichetta, size_hint_y=None, height=dp(20),
                                     halign="left", valign="middle")
             etichetta_label.bind(
                 width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, l.height)))
             box.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=True,
-                              hint_text=etichetta, size_hint_y=None, height=90)
+                              hint_text=etichetta, size_hint_y=None, height=dp(90))
             campo.bind(focus=self._field_handler(indice, chiave, campo))
             box.add_widget(campo)
             block.add_widget(box)
