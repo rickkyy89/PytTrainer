@@ -67,7 +67,7 @@ def run() -> None:
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
     from .home_layout import home_plan, readonly_card
-    from .material import profile_for_window
+    from .material import profile_for_window, hex_to_rgba
     from .theme import applica_tema
 
     controller = build_controller()
@@ -284,8 +284,10 @@ def run() -> None:
                 if gruppo != gruppo_corrente:
                     gruppo_corrente = gruppo
                     if gruppo:
+                        sezione = int(profile.tokens.typography["section"])
+                        accent = profile.tokens.colors["accent"].lstrip("#")
                         contenuto.add_widget(_label_righe(
-                            f"[b][color=62c0a2][size=19]"
+                            f"[b][color={accent}][size={sezione}]"
                             f"{escape_markup(gruppo.upper())}[/size][/color][/b]", contenuto))
                 contenuto.add_widget(self._card_lettura(exercise))
             if home_plan(profile).master_detail:
@@ -314,26 +316,31 @@ def run() -> None:
         def _card_lettura(self, exercise):
             profile = _ui_profile()
             model = readonly_card(exercise, profile)
+            tokens = profile.tokens
+            body = int(tokens.typography["body"])
+            accent = tokens.colors["accent"].lstrip("#")
+            muted = tokens.colors["muted"].lstrip("#")
             card = BoxLayout(orientation="vertical", size_hint_y=None,
-                             spacing=profile.tokens.spacing["xs"], padding=profile.tokens.spacing["sm"])
+                             spacing=tokens.spacing["xs"], padding=tokens.spacing["sm"])
             card.bind(minimum_height=card.setter("height"))
-            titolo = f"[b][size=20]{escape_markup(exercise.name or '(senza nome)')}[/size][/b]"
+            titolo = (f"[b][size={body + 4}]{escape_markup(exercise.name or '(senza nome)')}"
+                      "[/size][/b]")
             if exercise.repetitions:
-                titolo += f"   [size=17]{escape_markup(exercise.repetitions)}[/size]"
+                titolo += f"   [size={body + 1}]{escape_markup(exercise.repetitions)}[/size]"
             if exercise.recovery:
-                titolo += (f"   [size=17][color=62c0a2]"
+                titolo += (f"   [size={body + 1}][color={accent}]"
                            f"{escape_markup(exercise.recovery)}[/color][/size]")
             card.add_widget(_label_righe(titolo, card))
             if (exercise.explanation or "").strip():
                 card.add_widget(_label_righe(
-                    f"[color=b3b3b3][size=15]{escape_markup(exercise.explanation)}"
+                    f"[color={muted}][size={body}]{escape_markup(exercise.explanation)}"
                     "[/size][/color]", card))
             if (exercise.notes or "").strip():
                 card.add_widget(_label_righe(
-                    f"[i][color=b3b3b3][size=15]Note: {escape_markup(exercise.notes)}"
+                    f"[i][color={muted}][size={body}]Note: {escape_markup(exercise.notes)}"
                     "[/size][/color][/i]", card))
             frames = BoxLayout(orientation=model.frame_axis, size_hint_y=None,
-                               height=260 if model.frame_axis == "horizontal" else 520, spacing=6)
+                               height=tokens.dimensions["frame_min_height"], spacing=6)
             for percorso in (exercise.frame_start, exercise.frame_finish):
                 if percorso:
                     image = Image(source=percorso, fit_mode="contain")
@@ -345,7 +352,8 @@ def run() -> None:
                 else:
                     vuoto = BoxLayout()
                     vuoto.add_widget(Label(text="frame non estratto",
-                                           font_size="14sp", color=(0.5, 0.5, 0.5, 1)))
+                                           font_size=f"{int(tokens.typography['caption'])}sp",
+                                           color=hex_to_rgba(tokens.colors["muted"])))
                     frames.add_widget(vuoto)
             card.add_widget(frames)
             return card
