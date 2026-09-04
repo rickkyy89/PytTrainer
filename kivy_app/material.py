@@ -98,6 +98,17 @@ def adaptive_profile(metrics: ViewportMetrics, scale: ScaleChoice = "auto") -> U
     )
 
 
+def profile_for_window(window, *, input_mode: InputMode = "pointer",
+                       scale: ScaleChoice = "auto") -> UiProfile:
+    """Kivy adapter kept at the seam; screens do not read density themselves."""
+    density = getattr(window, "density", None) or 1.0
+    return adaptive_profile(
+        ViewportMetrics(window.width / density, window.height / density,
+                        density, input_mode),
+        scale,
+    )
+
+
 def _tokens(target: float) -> UiTokens:
     return UiTokens(
         colors={
