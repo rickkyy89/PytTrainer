@@ -6,7 +6,7 @@
 
 **Blocked by:** 02 — Implementare Undo/Redo dell'editor; 04 — Progettare Undo transazionale dei media
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] URL e timestamp possono essere annullati e ripristinati.
 - [ ] Crop, import immagine e sostituzione frame ripristinano anche i contenuti dei file corretti.

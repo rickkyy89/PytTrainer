@@ -199,7 +199,8 @@ def test_salva_propaga_il_conflitto_e_mantiene_le_modifiche_pendenti():
 
     editor.aggiorna(0, note="Esplosive.")
     assert editor.salva() is conflict
-    assert editor.sporco is True
+    assert editor.sporco is False
+    assert editor.non_sincronizzato is True
 
 
 def test_upload_fallito_lascia_il_bundle_salvato_e_lo_stato_sporco(tmp_path):
@@ -212,7 +213,25 @@ def test_upload_fallito_lascia_il_bundle_salvato_e_lo_stato_sporco(tmp_path):
     with pytest.raises(OSError):
         editor.salva()
     assert bundle.exists()
-    assert editor.sporco is True
+    assert editor.sporco is False
+    assert editor.non_sincronizzato is True
+
+
+def test_checkpoint_locale_svuota_cronologia_e_scarta_ripristina_checkpoint(tmp_path):
+    editor = make_editor(
+        percorso_bundle=str(tmp_path / "s.scheda"),
+        save_scheda=lambda esercizi, path, state_path=None, titolo=None: Path(path).write_bytes(b"zip"),
+        upload=None,
+    )
+    editor.aggiorna(0, note="Checkpoint")
+    editor.salva_locale()
+    assert editor.sporco is False
+    assert editor.can_undo is False
+
+    editor.aggiorna(0, note="Da scartare")
+    editor.discard()
+    assert editor.esercizi[0]["note"] == "Checkpoint"
+    assert editor.sporco is False
 
 
 def test_sposta_alla_riordina_senza_spostare_gli_altri():

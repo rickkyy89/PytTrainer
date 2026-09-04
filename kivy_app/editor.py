@@ -67,6 +67,7 @@ class SchedaEditorController:
         self._non_sync = False
         self._undo_stack = []
         self._redo_stack = []
+        self._checkpoint = deepcopy(esercizi)
 
     @property
     def can_undo(self) -> bool:
@@ -87,7 +88,7 @@ class SchedaEditorController:
         comando = self._undo_stack.pop()
         comando.undo()
         self._redo_stack.append(comando)
-        self._dirty = True
+        self._dirty = self._esercizi != self._checkpoint
         return True
 
     def redo(self) -> bool:
@@ -96,8 +97,18 @@ class SchedaEditorController:
         comando = self._redo_stack.pop()
         comando.redo()
         self._undo_stack.append(comando)
-        self._dirty = True
+        self._dirty = self._esercizi != self._checkpoint
         return True
+
+    def restore_checkpoint(self) -> None:
+        """Restore the last successful local save without uploading it."""
+        self._esercizi[:] = deepcopy(self._checkpoint)
+        self._clear_history()
+        self._dirty = False
+
+    def discard(self) -> None:
+        """Discard in-memory changes; the caller may then leave the screen."""
+        self.restore_checkpoint()
 
     @property
     def esercizi(self) -> list[dict]:
@@ -136,6 +147,8 @@ class SchedaEditorController:
         """Clear the dirty flag once an out-of-band conflict resolution synced the bundle."""
         self._dirty = False
         self._non_sync = False
+        self._checkpoint = deepcopy(self._esercizi)
+        self._clear_history()
 
     @property
     def titolo(self) -> str | None:
@@ -289,20 +302,33 @@ class SchedaEditorController:
             state_path = str(candidato) if candidato.exists() else None
         self._save_scheda(self._esercizi, self._percorso, state_path=state_path,
                           titolo=self._titolo)
+        self._checkpoint = deepcopy(self._esercizi)
+        self._clear_history()
+        self._dirty = False
         if not sincronizza:
-            self._dirty = False
             self._non_sync = True
             return None
         if self._upload is None:
-            self._dirty = False
+            self._non_sync = False
             return None
-        risultato = self._upload(self._percorso)
+        try:
+            risultato = self._upload(self._percorso)
+        except Exception:
+            self._non_sync = True
+            raise
         if isinstance(risultato, SyncConflict):
             self._non_sync = True
         else:
-            self._dirty = False
             self._non_sync = False
         return risultato
+
+    def salva_locale(self):
+        """Create a local checkpoint and leave Drive untouched."""
+        return self.salva(sincronizza=False)
+
+    def salva_drive(self):
+        """Create a local checkpoint, then upload it to Drive."""
+        return self.salva(sincronizza=True)
 
     @classmethod
     def da_bundle(cls, esercizi: list[dict], percorso_bundle: str, cartella_lavoro: str,
@@ -341,3 +367,11 @@ class SchedaEditorController:
             self._undo_stack.pop(0).release()
         self._dirty = True
         return risultato
+
+    def _clear_history(self):
+        for comando in self._undo_stack:
+            comando.release()
+        for comando in self._redo_stack:
+            comando.release()
+        self._undo_stack.clear()
+        self._redo_stack.clear()

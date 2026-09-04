@@ -48,6 +48,7 @@ def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeControll
 def run() -> None:
     """Run the small PC Kivy shell without exposing Kivy to pytest imports."""
     from kivy.app import App
+    from kivy.core.window import Window
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.button import Button
     from kivy.uix.image import Image
@@ -115,10 +116,13 @@ def run() -> None:
             self.home.add_widget(self.home_body)
             self.stack.add_widget(self.home)
             self._ultime_schede = []
+            self._editor_view = None
+            Window.bind(on_request_close=self._on_request_close)
             self.show_home()
             return self.stack
 
         def show_home(self):
+            self._editor_view = None
             self.stack.clear_widgets()
             self.stack.add_widget(self.home)
             self._render_lista()
@@ -138,13 +142,22 @@ def run() -> None:
 
         def show_editor(self, remote, editor):
             self.stack.clear_widgets()
-            self.stack.add_widget(EditorScreen(
+            self._editor_view = EditorScreen(
                 controller, editor, remote,
                 on_back=lambda: self._torna_in_lettura(remote),
                 open_media=lambda ed, i: self.open_media(remote, ed, i),
                 on_export=lambda ed: self.open_export(remote, ed),
                 on_conflict_exit=self.go_home_message,
-            ))
+            )
+            self.stack.add_widget(self._editor_view)
+
+        def _on_request_close(self, *_):
+            if self._editor_view is None:
+                return False
+            if self._editor_view.modifiche_non_salvate:
+                self._editor_view.richiedi_uscita()
+                return True
+            return False
 
         def _torna_in_lettura(self, remote):
             self.show_home()

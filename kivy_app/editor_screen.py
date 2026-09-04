@@ -41,18 +41,17 @@ class EditorScreen(BoxLayout):
         self._open_media = open_media
         self._on_export = on_export
         self._on_conflict_exit = on_conflict_exit or (lambda message: self._on_back())
+        self._fields = []
 
         self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
         back = Button(text="< Indietro", size_hint_x=None, width=dp(120))
-        back.bind(on_release=lambda *_: self._on_back())
+        back.bind(on_release=lambda *_: self.richiedi_uscita())
         self.status = Label(text="", halign="left", valign="middle",
                             shorten=True, shorten_from="right")
         self.status.bind(
             width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
-        save_locale = Button(text="Salva solo locale", size_hint_x=None, width=dp(160))
-        save_locale.bind(on_release=lambda *_: self._save(sincronizza=False))
-        save = Button(text="Salva su Drive", size_hint_x=None, width=dp(140))
-        save.bind(on_release=lambda *_: self._save())
+        save = Button(text="Salva", size_hint_x=None, width=dp(100))
+        save.bind(on_release=lambda *_: self.apri_salvataggio())
         undo = Button(text="Annulla", size_hint_x=None, width=dp(90))
         undo.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
         redo = Button(text="Ripeti", size_hint_x=None, width=dp(90))
@@ -61,7 +60,6 @@ class EditorScreen(BoxLayout):
         self.header.add_widget(self.status)
         self.header.add_widget(undo)
         self.header.add_widget(redo)
-        self.header.add_widget(save_locale)
         self.header.add_widget(save)
         self.add_widget(self.header)
         Window.bind(on_key_down=self._on_key_down)
@@ -90,8 +88,13 @@ class EditorScreen(BoxLayout):
 
         self._rebuild()
 
+    @property
+    def modifiche_non_salvate(self):
+        return self._editor.sporco
+
     def _rebuild(self):
         self.rows.clear_widgets()
+        self._fields.clear()
         for indice, esercizio in enumerate(self._editor.esercizi):
             self.rows.add_widget(self._exercise_block(indice, esercizio))
         self._refresh_status()
@@ -147,6 +150,7 @@ class EditorScreen(BoxLayout):
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
                               hint_text=etichetta)
             campo.bind(focus=self._field_handler(indice, chiave, campo))
+            self._fields.append(campo)
             cella.add_widget(campo)
             griglia.add_widget(cella)
         block.add_widget(griglia)
@@ -162,6 +166,7 @@ class EditorScreen(BoxLayout):
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=True,
                               hint_text=etichetta, size_hint_y=None, height=dp(90))
             campo.bind(focus=self._field_handler(indice, chiave, campo))
+            self._fields.append(campo)
             box.add_widget(campo)
             block.add_widget(box)
         return block
@@ -194,6 +199,46 @@ class EditorScreen(BoxLayout):
                 return
             self._wrap(lambda: self._editor.aggiorna(indice, **{chiave: valore}))
         return on_focus
+
+    def _commit_active_field(self):
+        for campo in self._fields:
+            if campo.focus:
+                campo.focus = False
+                return
+
+    def richiedi_uscita(self):
+        self._commit_active_field()
+        if not self._editor.sporco:
+            self._on_back()
+            return
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Modifiche non salvate", content=content,
+                      size_hint=(0.85, 0.35), auto_dismiss=False)
+        content.add_widget(Label(text="Vuoi salvare le modifiche prima di uscire?"))
+        actions = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        save = Button(text="Salva")
+        discard = Button(text="Scarta")
+        stay = Button(text="Resta")
+        save.bind(on_release=lambda *_: (popup.dismiss(), self.apri_salvataggio(chiudi=True)))
+        discard.bind(on_release=lambda *_: (popup.dismiss(), self._editor.discard(), self._on_back()))
+        stay.bind(on_release=lambda *_: popup.dismiss())
+        for button in (save, discard, stay):
+            actions.add_widget(button)
+        content.add_widget(actions)
+        popup.open()
+
+    def apri_salvataggio(self, chiudi=False):
+        self._commit_active_field()
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Salva scheda", content=content, size_hint=(0.8, 0.3),
+                      auto_dismiss=True)
+        locale = Button(text="Salva in locale")
+        drive = Button(text="Salva su Drive")
+        locale.bind(on_release=lambda *_: (popup.dismiss(), self._save(False, chiudi)))
+        drive.bind(on_release=lambda *_: (popup.dismiss(), self._save(True, chiudi)))
+        content.add_widget(locale)
+        content.add_widget(drive)
+        popup.open()
 
     def _group_popup(self, indice):
         gruppi = self._editor.gruppi_esistenti()
@@ -319,7 +364,8 @@ class EditorScreen(BoxLayout):
             lambda sostituisci, posizione: self._controller.import_remote_into(
                 self._editor, remote, sostituisci=sostituisci, posizione=posizione))
 
-    def _save(self, sincronizza=True):
+    def _save(self, sincronizza=True, chiudi=False):
+        self._commit_active_field()
         try:
             risultato = self._editor.salva(sincronizza=sincronizza)
         except EditorValidationError as exc:
@@ -332,6 +378,8 @@ class EditorScreen(BoxLayout):
             return
         if not sincronizza:
             self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
+            if chiudi:
+                self._on_back()
             return
         if isinstance(risultato, SyncConflict):
             from .conflict_dialog import apri_dialogo_conflitto
@@ -342,6 +390,8 @@ class EditorScreen(BoxLayout):
             self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
         else:
             self.status.text = "Salvato su Drive."
+            if chiudi:
+                self._on_back()
 
     def _esito_conflitto(self, choice, esito):
         if isinstance(esito, Exception):
@@ -367,10 +417,13 @@ class EditorScreen(BoxLayout):
             self._refresh_status()
 
     def _on_key_down(self, _window, key, _scancode, _codepoint, modifiers):
+        if key == 27:
+            self.richiedi_uscita()
+            return True
         if "ctrl" not in modifiers:
             return False
         if key == 115:  # Ctrl+S
-            self._save()
+            self.apri_salvataggio()
         elif key == 122:  # Ctrl+Z / Ctrl+Shift+Z
             self._wrap(self._editor.redo if "shift" in modifiers else self._editor.undo,
                        rebuild=True)
