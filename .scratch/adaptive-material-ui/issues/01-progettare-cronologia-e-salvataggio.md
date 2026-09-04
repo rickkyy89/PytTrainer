@@ -6,11 +6,13 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Il modello descrive comandi, undo, redo, nuova modifica dopo undo e limite FIFO di 20 azioni.
-- [ ] Sono definite le invarianti di modifiche non salvate, copia locale più recente e copia Drive sincronizzata.
-- [ ] È precisato che un checkpoint locale riuscito azzera la cronologia anche se il successivo upload Drive fallisce.
-- [ ] Sono definite le semantiche di Salva, Scarta, Resta e ripristino dell'ultimo checkpoint.
-- [ ] L'interfaccia condivisa copre modifiche testuali, strutturali e media senza esporre dettagli Kivy.
-- [ ] Una matrice di test e failure mode accompagna il contratto per il passaggio a Luna.
+- [x] Il modello descrive comandi, undo, redo, nuova modifica dopo undo e limite FIFO di 20 azioni.
+- [x] Sono definite le invarianti di modifiche non salvate, copia locale più recente e copia Drive sincronizzata.
+- [x] È precisato che un checkpoint locale riuscito azzera la cronologia anche se il successivo upload Drive fallisce.
+- [x] Sono definite le semantiche di Salva, Scarta, Resta e ripristino dell'ultimo checkpoint.
+- [x] L'interfaccia condivisa copre modifiche testuali, strutturali e media senza esporre dettagli Kivy.
+- [x] Una matrice di test e failure mode accompagna il contratto per il passaggio a Luna.
+
+**Deliverable:** [`../01-contratto-cronologia-salvataggio.md`](../01-contratto-cronologia-salvataggio.md)

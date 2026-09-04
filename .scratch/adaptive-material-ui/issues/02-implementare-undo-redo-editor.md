@@ -6,7 +6,7 @@
 
 **Blocked by:** 01 — Progettare transazioni, cronologia e ciclo di salvataggio
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Ogni campo genera una sola azione quando la modifica viene confermata uscendo dal campo.
 - [ ] Aggiunta, eliminazione, riordino, cambio gruppo e importazioni supportano undo e redo completi.
