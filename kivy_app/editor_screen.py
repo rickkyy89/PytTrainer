@@ -23,6 +23,8 @@ from core.drive_sync import SyncConflict
 
 from .editor import EditorValidationError
 from .file_picker import choose_file
+from .editor_layout import editor_layout
+from .material import profile_for_window
 
 
 CAMPI_BREVI = (("nome", "Nome"), ("gruppo", "Gruppo"),
@@ -42,6 +44,7 @@ class EditorScreen(BoxLayout):
         self._on_export = on_export
         self._on_conflict_exit = on_conflict_exit or (lambda message: self._on_back())
         self._fields = []
+        self._open_index = 0
 
         self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
         back = Button(text="< Indietro", size_hint_x=None, width=dp(120))
@@ -50,17 +53,8 @@ class EditorScreen(BoxLayout):
                             shorten=True, shorten_from="right")
         self.status.bind(
             width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
-        save = Button(text="Salva", size_hint_x=None, width=dp(100))
-        save.bind(on_release=lambda *_: self.apri_salvataggio())
-        undo = Button(text="Annulla", size_hint_x=None, width=dp(90))
-        undo.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
-        redo = Button(text="Ripeti", size_hint_x=None, width=dp(90))
-        redo.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
         self.header.add_widget(back)
         self.header.add_widget(self.status)
-        self.header.add_widget(undo)
-        self.header.add_widget(redo)
-        self.header.add_widget(save)
         self.add_widget(self.header)
         Window.bind(on_key_down=self._on_key_down)
 
@@ -86,6 +80,19 @@ class EditorScreen(BoxLayout):
             tools.add_widget(export)
         self.add_widget(tools)
 
+        # Undo, redo and save stay reachable while the form scrolls.
+        action_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        action_profile = profile_for_window(Window, input_mode="touch")
+        undo_bar = Button(text="Annulla", size_hint_x=None, width=action_profile.touch_target * 2)
+        undo_bar.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
+        redo_bar = Button(text="Ripeti", size_hint_x=None, width=action_profile.touch_target * 2)
+        redo_bar.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
+        save_bar = Button(text="Salva", size_hint_x=None, width=action_profile.touch_target * 2)
+        save_bar.bind(on_release=lambda *_: self.apri_salvataggio())
+        for button in (undo_bar, redo_bar, save_bar):
+            action_bar.add_widget(button)
+        self.add_widget(action_bar)
+
         self._rebuild()
 
     @property
@@ -102,11 +109,16 @@ class EditorScreen(BoxLayout):
     def _exercise_block(self, indice, esercizio):
         block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(8))
         block.bind(minimum_height=block.setter("height"))
+        profile = profile_for_window(Window, input_mode="touch")
+        layout = editor_layout(profile)
 
         header = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
         titolo = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
                        halign="left", valign="middle", shorten=True, shorten_from="right")
         titolo.bind(width=lambda _, v, l=titolo: setattr(l, "text_size", (v, l.height)))
+        toggle = Button(text="Chiudi" if indice == self._open_index else "Apri",
+                        size_hint_x=None, width=dp(70))
+        toggle.bind(on_release=lambda *_: self._toggle_exercise(indice))
         up = Button(text="Su", size_hint_x=None, width=dp(60))
         up.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, -1), rebuild=True))
         down = Button(text="Giù", size_hint_x=None, width=dp(60))
@@ -121,6 +133,7 @@ class EditorScreen(BoxLayout):
         delete = Button(text="Elimina", size_hint_x=None, width=dp(90))
         delete.bind(on_release=lambda _, i=indice: self._confirm_delete(i))
         header.add_widget(titolo)
+        header.add_widget(toggle)
         header.add_widget(up)
         header.add_widget(down)
         header.add_widget(goto)
@@ -129,26 +142,33 @@ class EditorScreen(BoxLayout):
         header.add_widget(delete)
         block.add_widget(header)
 
+        if indice != self._open_index:
+            return block
+
+        if indice != self._open_index:
+            return block
+
         griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
                              row_default_height=dp(40), row_force_default=True)
 
         def ricalcola_griglia(*_, g=griglia, b=block):
-            densita = getattr(Window, "density", None) or 1.0
-            largo_dp = max(b.width, 1) / densita
+            largo_dp = max(b.width, 1) / profile.viewport.system_density
             per_riga = 4 if largo_dp >= 1200 else 3 if largo_dp >= 900 else 2 if largo_dp >= 620 else 1
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
             g.height = righe * dp(40) + (righe - 1) * dp(6)
         block.bind(width=ricalcola_griglia)
         for chiave, etichetta in CAMPI_BREVI:
-            cella = BoxLayout(spacing=dp(4))
-            etichetta_label = Label(text=etichetta, size_hint_x=None, width=dp(95),
+            cella = BoxLayout(orientation="vertical" if layout.labels_above else "horizontal", spacing=dp(4))
+            etichetta_label = Label(text=etichetta, size_hint_x=1 if layout.labels_above else None,
+                                    width=0 if layout.labels_above else dp(95),
                                     halign="left", valign="middle")
             etichetta_label.bind(
                 width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, dp(40))))
             cella.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
-                              hint_text=etichetta)
+                              hint_text=etichetta, size_hint_y=None if layout.labels_above else 1,
+                              height=dp(48) if layout.labels_above else None)
             campo.bind(focus=self._field_handler(indice, chiave, campo))
             self._fields.append(campo)
             cella.add_widget(campo)
@@ -170,6 +190,10 @@ class EditorScreen(BoxLayout):
             box.add_widget(campo)
             block.add_widget(box)
         return block
+
+    def _toggle_exercise(self, indice):
+        self._open_index = -1 if indice == self._open_index else indice
+        self._rebuild()
 
     def _confirm_delete(self, indice):
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
