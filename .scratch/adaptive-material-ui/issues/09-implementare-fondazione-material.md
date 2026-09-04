@@ -6,12 +6,14 @@
 
 **Blocked by:** 08 — Progettare il modulo adattivo Material
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Le schermate possono ottenere profilo, orientamento, scala e token da una sola interfaccia.
-- [ ] Il tema usa superfici dark, accento verde acqua, contrasto leggibile, bordi sobri e nessuna animazione.
-- [ ] Font e icone bundled rendono in modo coerente su Android e Windows.
-- [ ] Sono disponibili primitive Material per testo auto-height, pulsanti, campi, card, toolbar, menu e dialoghi.
-- [ ] Impostazioni offre Auto, 100%, 115% e 130% e conserva la scelta localmente.
-- [ ] Il cambio scala o viewport aggiorna la UI senza riavvio e senza leggere densità direttamente nelle schermate.
-- [ ] Test unitari coprono classificazione profili, token e persistenza preferenze.
+- [x] Le schermate possono ottenere profilo, orientamento, scala e token da una sola interfaccia.
+- [x] Il tema usa superfici dark, accento verde acqua, contrasto leggibile, bordi sobri e nessuna animazione.
+- [x] Font e icone bundled rendono in modo coerente su Android e Windows.
+- [x] Sono disponibili primitive Material per testo auto-height, pulsanti, campi, card, toolbar, menu e dialoghi.
+- [x] Impostazioni offre Auto, 100%, 115% e 130% e conserva la scelta localmente.
+- [x] Il cambio scala o viewport aggiorna la UI senza riavvio e senza leggere densità direttamente nelle schermate.
+- [x] Test unitari coprono classificazione profili, token e persistenza preferenze.
+
+**Deliverable:** `kivy_app/material.py` e `tests/test_material.py`

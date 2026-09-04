@@ -6,7 +6,7 @@
 
 **Blocked by:** 09 — Implementare fondazione Material e preferenze
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Il harness copre almeno 400dp compatto, tablet portrait, tablet landscape simulato e desktop Windows.
 - [ ] Ogni profilo viene verificato a scala standard e 130%.
