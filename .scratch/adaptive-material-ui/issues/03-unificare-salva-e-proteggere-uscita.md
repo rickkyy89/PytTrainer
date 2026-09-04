@@ -6,7 +6,7 @@
 
 **Blocked by:** 01 — Progettare transazioni, cronologia e ciclo di salvataggio; 02 — Implementare Undo/Redo dell'editor
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Salva mostra sempre le scelte Locale e Drive; Drive salva prima il bundle locale e poi esegue l'upload.
 - [ ] Un checkpoint locale riuscito azzera undo/redo; un upload fallito lascia visibile lo stato da sincronizzare.

@@ -9,6 +9,7 @@ verbatim for the UI (ticket 10 decides the resolution policy).
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
@@ -29,6 +30,26 @@ class EditorValidationError(Exception):
     """A user-facing edit or save that the editor refuses to perform."""
 
 
+class _SnapshotCommand:
+    """Reversible manifest mutation owned by the editor history."""
+
+    def __init__(self, target, before, after):
+        self._target = target
+        self._before = before
+        self._after = after
+
+    def undo(self):
+        self._target[:] = deepcopy(self._before)
+
+    def redo(self):
+        self._target[:] = deepcopy(self._after)
+
+    def release(self):
+        self._target = None
+        self._before = None
+        self._after = None
+
+
 class SchedaEditorController:
     """In-memory editing of the exercises of one bundle plus its save flow."""
 
@@ -44,6 +65,39 @@ class SchedaEditorController:
         self._path_cls = path_cls
         self._dirty = False
         self._non_sync = False
+        self._undo_stack = []
+        self._redo_stack = []
+
+    @property
+    def can_undo(self) -> bool:
+        return bool(self._undo_stack)
+
+    @property
+    def can_redo(self) -> bool:
+        return bool(self._redo_stack)
+
+    @property
+    def cronologia_dimensione(self) -> int:
+        """Number of undoable editor actions currently retained."""
+        return len(self._undo_stack)
+
+    def undo(self) -> bool:
+        if not self._undo_stack:
+            return False
+        comando = self._undo_stack.pop()
+        comando.undo()
+        self._redo_stack.append(comando)
+        self._dirty = True
+        return True
+
+    def redo(self) -> bool:
+        if not self._redo_stack:
+            return False
+        comando = self._redo_stack.pop()
+        comando.redo()
+        self._undo_stack.append(comando)
+        self._dirty = True
+        return True
 
     @property
     def esercizi(self) -> list[dict]:
@@ -91,38 +145,41 @@ class SchedaEditorController:
         non_locali = set(campi) - set(CAMPI_EDITABILI)
         if non_locali:
             raise EditorValidationError(f"Campo non modificabile: {sorted(non_locali)[0]}.")
-        esercizio = self._esame(indice)
-        for chiave, valore in campi.items():
-            esercizio[chiave] = str(valore)
-        self._dirty = True
+        def operation():
+            esercizio = self._esame(indice)
+            for chiave, valore in campi.items():
+                esercizio[chiave] = str(valore)
+
+        self._modifica(operation)
 
     def aggiungi(self, dopo: int | None = None) -> int:
         """Insert a blank exercise after ``dopo`` (or append) and return its index."""
-        nuovo = dict(ESERCIZIO_VUOTO)
-        if dopo is None:
-            self._esercizi.append(nuovo)
-            self._dirty = True
-            return len(self._esercizi) - 1
-        self._esame(dopo)
-        self._esercizi.insert(dopo + 1, nuovo)
-        self._dirty = True
-        return dopo + 1
+        indice = len(self._esercizi) if dopo is None else dopo + 1
+
+        def operation():
+            if dopo is not None:
+                self._esame(dopo)
+            self._esercizi.insert(indice, dict(ESERCIZIO_VUOTO))
+            return indice
+
+        return self._modifica(operation)
 
     def rimuovi(self, indice: int) -> None:
-        self._esame(indice)
-        del self._esercizi[indice]
-        self._dirty = True
+        self._modifica(lambda: self._esercizi.pop(self._indice_valido(indice)))
 
     def sposta(self, indice: int, verso: int) -> int:
         """Swap with the neighbour (-1 su, +1 giu); returns the new index."""
-        self._esame(indice)
         destinatario = indice + verso
+        self._esame(indice)
         if destinatario < 0 or destinatario >= len(self._esercizi):
             return indice
-        esercizi = self._esercizi
-        esercizi[indice], esercizi[destinatario] = esercizi[destinatario], esercizi[indice]
-        self._dirty = True
-        return destinatario
+
+        def operation():
+            self._esercizi[indice], self._esercizi[destinatario] = (
+                self._esercizi[destinatario], self._esercizi[indice])
+            return destinatario
+
+        return self._modifica(operation)
 
     def sposta_alla(self, indice: int, destinazione: int) -> int:
         """Ricolloca l'esercizio alla posizione assoluta ``destinazione`` (0-based).
@@ -139,10 +196,12 @@ class SchedaEditorController:
             )
         if indice == destinazione:
             return indice
-        esercizio = self._esercizi.pop(indice)
-        self._esercizi.insert(destinazione, esercizio)
-        self._dirty = True
-        return destinazione
+        def operation():
+            esercizio = self._esercizi.pop(indice)
+            self._esercizi.insert(destinazione, esercizio)
+            return destinazione
+
+        return self._modifica(operation)
 
     def gruppi_esistenti(self) -> list[str]:
         """Distinct non-empty group names, in first-appearance order."""
@@ -192,19 +251,21 @@ class SchedaEditorController:
 
     def importa_esercizi(self, esercizi: list[dict], *, sostituisci: bool = False,
                          posizione: int | None = None) -> None:
-        if sostituisci:
-            self._esercizi[:] = [dict(esercizio) for esercizio in esercizi]
-        elif posizione is None:
-            self._esercizi.extend(dict(esercizio) for esercizio in esercizi)
-        else:
-            if posizione < 0 or posizione > len(self._esercizi):
-                raise EditorValidationError(
-                    f"Posizione di inserimento non valida: {posizione + 1} "
-                    f"(1-{len(self._esercizi) + 1})."
-                )
-            for offset, esercizio in enumerate(esercizi):
-                self._esercizi.insert(posizione + offset, dict(esercizio))
-        self._dirty = True
+        def operation():
+            if sostituisci:
+                self._esercizi[:] = [dict(esercizio) for esercizio in esercizi]
+            elif posizione is None:
+                self._esercizi.extend(dict(esercizio) for esercizio in esercizi)
+            else:
+                if posizione < 0 or posizione > len(self._esercizi):
+                    raise EditorValidationError(
+                        f"Posizione di inserimento non valida: {posizione + 1} "
+                        f"(1-{len(self._esercizi) + 1})."
+                    )
+                for offset, esercizio in enumerate(esercizi):
+                    self._esercizi.insert(posizione + offset, dict(esercizio))
+
+        self._modifica(operation)
 
     def salva(self, sincronizza: bool = True):
         """Rewrite the bundle and (optionally) upload it.
@@ -256,3 +317,27 @@ class SchedaEditorController:
             return self._esercizi[indice]
         except IndexError as exc:
             raise EditorValidationError(f"Indice esercizio non valido: {indice + 1}.") from exc
+
+    def _indice_valido(self, indice: int) -> int:
+        self._esame(indice)
+        return indice
+
+    def _modifica(self, operation):
+        """Run one editor mutation and record it as one reversible action."""
+        prima = deepcopy(self._esercizi)
+        try:
+            risultato = operation()
+        except Exception:
+            self._esercizi[:] = prima
+            raise
+        dopo = deepcopy(self._esercizi)
+        if prima == dopo:
+            return risultato
+        for comando in self._redo_stack:
+            comando.release()
+        self._redo_stack.clear()
+        self._undo_stack.append(_SnapshotCommand(self._esercizi, prima, dopo))
+        if len(self._undo_stack) > 20:
+            self._undo_stack.pop(0).release()
+        self._dirty = True
+        return risultato

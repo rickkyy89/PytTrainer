@@ -66,6 +66,48 @@ def test_add_remove_and_reorder_keep_list_order_and_dirty_flag():
         editor.rimuovi(5)
 
 
+def test_editor_undo_redo_covers_mixed_mutations_and_new_branch():
+    editor = make_editor()
+    editor.aggiorna(0, nome="Squat profondo")
+    editor.aggiungi()
+    editor.aggiorna(2, nome="Pressa")
+    editor.sposta(2, -1)
+    assert [e["nome"] for e in editor.esercizi] == ["Squat profondo", "Pressa", "Affondo"]
+
+    assert editor.undo() is True
+    assert [e["nome"] for e in editor.esercizi] == ["Squat profondo", "Affondo", "Pressa"]
+    assert editor.undo() is True
+    assert [e["nome"] for e in editor.esercizi] == ["Squat profondo", "Affondo", ""]
+    assert editor.redo() is True
+    assert editor.esercizi[2]["nome"] == "Pressa"
+
+    editor.aggiorna(0, note="Nuova versione")
+    assert editor.can_redo is False
+    assert editor.redo() is False
+    assert editor.esercizi[0]["note"] == "Nuova versione"
+
+
+def test_editor_history_is_capped_at_twenty_actions():
+    editor = make_editor()
+    for indice in range(21):
+        editor.aggiorna(0, note=str(indice))
+
+    assert editor.can_undo is True
+    assert editor.cronologia_dimensione == 20
+    for _ in range(20):
+        assert editor.undo() is True
+    assert editor.undo() is False
+    assert editor.esercizi[0]["note"] == "0"
+
+
+def test_editor_failed_mutation_does_not_enter_history():
+    editor = make_editor()
+    with pytest.raises(EditorValidationError):
+        editor.importa_esercizi([], posizione=99)
+    assert editor.can_undo is False
+    assert [e["nome"] for e in editor.esercizi] == ["Squat", "Affondo"]
+
+
 def test_gruppi_esistenti_and_duplicati_slug_report_editor_state():
     editor = make_editor()
     editor.aggiungi()

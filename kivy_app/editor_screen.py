@@ -53,11 +53,18 @@ class EditorScreen(BoxLayout):
         save_locale.bind(on_release=lambda *_: self._save(sincronizza=False))
         save = Button(text="Salva su Drive", size_hint_x=None, width=dp(140))
         save.bind(on_release=lambda *_: self._save())
+        undo = Button(text="Annulla", size_hint_x=None, width=dp(90))
+        undo.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
+        redo = Button(text="Ripeti", size_hint_x=None, width=dp(90))
+        redo.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
         self.header.add_widget(back)
         self.header.add_widget(self.status)
+        self.header.add_widget(undo)
+        self.header.add_widget(redo)
         self.header.add_widget(save_locale)
         self.header.add_widget(save)
         self.add_widget(self.header)
+        Window.bind(on_key_down=self._on_key_down)
 
         self.rows = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
         self.rows.bind(minimum_height=self.rows.setter("height"))
@@ -109,7 +116,7 @@ class EditorScreen(BoxLayout):
         if self._open_media is not None:
             video.bind(on_release=lambda _, i=indice: self._open_media(self._editor, i))
         delete = Button(text="Elimina", size_hint_x=None, width=dp(90))
-        delete.bind(on_release=lambda *_: self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True))
+        delete.bind(on_release=lambda _, i=indice: self._confirm_delete(i))
         header.add_widget(titolo)
         header.add_widget(up)
         header.add_widget(down)
@@ -158,6 +165,24 @@ class EditorScreen(BoxLayout):
             box.add_widget(campo)
             block.add_widget(box)
         return block
+
+    def _confirm_delete(self, indice):
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Conferma eliminazione", content=content,
+                      size_hint=(0.8, 0.3), auto_dismiss=False)
+        nome = self._editor.esercizi[indice].get("nome") or f"esercizio {indice + 1}"
+        content.add_widget(Label(text=f"Eliminare '{nome}'?"))
+        actions = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        cancel = Button(text="Annulla")
+        confirm = Button(text="Elimina")
+        cancel.bind(on_release=lambda *_: popup.dismiss())
+        confirm.bind(on_release=lambda *_: (
+            popup.dismiss(),
+            self._wrap(lambda: self._editor.rimuovi(indice), rebuild=True)))
+        actions.add_widget(cancel)
+        actions.add_widget(confirm)
+        content.add_widget(actions)
+        popup.open()
 
     def _field_handler(self, indice, chiave, campo):
         def on_focus(instance, focused):
@@ -340,6 +365,20 @@ class EditorScreen(BoxLayout):
             self._rebuild()
         else:
             self._refresh_status()
+
+    def _on_key_down(self, _window, key, _scancode, _codepoint, modifiers):
+        if "ctrl" not in modifiers:
+            return False
+        if key == 115:  # Ctrl+S
+            self._save()
+        elif key == 122:  # Ctrl+Z / Ctrl+Shift+Z
+            self._wrap(self._editor.redo if "shift" in modifiers else self._editor.undo,
+                       rebuild=True)
+        elif key == 121:  # Ctrl+Y
+            self._wrap(self._editor.redo, rebuild=True)
+        else:
+            return False
+        return True
 
     def _mostra_errore(self, exc):
         from .controller import HomeUnavailableError

@@ -6,11 +6,11 @@
 
 **Blocked by:** 01 — Progettare transazioni, cronologia e ciclo di salvataggio
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Ogni campo genera una sola azione quando la modifica viene confermata uscendo dal campo.
-- [ ] Aggiunta, eliminazione, riordino, cambio gruppo e importazioni supportano undo e redo completi.
-- [ ] Una nuova modifica dopo undo elimina correttamente il ramo redo.
-- [ ] La cronologia conserva al massimo 20 azioni senza corrompere lo stato corrente.
-- [ ] L'eliminazione richiede conferma e resta annullabile dalla cronologia.
-- [ ] I test automatici coprono sequenze miste e ripristino esatto dei dati.
+- [x] Ogni campo genera una sola azione quando la modifica viene confermata uscendo dal campo.
+- [x] Aggiunta, eliminazione, riordino, cambio gruppo e importazioni supportano undo e redo completi.
+- [x] Una nuova modifica dopo undo elimina correttamente il ramo redo.
+- [x] La cronologia conserva al massimo 20 azioni senza corrompere lo stato corrente.
+- [x] L'eliminazione richiede conferma e resta annullabile dalla cronologia.
+- [x] I test automatici coprono sequenze miste e ripristino esatto dei dati.
