@@ -313,6 +313,32 @@ def test_media_transazione_fallita_rimuove_output_parziale(tmp_path):
     assert not (tmp_path / "parziale.jpg").exists()
 
 
+def test_editor_e_media_condividono_la_stessa_cronologia(tmp_path):
+    frame = tmp_path / "squat_start.jpg"
+    frame.write_bytes(b"iniziale")
+    esercizio = _esercizio()
+    esercizio["frame_start"] = str(frame)
+    editor = SchedaEditorController([esercizio], percorso_bundle="s.scheda")
+    media = MediaFlowController(
+        esercizio, str(tmp_path),
+        cropper=lambda path, *args, **kwargs: Path(path).write_bytes(b"media"),
+        copier=lambda src, dst: Path(dst).write_bytes(Path(src).read_bytes()),
+        transaction=lambda operation: editor.transazione_media(
+            operation, output_dir=tmp_path),
+    )
+
+    editor.aggiorna(0, note="testo")
+    media.ritaglia("start", 5, 5, 5, 5)
+    assert editor.cronologia_dimensione == 2
+    assert frame.read_bytes() == b"media"
+
+    editor.undo()
+    assert frame.read_bytes() == b"iniziale"
+    assert editor.esercizi[0]["note"] == "testo"
+    editor.undo()
+    assert editor.esercizi[0]["note"] == ""
+
+
 def test_importa_immagine_aggiorna_il_frame_giusto(tmp_path):
     media, esercizio, changed = make_media(tmp_path=tmp_path)
 

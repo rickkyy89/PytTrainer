@@ -6,11 +6,11 @@
 
 **Blocked by:** 03 — Unificare Salva e proteggere l'uscita; 05 — Implementare Undo/Redo dei media
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] La suite automatica copre sequenze miste editor/media, almeno 20 azioni e ramificazioni dopo undo.
-- [ ] Sono verificati salvataggio locale, upload riuscito, upload fallito e conflitto Drive.
-- [ ] Sono verificati uscita, Scarta, campo ancora attivo e riapertura delle schermate.
-- [ ] Luna corregge i bug ordinari e documenta riproduzione, evidenze e tentativi per ogni problema residuo.
-- [ ] Tutti i test preesistenti restano verdi.
-- [ ] L'handoff a Sol contiene solo problemi difficili riproducibili, non attività implementative incomplete.
+- [x] La suite automatica copre sequenze miste editor/media, almeno 20 azioni e ramificazioni dopo undo.
+- [x] Sono verificati salvataggio locale, upload riuscito, upload fallito e conflitto Drive.
+- [x] Sono verificati uscita, Scarta, campo ancora attivo e riapertura delle schermate.
+- [x] Luna corregge i bug ordinari e documenta riproduzione, evidenze e tentativi per ogni problema residuo.
+- [x] Tutti i test preesistenti restano verdi.
+- [x] L'handoff a Sol contiene solo problemi difficili riproducibili, non attività implementative incomplete.

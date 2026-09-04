@@ -6,7 +6,7 @@
 
 **Blocked by:** 06 — Integrare e correggere il primo passaggio editing
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] L'audit verifica atomicità, ownership degli snapshot, cleanup e coerenza tra manifest e frame.
 - [ ] Dirty state, checkpoint locale, sync Drive e cronologia rispettano il contratto del ticket 01.
