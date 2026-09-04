@@ -6,7 +6,7 @@
 
 **Blocked by:** 08 — Progettare il modulo adattivo Material
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Le schermate possono ottenere profilo, orientamento, scala e token da una sola interfaccia.
 - [ ] Il tema usa superfici dark, accento verde acqua, contrasto leggibile, bordi sobri e nessuna animazione.
