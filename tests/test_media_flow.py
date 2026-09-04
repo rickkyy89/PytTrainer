@@ -16,6 +16,7 @@ from kivy_app.media import (
     url_con_inizio,
     percorso_backup_frame,
 )
+from kivy_app.editor import SchedaEditorController
 from kivy_app.platform_android import AndroidFrameExtractor
 
 
@@ -268,6 +269,48 @@ def test_ritaglio_senza_frame_o_suffisso_invalido_sollevano_errore(tmp_path):
         media.ritaglia("start", 5, 5, 5, 5)
     with pytest.raises(MediaFlowError, match="Suffisso frame non valido"):
         media.ripristina("lato")
+
+
+def test_media_transazione_undo_redo_ripristina_manifest_e_byte_del_crop(tmp_path):
+    frame = tmp_path / "squat_start.jpg"
+    frame.write_bytes(b"originale")
+    esercizio = _esercizio()
+    esercizio["frame_start"] = str(frame)
+    editor = SchedaEditorController([esercizio], percorso_bundle="s.scheda")
+    media, _, _ = make_media(
+        esercizio=esercizio, tmp_path=tmp_path,
+        cropper=lambda path, *args, **kwargs: Path(path).write_bytes(b"ritagliato"),
+    )
+    media._transaction = lambda operation: editor.transazione_media(
+        operation, output_dir=tmp_path)
+
+    media.ritaglia("start", 10, 0, 10, 0)
+    assert frame.read_bytes() == b"ritagliato"
+    assert Path(percorso_backup_frame(str(frame))).read_bytes() == b"originale"
+    assert editor.undo() is True
+    assert frame.read_bytes() == b"originale"
+    assert not Path(percorso_backup_frame(str(frame))).exists()
+    assert editor.redo() is True
+    assert frame.read_bytes() == b"ritagliato"
+    assert Path(percorso_backup_frame(str(frame))).read_bytes() == b"originale"
+
+
+def test_media_transazione_fallita_rimuove_output_parziale(tmp_path):
+    esercizio = _esercizio()
+
+    def extractor(url, ts_start, ts_finish, nome, output_dir, ffmpeg_backend=None):
+        (Path(output_dir) / "parziale.jpg").write_bytes(b"parziale")
+        raise FrameExtractionError("errore a meta")
+
+    editor = SchedaEditorController([esercizio], percorso_bundle="s.scheda")
+    media, _, _ = make_media(esercizio=esercizio, tmp_path=tmp_path, extractor=extractor)
+    media.url_manuale("https://youtu.be/a")
+    media._transaction = lambda operation: editor.transazione_media(
+        operation, output_dir=tmp_path)
+
+    assert media.estrai() is False
+    assert esercizio["frame_start"] is None
+    assert not (tmp_path / "parziale.jpg").exists()
 
 
 def test_importa_immagine_aggiorna_il_frame_giusto(tmp_path):

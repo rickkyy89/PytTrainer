@@ -6,7 +6,7 @@
 
 **Blocked by:** 03 — Unificare Salva e proteggere l'uscita; 05 — Implementare Undo/Redo dei media
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] La suite automatica copre sequenze miste editor/media, almeno 20 azioni e ramificazioni dopo undo.
 - [ ] Sono verificati salvataggio locale, upload riuscito, upload fallito e conflitto Drive.

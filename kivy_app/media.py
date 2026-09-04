@@ -90,7 +90,8 @@ class MediaFlowController:
                  info_getter=get_video_info, extractor=extract_start_finish_frames,
                  auto_selector=scegli_ed_estrai, cropper=crop_frame,
                  image_importer=importa_frame_da_immagine, copier=shutil.copy2,
-                 stream_resolver=get_stream_info, single_extractor=extract_frame):
+                 stream_resolver=get_stream_info, single_extractor=extract_frame,
+                 transaction=None):
         self._e = esercizio
         self._output_dir = output_dir
         self._backend = backend
@@ -106,6 +107,7 @@ class MediaFlowController:
         self._copier = copier
         self._stream_resolver = stream_resolver
         self._single_extractor = single_extractor
+        self._transaction = transaction
         self._scelte: list[SceltaVideo] = []
         self._durata: float | None = None
         self._titolo_video: str | None = None
@@ -185,11 +187,13 @@ class MediaFlowController:
             scelta = self._scelte[indice]
         except IndexError as exc:
             raise MediaFlowError("Video non piu' tra i risultati: esegui una nuova ricerca.") from exc
-        self._e["video_url"] = scelta.url
-        self._titolo_video = scelta.title
-        self._durata = self._prova_durata(scelta.url, scelta.duration)
-        self._applica_euristica_timestamp()
-        self._on_change()
+        def operation():
+            self._e["video_url"] = scelta.url
+            self._titolo_video = scelta.title
+            self._durata = self._prova_durata(scelta.url, scelta.duration)
+            self._applica_euristica_timestamp()
+            self._on_change()
+        self._run_transaction(operation)
         return scelta
 
     def url_manuale(self, url: str) -> None:
@@ -197,19 +201,11 @@ class MediaFlowController:
         url = str(url or "").strip()
         if not url:
             raise MediaFlowError("Inserisci un URL video non vuoto.")
-        self._e["video_url"] = url
-        self._durata = self._prova_durata(url, None)
-        self._applica_euristica_timestamp()
-        self._on_change()
+        self._run_transaction(lambda: self._set_manual_url(url))
 
     def proponi_euristica(self) -> None:
         """Force the 10%/50% proposal, overwriting any manual timestamps."""
-        self._e["ts_start"] = None
-        self._e["ts_finish"] = None
-        if self.video_url and self._durata is None:
-            self._durata = self._prova_durata(self.video_url, None)
-        self._applica_euristica_timestamp()
-        self._on_change()
+        self._run_transaction(self._apply_heuristic_mutation)
 
     def assicura_durata(self) -> float | None:
         """Risolve la durata per un video proveniente dal manifest.
@@ -233,13 +229,15 @@ class MediaFlowController:
 
     def imposta_timestamp(self, ts_start: float | None = None,
                           ts_finish: float | None = None) -> None:
-        for chiave, valore in (("ts_start", ts_start), ("ts_finish", ts_finish)):
-            if valore is None:
-                continue
-            if not isinstance(valore, (int, float)) or valore < 0:
-                raise MediaFlowError(f"Timestamp {chiave} non valido: {valore}.")
-            self._e[chiave] = float(valore)
-        self._on_change()
+        def operation():
+            for chiave, valore in (("ts_start", ts_start), ("ts_finish", ts_finish)):
+                if valore is None:
+                    continue
+                if not isinstance(valore, (int, float)) or valore < 0:
+                    raise MediaFlowError(f"Timestamp {chiave} non valido: {valore}.")
+                self._e[chiave] = float(valore)
+            self._on_change()
+        self._run_transaction(operation)
 
     # ---------------------------------------------------------------- estrai
 
@@ -250,6 +248,28 @@ class MediaFlowController:
         unless ``riestrai`` forces a fresh extraction.  Timestamps must satisfy
         finish > start before any network/ffmpeg work (parity with Streamlit).
         """
+        return self._run_transaction(lambda: self._extract(riestrai))
+
+    def _run_transaction(self, operation):
+        if self._transaction is None:
+            return operation()
+        return self._transaction(operation)
+
+    def _set_manual_url(self, url):
+        self._e["video_url"] = url
+        self._durata = self._prova_durata(url, None)
+        self._applica_euristica_timestamp()
+        self._on_change()
+
+    def _apply_heuristic_mutation(self):
+        self._e["ts_start"] = None
+        self._e["ts_finish"] = None
+        if self.video_url and self._durata is None:
+            self._durata = self._prova_durata(self.video_url, None)
+        self._applica_euristica_timestamp()
+        self._on_change()
+
+    def _extract(self, riestrai):
         nome = str(self._e.get("nome") or "").strip()
         if not nome:
             raise MediaFlowError("Dai un nome all'esercizio prima di estrarre i frame.")
@@ -292,14 +312,16 @@ class MediaFlowController:
     def ritaglia(self, suffisso: str, sinistra: float, alto: float,
                  destra: float, basso: float) -> str:
         """Apply a percentage crop to one frame, backing the original up once."""
-        percorso = self._frame_esistente(suffisso)
-        backup = percorso_backup_frame(percorso)
-        if not os.path.exists(backup):
-            self._copier(percorso, backup)
-        self._cropper(percorso, sinistra, alto, destra, basso)
-        self._pulisci_anteprima(suffisso)
-        self._on_change()
-        return percorso
+        def operation():
+            percorso = self._frame_esistente(suffisso)
+            backup = percorso_backup_frame(percorso)
+            if not os.path.exists(backup):
+                self._copier(percorso, backup)
+            self._cropper(percorso, sinistra, alto, destra, basso)
+            self._pulisci_anteprima(suffisso)
+            self._on_change()
+            return percorso
+        return self._run_transaction(operation)
 
     def ripristina(self, suffisso: str) -> str:
         """Restore a frame from its ``*_orig.jpg`` backup (created by a crop)."""
@@ -307,9 +329,11 @@ class MediaFlowController:
         backup = percorso_backup_frame(percorso)
         if not os.path.exists(backup):
             raise MediaFlowError("Nessun originale da ripristinare per questo frame.")
-        self._copier(backup, percorso)
-        self._on_change()
-        return percorso
+        def operation():
+            self._copier(backup, percorso)
+            self._on_change()
+            return percorso
+        return self._run_transaction(operation)
 
     def puo_ripristinare(self, suffisso: str) -> bool:
         percorso = self._e.get(f"frame_{suffisso}")
@@ -383,14 +407,16 @@ class MediaFlowController:
         nome = str(self._e.get("nome") or "").strip()
         if not nome:
             raise MediaFlowError("Dai un nome all'esercizio prima di importare un'immagine.")
-        try:
-            destinazione = self._image_importer(percorso_immagine, nome, suffisso,
-                                                self._output_dir)
-        except (FrameExtractionError, ValueError) as exc:
-            raise MediaFlowError(str(exc)) from exc
-        self._e[f"frame_{suffisso}"] = destinazione
-        self._on_change()
-        return destinazione
+        def operation():
+            try:
+                destinazione = self._image_importer(percorso_immagine, nome, suffisso,
+                                                    self._output_dir)
+            except (FrameExtractionError, ValueError) as exc:
+                raise MediaFlowError(str(exc)) from exc
+            self._e[f"frame_{suffisso}"] = destinazione
+            self._on_change()
+            return destinazione
+        return self._run_transaction(operation)
 
     # ------------------------------------------------------------------ hook
 

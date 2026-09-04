@@ -33,21 +33,42 @@ class EditorValidationError(Exception):
 class _SnapshotCommand:
     """Reversible manifest mutation owned by the editor history."""
 
-    def __init__(self, target, before, after):
+    def __init__(self, target, before, after, *, files_root=None,
+                 before_files=None, after_files=None):
         self._target = target
         self._before = before
         self._after = after
+        self._files_root = Path(files_root) if files_root else None
+        self._before_files = before_files
+        self._after_files = after_files
 
     def undo(self):
         self._target[:] = deepcopy(self._before)
+        self._restore_files(self._before_files)
 
     def redo(self):
         self._target[:] = deepcopy(self._after)
+        self._restore_files(self._after_files)
 
     def release(self):
         self._target = None
         self._before = None
         self._after = None
+        self._files_root = None
+        self._before_files = None
+        self._after_files = None
+
+    def _restore_files(self, files):
+        if self._files_root is None or files is None:
+            return
+        self._files_root.mkdir(parents=True, exist_ok=True)
+        for path in self._files_root.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for relative, content in files.items():
+            destination = self._files_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
 
 
 class SchedaEditorController:
@@ -109,6 +130,30 @@ class SchedaEditorController:
     def discard(self) -> None:
         """Discard in-memory changes; the caller may then leave the screen."""
         self.restore_checkpoint()
+
+    def transazione_media(self, operation, *, output_dir: str | Path):
+        """Run one media mutation with manifest and frame-file undo support."""
+        root = Path(output_dir)
+        before = self._snapshot_files(root)
+        prima = deepcopy(self._esercizi)
+        try:
+            risultato = operation()
+            if risultato is False:
+                self._esercizi[:] = prima
+                self._restore_files(root, before)
+                return risultato
+        except Exception:
+            self._esercizi[:] = prima
+            self._restore_files(root, before)
+            raise
+        dopo = deepcopy(self._esercizi)
+        dopo_files = self._snapshot_files(root)
+        if prima == dopo and before == dopo_files:
+            return risultato
+        self._registra(_SnapshotCommand(
+            self._esercizi, prima, dopo, files_root=root,
+            before_files=before, after_files=dopo_files))
+        return risultato
 
     @property
     def esercizi(self) -> list[dict]:
@@ -359,14 +404,37 @@ class SchedaEditorController:
         dopo = deepcopy(self._esercizi)
         if prima == dopo:
             return risultato
-        for comando in self._redo_stack:
-            comando.release()
+        self._registra(_SnapshotCommand(self._esercizi, prima, dopo))
+        return risultato
+
+    def _registra(self, comando):
+        for vecchio in self._redo_stack:
+            vecchio.release()
         self._redo_stack.clear()
-        self._undo_stack.append(_SnapshotCommand(self._esercizi, prima, dopo))
+        self._undo_stack.append(comando)
         if len(self._undo_stack) > 20:
             self._undo_stack.pop(0).release()
         self._dirty = True
-        return risultato
+
+    @staticmethod
+    def _snapshot_files(root):
+        if not root.exists():
+            return {}
+        return {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in root.rglob("*") if path.is_file()
+        }
+
+    @staticmethod
+    def _restore_files(root, files):
+        root.mkdir(parents=True, exist_ok=True)
+        for path in root.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for relative, content in files.items():
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
 
     def _clear_history(self):
         for comando in self._undo_stack:

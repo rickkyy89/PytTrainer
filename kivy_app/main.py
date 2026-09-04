@@ -177,9 +177,12 @@ def run() -> None:
 
         def open_media(self, remote, editor, indice):
             try:
+                output_dir = editor.output_frames()
                 media = MediaFlowController(
-                    editor.esercizi[indice], editor.output_frames(),
+                    editor.esercizi[indice], output_dir,
                     backend=media_backend, on_change=editor.marca_modifica,
+                    transaction=lambda operation: editor.transazione_media(
+                        operation, output_dir=output_dir),
                 )
             except Exception as exc:  # EditorValidationError e simili
                 self.status.text = str(exc)
