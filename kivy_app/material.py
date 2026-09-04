@@ -104,6 +104,22 @@ def input_mode_for_platform(platform: str | None = None) -> InputMode:
     return "touch" if (platform or sys.platform) == "android" else "pointer"
 
 
+_scala_corrente: ScaleChoice = "auto"
+
+
+def scala_corrente() -> ScaleChoice:
+    return _scala_corrente
+
+
+def imposta_scala(valore: ScaleChoice) -> ScaleChoice:
+    """Set the process-wide user scale (device-local, never in bundles)."""
+    global _scala_corrente
+    if valore not in VALID_SCALE_CHOICES:
+        raise ValueError(f"Scala non valida: {valore!r}.")
+    _scala_corrente = valore
+    return valore
+
+
 def hex_to_rgba(valore: str, alpha: float = 1.0) -> tuple[float, float, float, float]:
     """Material token colors are stored as #RRGGBB; widgets need 0-1 rgba."""
     v = valore.lstrip("#")
@@ -112,10 +128,12 @@ def hex_to_rgba(valore: str, alpha: float = 1.0) -> tuple[float, float, float, f
 
 
 def profile_for_window(window, *, input_mode: InputMode | None = None,
-                       scale: ScaleChoice = "auto") -> UiProfile:
+                       scale: ScaleChoice | None = None) -> UiProfile:
     """Kivy adapter kept at the seam; screens do not read density themselves."""
     if input_mode is None:
         input_mode = input_mode_for_platform()
+    if scale is None:
+        scale = scala_corrente()
     density = getattr(window, "density", None) or 1.0
     return adaptive_profile(
         ViewportMetrics(window.width / density, window.height / density,

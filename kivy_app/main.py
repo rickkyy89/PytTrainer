@@ -67,10 +67,13 @@ def run() -> None:
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
     from .home_layout import home_plan, readonly_card
-    from .material import profile_for_window, hex_to_rgba
+    from .material import (ScalePreferenceStore, hex_to_rgba, imposta_scala,
+                           profile_for_window, scala_corrente)
     from .theme import applica_tema
 
     controller = build_controller()
+    scala_store = ScalePreferenceStore(controller.base_dir / "ui-preferences.json")
+    imposta_scala(scala_store.load_scale())
     if sys.platform == "android":
         from .platform_android import AndroidFrameExtractor
         media_backend = AndroidFrameExtractor()
@@ -98,11 +101,19 @@ def run() -> None:
 
     class PyTrainerApp(App):
         def build(self):
+            self.title = "pyTrainer"
+            self.stack = BoxLayout(orientation="vertical")
+            self._ultime_schede = []
+            self._editor_view = None
+            self._costruisce_home()
+            Window.bind(on_request_close=self._on_request_close)
+            self.show_home()
+            return self.stack
+
+        def _costruisce_home(self):
             profile = _ui_profile()
             applica_tema(profile)
             tokens = profile.tokens
-            self.title = "pyTrainer"
-            self.stack = BoxLayout(orientation="vertical")
             self.home = BoxLayout(orientation="vertical",
                                   padding=tokens.spacing["md"],
                                   spacing=tokens.spacing["sm"])
@@ -116,9 +127,13 @@ def run() -> None:
             folders = Button(text="Cartelle", size_hint_x=None,
                              width=profile.touch_target * 3)
             folders.bind(on_release=lambda *_: self.folder_dialog())
+            self._scala_btn = Button(text=f"Scala {scala_corrente()}", size_hint_x=None,
+                                     width=profile.touch_target * 3)
+            self._scala_btn.bind(on_release=lambda *_: self.ciclo_scala())
             toolbar.add_widget(refresh)
             toolbar.add_widget(create)
             toolbar.add_widget(folders)
+            toolbar.add_widget(self._scala_btn)
             self.home.add_widget(toolbar)
             self.status = Label(text="Premi Aggiorna per caricare le schede.",
                                 size_hint_y=None, height=40, halign="left", valign="middle")
@@ -129,12 +144,15 @@ def run() -> None:
             self.home.add_widget(self.status)
             self.home_body = BoxLayout(orientation="vertical", spacing=8)
             self.home.add_widget(self.home_body)
-            self.stack.add_widget(self.home)
-            self._ultime_schede = []
-            self._editor_view = None
-            Window.bind(on_request_close=self._on_request_close)
+
+        def ciclo_scala(self):
+            ordine = ["auto", "100", "115", "130"]
+            nuova = ordine[(ordine.index(scala_corrente()) + 1) % len(ordine)]
+            imposta_scala(nuova)
+            scala_store.save_scale(nuova)
+            self._costruisce_home()
             self.show_home()
-            return self.stack
+            self.status.text = f"Scala: {nuova}."
 
         def show_home(self):
             self._editor_view = None

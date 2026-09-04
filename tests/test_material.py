@@ -14,7 +14,8 @@ from types import SimpleNamespace
 
 from kivy_app.material import (
     ScalePreferenceStore, ViewportMetrics, adaptive_profile, hex_to_rgba,
-    input_mode_for_platform, primitive_specs, profile_for_window,
+    imposta_scala, input_mode_for_platform, primitive_specs, profile_for_window,
+    scala_corrente,
 )
 
 
@@ -76,3 +77,20 @@ def test_profile_for_window_defaults_input_mode_from_platform(monkeypatch):
     fake = SimpleNamespace(width=800, height=1200, density=1.0)
     profile = profile_for_window(fake)
     assert profile.touch_target == 48
+
+
+def test_imposta_scala_alimenta_profile_for_window_senza_riavvio(tmp_path, monkeypatch):
+    import kivy_app.material as material
+    store = ScalePreferenceStore(tmp_path / "prefs.json")
+    monkeypatch.setattr(material, "scala_corrente", lambda: "auto")
+    fake = SimpleNamespace(width=800, height=600, density=2.0)
+    assert profile_for_window(fake).scale == 2.0
+    monkeypatch.setattr(material, "scala_corrente", lambda: "130")
+    assert profile_for_window(fake).scale == pytest.approx(2.6)
+    assert store.load_scale() == "auto"
+    store.save_scale(imposta_scala("115"))
+    assert store.load_scale() == "115"
+    assert scala_corrente() == "115"
+    with pytest.raises(ValueError):
+        imposta_scala("200")
+    imposta_scala("auto")
