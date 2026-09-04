@@ -17,8 +17,11 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.utils import escape_markup
+from kivy.core.window import Window
 
 from .notify import notifica_fine_recupero
+from .material import profile_for_window
+from .workout_layout import workout_layout
 
 
 def _etichetta(texto, target, delta=48, **kw):
@@ -38,12 +41,13 @@ class WorkoutScreen(BoxLayout):
         self._notifier = notifier
         self._notified = True
         self._checkboxes: dict[int, CheckBox] = {}
+        self._ui = workout_layout(profile_for_window(Window, input_mode="touch"))
 
-        header = BoxLayout(size_hint_y=None, height=48, spacing=8)
-        back = Button(text="< Scheda", size_hint_x=None, width=110)
+        header = BoxLayout(size_hint_y=None, height=self._ui.minimum_target, spacing=8)
+        back = Button(text="< Scheda", size_hint_x=None, width=self._ui.minimum_target * 2)
         back.bind(on_release=lambda *_: self._exit())
-        self.progress_label = Label(text=self._progress_text(), font_size="20sp")
-        reset = Button(text="Azzera", size_hint_x=None, width=100)
+        self.progress_label = Label(text=self._progress_text(), font_size=f"{self._ui.header_font_size}sp")
+        reset = Button(text="Azzera", size_hint_x=None, width=self._ui.minimum_target * 2)
         reset.bind(on_release=lambda *_: self._reset())
         header.add_widget(back)
         header.add_widget(self.progress_label)
@@ -56,9 +60,9 @@ class WorkoutScreen(BoxLayout):
         scroll.add_widget(self.cards)
         self.add_widget(scroll)
 
-        bar = BoxLayout(size_hint_y=None, height=88, spacing=8)
-        self.timer_label = Label(text="Recupero: —", font_size="32sp")
-        stop = Button(text="Stop", size_hint_x=None, width=90)
+        bar = BoxLayout(size_hint_y=None, height=max(88, self._ui.minimum_target), spacing=8)
+        self.timer_label = Label(text="Recupero: —", font_size=f"{self._ui.header_font_size * 1.3}sp")
+        stop = Button(text="Stop", size_hint_x=None, width=self._ui.minimum_target * 2)
         stop.bind(on_release=lambda *_: self._stop_timer())
         bar.add_widget(self.timer_label)
         bar.add_widget(stop)
@@ -76,7 +80,7 @@ class WorkoutScreen(BoxLayout):
         card.bind(minimum_height=card.setter("height"))
 
         top = BoxLayout(size_hint_y=None, height=56, spacing=6)
-        checkbox = CheckBox(size_hint_x=None, width=56, active=False)
+        checkbox = CheckBox(size_hint_x=None, width=self._ui.minimum_target, active=False)
         checkbox.bind(active=lambda _, active: self._toggle(indice, active))
         self._checkboxes[indice] = checkbox
         top.add_widget(checkbox)
@@ -87,7 +91,8 @@ class WorkoutScreen(BoxLayout):
             top, size_hint_x=1))
         card.add_widget(top)
 
-        frames = BoxLayout(size_hint_y=None, height=280, spacing=4)
+        frames = BoxLayout(orientation=self._ui.frame_axis, size_hint_y=None,
+                           height=280 if self._ui.frame_axis == "horizontal" else 560, spacing=4)
         for chiave in ("frame_start", "frame_finish"):
             percorso = esercizio.get(chiave)
             frames.add_widget(Image(source=percorso or "", fit_mode="contain"))
