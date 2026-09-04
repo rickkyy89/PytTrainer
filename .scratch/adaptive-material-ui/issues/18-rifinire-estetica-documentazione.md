@@ -6,7 +6,7 @@
 
 **Blocked by:** 17 — Audit responsive e hardening cross-device
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Gerarchia tipografica, contrasto, spacing, bordi e stati focus/disabled/error sono uniformi.
 - [ ] Icone e testi hanno allineamento e dimensioni coerenti su Windows e Lenovo.

@@ -98,9 +98,24 @@ def adaptive_profile(metrics: ViewportMetrics, scale: ScaleChoice = "auto") -> U
     )
 
 
-def profile_for_window(window, *, input_mode: InputMode = "pointer",
+def input_mode_for_platform(platform: str | None = None) -> InputMode:
+    """Single decision point: touch targets only on Android-like platforms."""
+    import sys
+    return "touch" if (platform or sys.platform) == "android" else "pointer"
+
+
+def hex_to_rgba(valore: str, alpha: float = 1.0) -> tuple[float, float, float, float]:
+    """Material token colors are stored as #RRGGBB; widgets need 0-1 rgba."""
+    v = valore.lstrip("#")
+    return (int(v[0:2], 16) / 255.0, int(v[2:4], 16) / 255.0,
+            int(v[4:6], 16) / 255.0, alpha)
+
+
+def profile_for_window(window, *, input_mode: InputMode | None = None,
                        scale: ScaleChoice = "auto") -> UiProfile:
     """Kivy adapter kept at the seam; screens do not read density themselves."""
+    if input_mode is None:
+        input_mode = input_mode_for_platform()
     density = getattr(window, "density", None) or 1.0
     return adaptive_profile(
         ViewportMetrics(window.width / density, window.height / density,

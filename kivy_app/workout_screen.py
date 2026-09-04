@@ -41,7 +41,7 @@ class WorkoutScreen(BoxLayout):
         self._notifier = notifier
         self._notified = True
         self._checkboxes: dict[int, CheckBox] = {}
-        self._ui = workout_layout(profile_for_window(Window, input_mode="touch"))
+        self._ui = workout_layout(profile_for_window(Window))
 
         header = BoxLayout(size_hint_y=None, height=self._ui.minimum_target, spacing=8)
         back = Button(text="< Scheda", size_hint_x=None, width=self._ui.minimum_target * 2)

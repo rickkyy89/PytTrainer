@@ -44,7 +44,7 @@ class MediaScreen(BoxLayout):
         self._media = media
         self._on_back = on_back
         self._busy = False
-        self._ui = media_layout(profile_for_window(Window, input_mode="touch"))
+        self._ui = media_layout(profile_for_window(Window))
 
         header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         self._back = Button(text="< Editor", size_hint_x=None, width=120)

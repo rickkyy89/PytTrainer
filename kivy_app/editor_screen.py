@@ -23,7 +23,7 @@ from core.drive_sync import SyncConflict
 
 from .editor import EditorValidationError
 from .file_picker import choose_file
-from .editor_layout import editor_layout
+from .editor_layout import editor_layout, field_columns
 from .material import profile_for_window
 
 
@@ -60,9 +60,9 @@ class EditorScreen(BoxLayout):
 
         self.rows = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
         self.rows.bind(minimum_height=self.rows.setter("height"))
-        scroll = ScrollView()
-        scroll.add_widget(self.rows)
-        self.add_widget(scroll)
+        self._scroll = ScrollView()
+        self._scroll.add_widget(self.rows)
+        self.add_widget(self._scroll)
 
         tools = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         add = Button(text="Aggiungi esercizio")
@@ -82,7 +82,7 @@ class EditorScreen(BoxLayout):
 
         # Undo, redo and save stay reachable while the form scrolls.
         action_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-        action_profile = profile_for_window(Window, input_mode="touch")
+        action_profile = profile_for_window(Window)
         undo_bar = Button(text="Annulla", size_hint_x=None, width=action_profile.touch_target * 2)
         undo_bar.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
         redo_bar = Button(text="Ripeti", size_hint_x=None, width=action_profile.touch_target * 2)
@@ -109,7 +109,7 @@ class EditorScreen(BoxLayout):
     def _exercise_block(self, indice, esercizio):
         block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(8))
         block.bind(minimum_height=block.setter("height"))
-        profile = profile_for_window(Window, input_mode="touch")
+        profile = profile_for_window(Window)
         layout = editor_layout(profile)
 
         header = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
@@ -145,15 +145,12 @@ class EditorScreen(BoxLayout):
         if indice != self._open_index:
             return block
 
-        if indice != self._open_index:
-            return block
-
         griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
                              row_default_height=dp(40), row_force_default=True)
 
         def ricalcola_griglia(*_, g=griglia, b=block):
             largo_dp = max(b.width, 1) / profile.viewport.system_density
-            per_riga = 4 if largo_dp >= 1200 else 3 if largo_dp >= 900 else 2 if largo_dp >= 620 else 1
+            per_riga = field_columns(profile, largo_dp)
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
             g.height = righe * dp(40) + (righe - 1) * dp(6)

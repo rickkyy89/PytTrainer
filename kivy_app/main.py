@@ -67,7 +67,8 @@ def run() -> None:
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
     from .home_layout import home_plan, readonly_card
-    from .material import ViewportMetrics, adaptive_profile
+    from .material import profile_for_window
+    from .theme import applica_tema
 
     controller = build_controller()
     if sys.platform == "android":
@@ -93,24 +94,27 @@ def run() -> None:
         return scroll, contenuto
 
     def _ui_profile():
-        return adaptive_profile(ViewportMetrics(
-            Window.width / (getattr(Window, "density", None) or 1.0),
-            Window.height / (getattr(Window, "density", None) or 1.0),
-            getattr(Window, "density", None) or 1.0,
-            "touch" if sys.platform == "android" else "pointer",
-        ))
+        return profile_for_window(Window)
 
     class PyTrainerApp(App):
         def build(self):
+            profile = _ui_profile()
+            applica_tema(profile)
+            tokens = profile.tokens
             self.title = "pyTrainer"
             self.stack = BoxLayout(orientation="vertical")
-            self.home = BoxLayout(orientation="vertical", padding=12, spacing=8)
-            toolbar = BoxLayout(size_hint_y=None, height=48, spacing=8)
-            refresh = Button(text="Aggiorna", size_hint_x=None, width=140)
+            self.home = BoxLayout(orientation="vertical",
+                                  padding=tokens.spacing["md"],
+                                  spacing=tokens.spacing["sm"])
+            toolbar = BoxLayout(size_hint_y=None, height=tokens.dimensions["toolbar_height"],
+                                spacing=tokens.spacing["sm"])
+            refresh = Button(text="Aggiorna", size_hint_x=None,
+                             width=profile.touch_target * 3)
             refresh.bind(on_release=lambda *_: self.refresh())
             create = Button(text="Nuova scheda")
             create.bind(on_release=lambda *_: self.create_dialog())
-            folders = Button(text="Cartelle", size_hint_x=None, width=140)
+            folders = Button(text="Cartelle", size_hint_x=None,
+                             width=profile.touch_target * 3)
             folders.bind(on_release=lambda *_: self.folder_dialog())
             toolbar.add_widget(refresh)
             toolbar.add_widget(create)
@@ -216,7 +220,6 @@ def run() -> None:
             scroll, contenuto = _area_scrollabile()
             self.home_body.add_widget(scroll)
             profile = _ui_profile()
-            compact = home_plan(profile).columns == 1
             for remote in self._ultime_schede:
                 row = BoxLayout(size_hint_y=None, height=profile.touch_target + 16, spacing=6,
                                  padding=profile.tokens.spacing["xs"])
@@ -226,10 +229,7 @@ def run() -> None:
                                 width=profile.touch_target * 2.2)
                 delete.bind(on_release=lambda _, item=remote: self.confirm_delete(item))
                 row.add_widget(open_button)
-                if not compact:
-                    row.add_widget(delete)
-                else:
-                    row.add_widget(delete)
+                row.add_widget(delete)
                 contenuto.add_widget(row)
 
         def open(self, remote):
@@ -263,8 +263,12 @@ def run() -> None:
                 return
             self.status.text = f"{scheda.name}: sola lettura"
             self.home_body.clear_widgets()
-            bar = BoxLayout(size_hint_y=None, height=48, spacing=8)
-            back = Button(text="< Lista", size_hint_x=None, width=120)
+            profile = _ui_profile()
+            bar = BoxLayout(size_hint_y=None,
+                            height=profile.tokens.dimensions["toolbar_height"],
+                            spacing=profile.tokens.spacing["sm"])
+            back = Button(text="< Lista", size_hint_x=None,
+                          width=profile.touch_target * 2.5)
             back.bind(on_release=lambda *_: self.refresh())
             edit = Button(text="Modifica")
             edit.bind(on_release=lambda *_: self.edit(remote))
@@ -273,8 +277,7 @@ def run() -> None:
             bar.add_widget(back)
             bar.add_widget(edit)
             bar.add_widget(workout)
-            scroll, contenuto = _area_scrollabile(spacing=12)
-            profile = _ui_profile()
+            scroll, contenuto = _area_scrollabile(spacing=profile.tokens.spacing["md"])
             gruppo_corrente = object()
             for exercise in scheda.exercises:
                 gruppo = (exercise.group or "").strip()
@@ -286,10 +289,24 @@ def run() -> None:
                             f"{escape_markup(gruppo.upper())}[/size][/color][/b]", contenuto))
                 contenuto.add_widget(self._card_lettura(exercise))
             if home_plan(profile).master_detail:
-                shell = BoxLayout(spacing=profile.tokens.spacing["lg"])
-                shell.add_widget(scroll)
-                self.home_body.add_widget(bar)
-                self.home_body.add_widget(shell)
+                master = ScrollView(size_hint_x=None,
+                                    width=profile.touch_target * 6)
+                elenco = BoxLayout(orientation="vertical", size_hint_y=None,
+                                   spacing=profile.tokens.spacing["xs"])
+                elenco.bind(minimum_height=elenco.setter("height"))
+                for item in self._ultime_schede:
+                    choice = Button(text=item.name, size_hint_y=None,
+                                    height=profile.touch_target)
+                    choice.bind(on_release=lambda _, r=item: self._apri_in_lettura(r))
+                    elenco.add_widget(choice)
+                master.add_widget(elenco)
+                body = BoxLayout(orientation="vertical")
+                columns = BoxLayout(spacing=profile.tokens.spacing["lg"])
+                columns.add_widget(master)
+                columns.add_widget(scroll)
+                body.add_widget(bar)
+                body.add_widget(columns)
+                self.home_body.add_widget(body)
             else:
                 self.home_body.add_widget(bar)
                 self.home_body.add_widget(scroll)
