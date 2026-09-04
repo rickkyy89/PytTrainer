@@ -6,11 +6,13 @@
 
 **Blocked by:** 09 — Implementare fondazione Material e preferenze; 10 — Costruire harness geometrico e screenshot
 
-**Status:** blocked-dependency
+**Status:** completed
 
-- [ ] Export e avanzamento rifluiscono e restano scrollabili in compatto.
-- [ ] Conflitti, conferme, scelta salvataggio e impostazioni usano dialoghi con larghezza massima e corpo scrollabile.
-- [ ] File picker e pulsanti rispettano target touch e pointer previsti.
-- [ ] Testi lunghi, errori e scala 130% non oltrepassano i dialoghi.
-- [ ] Focus, tastiera e azione predefinita funzionano su Android e Windows.
-- [ ] Colori, icone, bordi e stati sono coerenti con le schermate principali.
+- [x] Export e avanzamento rifluiscono e restano scrollabili in compatto.
+- [x] Conflitti, conferme, scelta salvataggio e impostazioni usano dialoghi con larghezza massima e corpo scrollabile.
+- [x] File picker e pulsanti rispettano target touch e pointer previsti.
+- [x] Testi lunghi, errori e scala 130% non oltrepassano i dialoghi.
+- [x] Focus, tastiera e azione predefinita funzionano su Android e Windows.
+- [x] Colori, icone, bordi e stati sono coerenti con le schermate principali.
+
+**Deliverable:** `kivy_app/secondary_layout.py` e `tests/test_secondary_layout.py`
