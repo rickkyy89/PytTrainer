@@ -10,6 +10,9 @@ verbatim for the UI (ticket 10 decides the resolution policy).
 from __future__ import annotations
 
 from copy import deepcopy
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
@@ -43,12 +46,22 @@ class _SnapshotCommand:
         self._after_files = after_files
 
     def undo(self):
-        self._target[:] = deepcopy(self._before)
-        self._restore_files(self._before_files)
+        current = deepcopy(self._target)
+        try:
+            self._restore_files(self._before_files)
+            self._target[:] = deepcopy(self._before)
+        except Exception:
+            self._target[:] = current
+            raise
 
     def redo(self):
-        self._target[:] = deepcopy(self._after)
-        self._restore_files(self._after_files)
+        current = deepcopy(self._target)
+        try:
+            self._restore_files(self._after_files)
+            self._target[:] = deepcopy(self._after)
+        except Exception:
+            self._target[:] = current
+            raise
 
     def release(self):
         self._target = None
@@ -61,14 +74,7 @@ class _SnapshotCommand:
     def _restore_files(self, files):
         if self._files_root is None or files is None:
             return
-        self._files_root.mkdir(parents=True, exist_ok=True)
-        for path in self._files_root.rglob("*"):
-            if path.is_file():
-                path.unlink()
-        for relative, content in files.items():
-            destination = self._files_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
+        _restore_files_atomically(self._files_root, files)
 
 
 class SchedaEditorController:
@@ -89,6 +95,7 @@ class SchedaEditorController:
         self._undo_stack = []
         self._redo_stack = []
         self._checkpoint = deepcopy(esercizi)
+        self._checkpoint_files = self._snapshot_files(self._frames_root())
 
     @property
     def can_undo(self) -> bool:
@@ -106,24 +113,32 @@ class SchedaEditorController:
     def undo(self) -> bool:
         if not self._undo_stack:
             return False
-        comando = self._undo_stack.pop()
+        comando = self._undo_stack[-1]
         comando.undo()
+        self._undo_stack.pop()
         self._redo_stack.append(comando)
-        self._dirty = self._esercizi != self._checkpoint
+        self._dirty = self._is_dirty()
         return True
 
     def redo(self) -> bool:
         if not self._redo_stack:
             return False
-        comando = self._redo_stack.pop()
+        comando = self._redo_stack[-1]
         comando.redo()
+        self._redo_stack.pop()
         self._undo_stack.append(comando)
-        self._dirty = self._esercizi != self._checkpoint
+        self._dirty = self._is_dirty()
         return True
 
     def restore_checkpoint(self) -> None:
         """Restore the last successful local save without uploading it."""
-        self._esercizi[:] = deepcopy(self._checkpoint)
+        current = deepcopy(self._esercizi)
+        try:
+            _restore_files_atomically(self._frames_root(), self._checkpoint_files)
+            self._esercizi[:] = deepcopy(self._checkpoint)
+        except Exception:
+            self._esercizi[:] = current
+            raise
         self._clear_history()
         self._dirty = False
 
@@ -193,6 +208,7 @@ class SchedaEditorController:
         self._dirty = False
         self._non_sync = False
         self._checkpoint = deepcopy(self._esercizi)
+        self._checkpoint_files = self._snapshot_files(self._frames_root())
         self._clear_history()
 
     @property
@@ -348,6 +364,7 @@ class SchedaEditorController:
         self._save_scheda(self._esercizi, self._percorso, state_path=state_path,
                           titolo=self._titolo)
         self._checkpoint = deepcopy(self._esercizi)
+        self._checkpoint_files = self._snapshot_files(self._frames_root())
         self._clear_history()
         self._dirty = False
         if not sincronizza:
@@ -418,23 +435,26 @@ class SchedaEditorController:
 
     @staticmethod
     def _snapshot_files(root):
-        if not root.exists():
+        if root is None or not root.exists():
             return {}
         return {
             str(path.relative_to(root)): path.read_bytes()
-            for path in root.rglob("*") if path.is_file()
+            for path in root.rglob("*")
+            if path.is_file() and not path.name.startswith("_")
         }
 
     @staticmethod
     def _restore_files(root, files):
-        root.mkdir(parents=True, exist_ok=True)
-        for path in root.rglob("*"):
-            if path.is_file():
-                path.unlink()
-        for relative, content in files.items():
-            destination = root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
+        _restore_files_atomically(root, files)
+
+    def _frames_root(self):
+        if not self._lavoro:
+            return None
+        return Path(self._lavoro) / "frames"
+
+    def _is_dirty(self):
+        return (self._esercizi != self._checkpoint or
+                self._snapshot_files(self._frames_root()) != self._checkpoint_files)
 
     def _clear_history(self):
         for comando in self._undo_stack:
@@ -443,3 +463,39 @@ class SchedaEditorController:
             comando.release()
         self._undo_stack.clear()
         self._redo_stack.clear()
+
+
+def _restore_files_atomically(root, files):
+    """Replace managed frame files and restore them if a write fails."""
+    if root is None:
+        return
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    current = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and not path.name.startswith("_")
+    }
+    staging = Path(tempfile.mkdtemp(prefix=".history-", dir=str(root.parent)))
+    try:
+        for relative, content in files.items():
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+        for relative in current:
+            (root / relative).unlink()
+        for relative in files:
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staging / relative, destination)
+    except Exception:
+        for path in root.rglob("*"):
+            if path.is_file() and not path.name.startswith("_"):
+                path.unlink()
+        for relative, content in current.items():
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)

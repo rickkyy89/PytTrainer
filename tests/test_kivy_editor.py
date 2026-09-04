@@ -234,6 +234,27 @@ def test_checkpoint_locale_svuota_cronologia_e_scarta_ripristina_checkpoint(tmp_
     assert editor.sporco is False
 
 
+def test_scarta_ripristina_anche_i_byte_dei_frame_del_checkpoint(tmp_path):
+    lavoro = tmp_path / "s.work"
+    frames = lavoro / "frames"
+    frames.mkdir(parents=True)
+    frame = frames / "squat_start.jpg"
+    frame.write_bytes(b"checkpoint")
+    esercizio = make_editor().esercizi[0]
+    esercizio["frame_start"] = str(frame)
+    editor = make_editor([esercizio], percorso_bundle=str(tmp_path / "s.scheda"),
+                         cartella_lavoro=str(lavoro),
+                         save_scheda=lambda *a, **k: None)
+    editor.salva_locale()
+    frame.write_bytes(b"modificato")
+    editor.marca_modifica()
+
+    editor.discard()
+
+    assert frame.read_bytes() == b"checkpoint"
+    assert editor.sporco is False
+
+
 def test_sposta_alla_riordina_senza_spostare_gli_altri():
     editor = make_editor()
     editor.aggiungi()

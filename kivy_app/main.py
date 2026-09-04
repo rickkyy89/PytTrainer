@@ -180,7 +180,7 @@ def run() -> None:
                 output_dir = editor.output_frames()
                 media = MediaFlowController(
                     editor.esercizi[indice], output_dir,
-                    backend=media_backend, on_change=editor.marca_modifica,
+                    backend=media_backend,
                     transaction=lambda operation: editor.transazione_media(
                         operation, output_dir=output_dir),
                 )

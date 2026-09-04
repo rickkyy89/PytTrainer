@@ -6,7 +6,7 @@
 
 **Blocked by:** 07 — Audit e hardening di Undo/Salva
 
-**Status:** blocked-dependency
+**Status:** ready-for-agent
 
 - [ ] Sono definiti i profili compatto 400–599dp, medio 600–959dp ed espanso da 960dp.
 - [ ] La scala Auto segue il sistema; 100%, 115% e 130% la sostituiscono e persistono solo sul dispositivo.
