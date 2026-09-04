@@ -22,10 +22,13 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
+from kivy.core.window import Window
 
 from .file_picker import choose_file
 from .launcher import apri_url
 from .media import MediaFlowError
+from .material import profile_for_window
+from .media_layout import media_layout
 
 
 def _formatta_durata(secondi) -> str:
@@ -41,6 +44,7 @@ class MediaScreen(BoxLayout):
         self._media = media
         self._on_back = on_back
         self._busy = False
+        self._ui = media_layout(profile_for_window(Window, input_mode="touch"))
 
         header = BoxLayout(size_hint_y=None, height=44, spacing=8)
         self._back = Button(text="< Editor", size_hint_x=None, width=120)
@@ -228,7 +232,9 @@ class MediaScreen(BoxLayout):
     # ------------------------------------------------------------- frames
 
     def _build_frame_section(self):
-        self.frames_row = BoxLayout(size_hint_y=None, height=390, spacing=8)
+        self.frames_row = BoxLayout(
+            orientation=self._ui.frame_axis, size_hint_y=None,
+            height=390 if self._ui.frame_axis == "horizontal" else 780, spacing=8)
         self._scrub_jobs: dict[str, object] = {}
         self._scrub_generazioni: dict[str, int] = {}
         self._scrub_pendente: dict[str, float] = {}
@@ -243,7 +249,7 @@ class MediaScreen(BoxLayout):
             setattr(self, f"preview_{suffisso}", preview)
             panel.add_widget(self._build_scrub(suffisso))
             sliders = {}
-            lato_line = BoxLayout(size_hint_y=None, height=90, spacing=2)
+            lato_line = BoxLayout(size_hint_y=None, height=max(90, self._ui.target_minimum * 2), spacing=2)
             for lato in ("sinistra", "alto", "destra", "basso"):
                 box = BoxLayout(orientation="vertical")
                 box.add_widget(Label(text=lato, size_hint_y=None, height=20))
@@ -256,12 +262,12 @@ class MediaScreen(BoxLayout):
                 slider.bind(on_value=self._preview_handler(suffisso, sliders))
             self._preview_jobs = getattr(self, "_preview_jobs", {})
             panel.add_widget(lato_line)
-            actions = BoxLayout(size_hint_y=None, height=40, spacing=4)
+            actions = BoxLayout(size_hint_y=None, height=self._ui.target_minimum, spacing=4)
             apply = Button(text="Applica")
             apply.bind(on_release=lambda _, s=suffisso, sl=sliders: self._apply_crop(s, sl))
             restore = Button(text="Ripristina")
             restore.bind(on_release=lambda _, s=suffisso: self._restore(s))
-            import_btn = Button(text="Immagine…", size_hint_x=None, width=110)
+            import_btn = Button(text="Immagine…", size_hint_x=None, width=self._ui.target_minimum * 2)
             import_btn.bind(on_release=lambda _, s=suffisso: self._import_image(s))
             actions.add_widget(apply)
             actions.add_widget(restore)
