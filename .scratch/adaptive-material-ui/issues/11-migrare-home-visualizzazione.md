@@ -6,12 +6,14 @@
 
 **Blocked by:** 09 — Implementare fondazione Material e preferenze; 10 — Costruire harness geometrico e screenshot
 
-**Status:** blocked-dependency
+**Status:** completed
 
-- [ ] La home compatta usa card apribili al tap con azioni secondarie in menu e conferma eliminazione.
-- [ ] Il profilo espanso usa master-detail tra lista e visualizzazione.
-- [ ] La visualizzazione usa card con corpo 16sp a scala 100%, gerarchia chiara e testo sempre completo.
-- [ ] START e FINISH sono verticali in compatto e affiancati quando lo spazio lo consente.
-- [ ] Il tap su un frame apre fullscreen con zoom e passaggio START/FINISH tramite swipe.
-- [ ] Su desktop il contenuto è centrato con larghezza massima leggibile.
-- [ ] Harness e screenshot coprono nomi, note e spiegazioni lunghe.
+- [x] La home compatta usa card apribili al tap con azioni secondarie in menu e conferma eliminazione.
+- [x] Il profilo espanso usa master-detail tra lista e visualizzazione.
+- [x] La visualizzazione usa card con corpo 16sp a scala 100%, gerarchia chiara e testo sempre completo.
+- [x] START e FINISH sono verticali in compatto e affiancati quando lo spazio lo consente.
+- [x] Il tap su un frame apre fullscreen con zoom e passaggio START/FINISH tramite swipe.
+- [x] Su desktop il contenuto è centrato con larghezza massima leggibile.
+- [x] Harness e screenshot coprono nomi, note e spiegazioni lunghe.
+
+**Deliverable:** `kivy_app/home_layout.py`, integrazione in `kivy_app/main.py` e `tests/test_home_layout.py`

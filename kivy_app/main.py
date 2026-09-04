@@ -51,6 +51,7 @@ def run() -> None:
     from kivy.core.window import Window
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.button import Button
+    from kivy.uix.carousel import Carousel
     from kivy.uix.image import Image
     from kivy.uix.label import Label
     from kivy.uix.popup import Popup
@@ -65,6 +66,8 @@ def run() -> None:
     from .media_screen import MediaScreen
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
+    from .home_layout import home_plan, readonly_card
+    from .material import ViewportMetrics, adaptive_profile
 
     controller = build_controller()
     if sys.platform == "android":
@@ -88,6 +91,14 @@ def run() -> None:
         contenuto.bind(minimum_height=contenuto.setter("height"))
         scroll.add_widget(contenuto)
         return scroll, contenuto
+
+    def _ui_profile():
+        return adaptive_profile(ViewportMetrics(
+            Window.width / (getattr(Window, "density", None) or 1.0),
+            Window.height / (getattr(Window, "density", None) or 1.0),
+            getattr(Window, "density", None) or 1.0,
+            "touch" if sys.platform == "android" else "pointer",
+        ))
 
     class PyTrainerApp(App):
         def build(self):
@@ -204,14 +215,21 @@ def run() -> None:
             self.home_body.clear_widgets()
             scroll, contenuto = _area_scrollabile()
             self.home_body.add_widget(scroll)
+            profile = _ui_profile()
+            compact = home_plan(profile).columns == 1
             for remote in self._ultime_schede:
-                row = BoxLayout(size_hint_y=None, height=56, spacing=6)
+                row = BoxLayout(size_hint_y=None, height=profile.touch_target + 16, spacing=6,
+                                 padding=profile.tokens.spacing["xs"])
                 open_button = Button(text=f"{remote.name}   —   {remote.modified_time}")
                 open_button.bind(on_release=lambda _, item=remote: self.open(item))
-                delete = Button(text="Elimina", size_hint_x=None, width=100)
+                delete = Button(text="Elimina", size_hint_x=None,
+                                width=profile.touch_target * 2.2)
                 delete.bind(on_release=lambda _, item=remote: self.confirm_delete(item))
                 row.add_widget(open_button)
-                row.add_widget(delete)
+                if not compact:
+                    row.add_widget(delete)
+                else:
+                    row.add_widget(delete)
                 contenuto.add_widget(row)
 
         def open(self, remote):
@@ -256,6 +274,7 @@ def run() -> None:
             bar.add_widget(edit)
             bar.add_widget(workout)
             scroll, contenuto = _area_scrollabile(spacing=12)
+            profile = _ui_profile()
             gruppo_corrente = object()
             for exercise in scheda.exercises:
                 gruppo = (exercise.group or "").strip()
@@ -266,11 +285,20 @@ def run() -> None:
                             f"[b][color=62c0a2][size=19]"
                             f"{escape_markup(gruppo.upper())}[/size][/color][/b]", contenuto))
                 contenuto.add_widget(self._card_lettura(exercise))
-            self.home_body.add_widget(bar)
-            self.home_body.add_widget(scroll)
+            if home_plan(profile).master_detail:
+                shell = BoxLayout(spacing=profile.tokens.spacing["lg"])
+                shell.add_widget(scroll)
+                self.home_body.add_widget(bar)
+                self.home_body.add_widget(shell)
+            else:
+                self.home_body.add_widget(bar)
+                self.home_body.add_widget(scroll)
 
         def _card_lettura(self, exercise):
-            card = BoxLayout(orientation="vertical", size_hint_y=None, spacing=4, padding=6)
+            profile = _ui_profile()
+            model = readonly_card(exercise, profile)
+            card = BoxLayout(orientation="vertical", size_hint_y=None,
+                             spacing=profile.tokens.spacing["xs"], padding=profile.tokens.spacing["sm"])
             card.bind(minimum_height=card.setter("height"))
             titolo = f"[b][size=20]{escape_markup(exercise.name or '(senza nome)')}[/size][/b]"
             if exercise.repetitions:
@@ -287,10 +315,16 @@ def run() -> None:
                 card.add_widget(_label_righe(
                     f"[i][color=b3b3b3][size=15]Note: {escape_markup(exercise.notes)}"
                     "[/size][/color][/i]", card))
-            frames = BoxLayout(size_hint_y=None, height=260, spacing=6)
+            frames = BoxLayout(orientation=model.frame_axis, size_hint_y=None,
+                               height=260 if model.frame_axis == "horizontal" else 520, spacing=6)
             for percorso in (exercise.frame_start, exercise.frame_finish):
                 if percorso:
-                    frames.add_widget(Image(source=percorso, fit_mode="contain"))
+                    image = Image(source=percorso, fit_mode="contain")
+                    image.bind(on_touch_down=lambda widget, touch, path=percorso:
+                               self._apri_frame_fullscreen(path, exercise.frame_start,
+                                                           exercise.frame_finish)
+                               if widget.collide_point(*touch.pos) else False)
+                    frames.add_widget(image)
                 else:
                     vuoto = BoxLayout()
                     vuoto.add_widget(Label(text="frame non estratto",
@@ -298,6 +332,21 @@ def run() -> None:
                     frames.add_widget(vuoto)
             card.add_widget(frames)
             return card
+
+        def _apri_frame_fullscreen(self, percorso, start, finish):
+            carousel = Carousel(direction="right", loop=True)
+            for frame in (start, finish):
+                if not frame:
+                    continue
+                from kivy.uix.scatter import Scatter
+                zoom = Scatter(do_scale=True, do_translation=False, scale_min=1,
+                               scale_max=4, size_hint=(1, 1))
+                zoom.add_widget(Image(source=frame, fit_mode="contain"))
+                carousel.add_widget(zoom)
+            if carousel.slides:
+                carousel.index = 0 if percorso == start else min(1, len(carousel.slides) - 1)
+                Popup(title="Frame START / FINISH", content=carousel,
+                      size_hint=(0.98, 0.98)).open()
 
         def open_workout(self, remote):
             try:
