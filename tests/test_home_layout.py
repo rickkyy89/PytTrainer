@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from kivy_app.home_layout import readonly_card
+from kivy_app.home_layout import home_toolbar_rows, readonly_card
 from kivy_app.material import ViewportMetrics, adaptive_profile
 
 
@@ -26,5 +26,13 @@ def test_readonly_cards_keep_long_content_and_reflow_frames():
 
 def test_expanded_profile_preserves_body_typography():
     profile = adaptive_profile(ViewportMetrics(1200, 800))
-    assert profile.tokens.typography["body"] == 16
+    assert profile.tokens.typography["body"] == 18
     assert profile.tokens.dimensions["content_max_width"] > 0
+
+
+def test_home_toolbar_reflows_text_and_scale_without_hiding_actions():
+    compact = adaptive_profile(ViewportMetrics(400, 800, input_mode="touch"))
+    expanded = adaptive_profile(ViewportMetrics(1200, 800))
+    assert home_toolbar_rows(compact) == (("refresh", "create", "folders"),
+                                          ("scale", "text"))
+    assert home_toolbar_rows(expanded) == (("refresh", "create", "folders", "scale", "text"),)

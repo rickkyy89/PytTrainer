@@ -6,13 +6,6 @@ from pathlib import Path
 import subprocess
 from urllib.parse import parse_qs, urlparse
 
-from google.auth.exceptions import RefreshError
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-
-
 def default_base_dir() -> Path:
     """Return the application directory used by legacy PC calls."""
     return Path(__file__).resolve().parent.parent
@@ -66,6 +59,12 @@ class LocalCredentialsProvider:
         )
 
     def get_credentials(self, scopes: list[str]):
+        from google.auth.exceptions import RefreshError
+        from google.auth.transport.requests import Request
+        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
         if self.service_account_path.exists():
             return service_account.Credentials.from_service_account_file(
                 str(self.service_account_path), scopes=scopes
@@ -97,6 +96,8 @@ class LocalCredentialsProvider:
         return creds
 
     def get_credentials_manual_flow(self, scopes: list[str], auth_code: str | None = None):
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
         if not self.credentials_path.exists():
             raise self._missing_credentials_error()
 

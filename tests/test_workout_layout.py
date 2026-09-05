@@ -20,5 +20,5 @@ def test_workout_compact_is_touch_first_and_stacks_frames():
 def test_workout_wide_keeps_large_typography_and_side_by_side_frames():
     layout = workout_layout(adaptive_profile(ViewportMetrics(1200, 800)))
     assert layout.frame_axis == "horizontal"
-    assert layout.body_font_size == 16
+    assert layout.body_font_size == 18
     assert layout.minimum_target == 40

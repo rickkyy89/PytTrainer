@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 
 from kivy.clock import Clock
+from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -22,16 +23,23 @@ from .launcher import apri_url, condividi_url
 
 
 class ExportScreen(BoxLayout):
-    def __init__(self, export, on_back):
-        super().__init__(orientation="vertical", padding=12, spacing=8)
+    def __init__(self, export, on_back, on_menu=None):
+        super().__init__(orientation="vertical", padding=dp(12), spacing=dp(8))
         self._export = export
         self._on_back = on_back
+        self._on_menu = on_menu
         self._worker: threading.Thread | None = None
         self._url: str | None = None
         self._poll = None
 
-        header = BoxLayout(size_hint_y=None, height=44, spacing=8)
-        self._back = Button(text="< Editor", size_hint_x=None, width=120)
+        header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        if self._on_menu is not None:
+            self._menu = Button(text="Menu", size_hint_x=None, width=dp(82))
+            self._menu.bind(on_release=lambda *_: self._on_menu())
+            header.add_widget(self._menu)
+        else:
+            self._menu = None
+        self._back = Button(text="< Editor", size_hint_x=None, width=dp(120))
         self._back.bind(on_release=lambda *_: self._exit())
         title = Label(text="Generazione Google Doc")
         header.add_widget(self._back)
@@ -43,20 +51,20 @@ class ExportScreen(BoxLayout):
             text=(f"Titolo: {riepilogo.titolo}\n"
                   f"Esercizi pronti (frame START+FINISH): {riepilogo.pronti}/{riepilogo.totali}\n"
                   "La generazione crea un Google Doc A4 e sincronizza lo stato sul bundle."),
-            halign="left", valign="top", size_hint_y=None, height=110,
+            halign="left", valign="top", size_hint_y=None, height=dp(110),
         )
         self.info.bind(width=lambda _, v: setattr(self.info, "text_size", (v, None)))
-        self.info.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], 110)))
+        self.info.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], dp(110))))
         self.add_widget(self.info)
 
         self.progress = Label(text="Premi Avvia per iniziare.", size_hint_y=None,
-                              height=24, halign="left", valign="top")
+                              height=dp(32), halign="left", valign="top")
         self.progress.bind(
             width=lambda _, v: setattr(self.progress, "text_size", (v, None)))
-        self.progress.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], 24)))
+        self.progress.bind(texture_size=lambda l, ts: setattr(l, "height", max(ts[1], dp(32))))
         self.add_widget(self.progress)
 
-        self.actions = BoxLayout(size_hint_y=None, height=48, spacing=8)
+        self.actions = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         self.start_button = Button(text="Avvia")
         self.start_button.bind(on_release=lambda *_: self._start())
         self.actions.add_widget(self.start_button)
@@ -68,6 +76,8 @@ class ExportScreen(BoxLayout):
         self._url = None
         self.start_button.disabled = True
         self._back.disabled = True  # niente editor (e niente Salva) durante il worker
+        if self._menu is not None:
+            self._menu.disabled = True
         self.progress.text = "0% — avvio…"
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
@@ -139,6 +149,8 @@ class ExportScreen(BoxLayout):
         self._worker = None
         self.start_button.disabled = True
         self._back.disabled = False  # il worker e' terminato: si puo' tornare
+        if self._menu is not None:
+            self._menu.disabled = False
 
     def _exit(self):
         if self._poll is not None:

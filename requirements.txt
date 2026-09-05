@@ -1,8 +1,15 @@
 streamlit
-kivy
+Kivy==2.3.1
+KivyMD==2.0.0
+materialyoucolor==3.0.3
+materialshapes==0.3
+pycairo==1.28.0
+asyncgui==0.6.3
+asynckivy==0.6.4
+exceptiongroup
 plyer
 yt-dlp
-pillow
+Pillow==11.3.0
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib

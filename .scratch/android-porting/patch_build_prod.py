@@ -15,13 +15,17 @@ old = (
 )
 new = (
     '"venv/bin/pip " +\n'
-    '                "install -v --target \'{0}\' --no-deps --only-binary=:all: "\n'
+    '                "install -v --upgrade --target \'{0}\' --no-deps --only-binary=:all: "\n'
     '                "--platform=android_24_arm64_v8a --implementation=cp "\n'
     '                "--python-version=3.14 -r requirements.txt"\n'
 )
 
-if "--platform=android_24_arm64_v8a --implementation=cp" in src:
+if "install -v --upgrade --target" in src:
     print("ALREADY PATCHED")
+elif "install -v --target" in src and "--platform=android_24_arm64_v8a" in src:
+    src = src.replace("install -v --target", "install -v --upgrade --target")
+    io.open(p, "w", encoding="utf-8").write(src)
+    print("PATCHED NAMESPACE UPGRADE")
 elif old in src:
     src = src.replace(old, new)
     io.open(p, "w", encoding="utf-8").write(src)

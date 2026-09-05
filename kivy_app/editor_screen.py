@@ -34,7 +34,7 @@ CAMPI_LUNGHI = (("spiegazione", "Spiegazione"), ("note", "Note"))
 
 class EditorScreen(BoxLayout):
     def __init__(self, controller, editor, remote, on_back, open_media=None, on_export=None,
-                 on_conflict_exit=None):
+                 on_conflict_exit=None, on_menu=None):
         super().__init__(orientation="vertical", padding=10, spacing=6)
         self._controller = controller
         self._editor = editor
@@ -43,10 +43,15 @@ class EditorScreen(BoxLayout):
         self._open_media = open_media
         self._on_export = on_export
         self._on_conflict_exit = on_conflict_exit or (lambda message: self._on_back())
+        self._on_menu = on_menu
         self._fields = []
         self._open_index = 0
 
         self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        if self._on_menu is not None:
+            menu = Button(text="Menu", size_hint_x=None, width=dp(82))
+            menu.bind(on_release=lambda *_: self.richiedi_uscita(self._on_menu))
+            self.header.add_widget(menu)
         back = Button(text="< Indietro", size_hint_x=None, width=dp(120))
         back.bind(on_release=lambda *_: self.richiedi_uscita())
         self.status = Label(text="", halign="left", valign="middle",
@@ -83,11 +88,11 @@ class EditorScreen(BoxLayout):
         # Undo, redo and save stay reachable while the form scrolls.
         action_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         action_profile = profile_for_window(Window)
-        undo_bar = Button(text="Annulla", size_hint_x=None, width=action_profile.touch_target * 2)
+        undo_bar = Button(text="Annulla", size_hint_x=None, width=dp(action_profile.touch_target * 2))
         undo_bar.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
-        redo_bar = Button(text="Ripeti", size_hint_x=None, width=action_profile.touch_target * 2)
+        redo_bar = Button(text="Ripeti", size_hint_x=None, width=dp(action_profile.touch_target * 2))
         redo_bar.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
-        save_bar = Button(text="Salva", size_hint_x=None, width=action_profile.touch_target * 2)
+        save_bar = Button(text="Salva", size_hint_x=None, width=dp(action_profile.touch_target * 2))
         save_bar.bind(on_release=lambda *_: self.apri_salvataggio())
         for button in (undo_bar, redo_bar, save_bar):
             action_bar.add_widget(button)
@@ -145,15 +150,16 @@ class EditorScreen(BoxLayout):
         if indice != self._open_index:
             return block
 
+        campo_h = dp(profile.tokens.dimensions["field_height"])
         griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
-                             row_default_height=dp(40), row_force_default=True)
+                             row_default_height=campo_h, row_force_default=True)
 
         def ricalcola_griglia(*_, g=griglia, b=block):
             largo_dp = max(b.width, 1) / profile.viewport.system_density
             per_riga = field_columns(profile, largo_dp)
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
-            g.height = righe * dp(40) + (righe - 1) * dp(6)
+            g.height = righe * campo_h + (righe - 1) * dp(6)
         block.bind(width=ricalcola_griglia)
         for chiave, etichetta in CAMPI_BREVI:
             cella = BoxLayout(orientation="vertical" if layout.labels_above else "horizontal", spacing=dp(4))
@@ -161,11 +167,12 @@ class EditorScreen(BoxLayout):
                                     width=0 if layout.labels_above else dp(95),
                                     halign="left", valign="middle")
             etichetta_label.bind(
-                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, dp(40))))
+                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, campo_h)))
             cella.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
-                              hint_text=etichetta, size_hint_y=None if layout.labels_above else 1,
-                              height=dp(48) if layout.labels_above else None)
+                              hint_text=etichetta,
+                              **({} if not layout.labels_above else
+                                 {"size_hint_y": None, "height": campo_h}))
             campo.bind(focus=self._field_handler(indice, chiave, campo))
             self._fields.append(campo)
             cella.add_widget(campo)
@@ -227,10 +234,11 @@ class EditorScreen(BoxLayout):
                 campo.focus = False
                 return
 
-    def richiedi_uscita(self):
+    def richiedi_uscita(self, on_continue=None):
         self._commit_active_field()
+        target = on_continue or self._on_back
         if not self._editor.sporco:
-            self._on_back()
+            target()
             return
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title="Modifiche non salvate", content=content,
@@ -240,23 +248,24 @@ class EditorScreen(BoxLayout):
         save = Button(text="Salva")
         discard = Button(text="Scarta")
         stay = Button(text="Resta")
-        save.bind(on_release=lambda *_: (popup.dismiss(), self.apri_salvataggio(chiudi=True)))
-        discard.bind(on_release=lambda *_: (popup.dismiss(), self._editor.discard(), self._on_back()))
+        save.bind(on_release=lambda *_: (
+            popup.dismiss(), self.apri_salvataggio(chiudi=True, on_close=target)))
+        discard.bind(on_release=lambda *_: (popup.dismiss(), self._editor.discard(), target()))
         stay.bind(on_release=lambda *_: popup.dismiss())
         for button in (save, discard, stay):
             actions.add_widget(button)
         content.add_widget(actions)
         popup.open()
 
-    def apri_salvataggio(self, chiudi=False):
+    def apri_salvataggio(self, chiudi=False, on_close=None):
         self._commit_active_field()
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title="Salva scheda", content=content, size_hint=(0.8, 0.3),
                       auto_dismiss=True)
         locale = Button(text="Salva in locale")
         drive = Button(text="Salva su Drive")
-        locale.bind(on_release=lambda *_: (popup.dismiss(), self._save(False, chiudi)))
-        drive.bind(on_release=lambda *_: (popup.dismiss(), self._save(True, chiudi)))
+        locale.bind(on_release=lambda *_: (popup.dismiss(), self._save(False, chiudi, on_close)))
+        drive.bind(on_release=lambda *_: (popup.dismiss(), self._save(True, chiudi, on_close)))
         content.add_widget(locale)
         content.add_widget(drive)
         popup.open()
@@ -385,8 +394,9 @@ class EditorScreen(BoxLayout):
             lambda sostituisci, posizione: self._controller.import_remote_into(
                 self._editor, remote, sostituisci=sostituisci, posizione=posizione))
 
-    def _save(self, sincronizza=True, chiudi=False):
+    def _save(self, sincronizza=True, chiudi=False, on_close=None):
         self._commit_active_field()
+        target = on_close or self._on_back
         try:
             risultato = self._editor.salva(sincronizza=sincronizza)
         except EditorValidationError as exc:
@@ -400,7 +410,7 @@ class EditorScreen(BoxLayout):
         if not sincronizza:
             self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
             if chiudi:
-                self._on_back()
+                target()
             return
         if isinstance(risultato, SyncConflict):
             from .conflict_dialog import apri_dialogo_conflitto
@@ -412,7 +422,7 @@ class EditorScreen(BoxLayout):
         else:
             self.status.text = "Salvato su Drive."
             if chiudi:
-                self._on_back()
+                target()
 
     def _esito_conflitto(self, choice, esito):
         if isinstance(esito, Exception):

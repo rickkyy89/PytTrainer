@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 
 from kivy.clock import Clock
+from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.image import AsyncImage, Image
@@ -39,15 +40,22 @@ def _formatta_durata(secondi) -> str:
 
 
 class MediaScreen(BoxLayout):
-    def __init__(self, media, on_back):
-        super().__init__(orientation="vertical", padding=10, spacing=6)
+    def __init__(self, media, on_back, on_menu=None):
+        super().__init__(orientation="vertical", padding=dp(10), spacing=dp(6))
         self._media = media
         self._on_back = on_back
+        self._on_menu = on_menu
         self._busy = False
         self._ui = media_layout(profile_for_window(Window))
 
-        header = BoxLayout(size_hint_y=None, height=44, spacing=8)
-        self._back = Button(text="< Editor", size_hint_x=None, width=120)
+        header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        if self._on_menu is not None:
+            self._menu = Button(text="Menu", size_hint_x=None, width=dp(82))
+            self._menu.bind(on_release=lambda *_: self._on_menu())
+            header.add_widget(self._menu)
+        else:
+            self._menu = None
+        self._back = Button(text="< Editor", size_hint_x=None, width=dp(120))
         self._back.bind(on_release=lambda *_: self._on_back())
         self.status = Label(text="", halign="left", valign="middle",
                             shorten=True, shorten_from="right")
@@ -59,7 +67,7 @@ class MediaScreen(BoxLayout):
 
         body = ScrollView()
         self._scroll = body
-        self.column = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
+        self.column = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
         self.column.bind(minimum_height=self.column.setter("height"))
         body.add_widget(self.column)
         self.add_widget(body)
@@ -80,19 +88,19 @@ class MediaScreen(BoxLayout):
     # ------------------------------------------------------------- video
 
     def _build_video_section(self):
-        video_line = BoxLayout(size_hint_y=None, height=40, spacing=4)
+        video_line = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(4))
         self.video_label = Label(text=f"Video: {self._media.video_url or 'nessuno'}",
                                  halign="left", valign="middle",
                                  shorten=True, shorten_from="right")
         self.video_label.bind(
             width=lambda _, v: setattr(self.video_label, "text_size", (v, self.video_label.height)))
-        play = Button(text="Play", size_hint_x=None, width=80)
+        play = Button(text="Play", size_hint_x=None, width=dp(80))
         play.bind(on_release=lambda *_: self._play())
-        search = Button(text="Cerca", size_hint_x=None, width=100)
+        search = Button(text="Cerca", size_hint_x=None, width=dp(100))
         search.bind(on_release=lambda *_: self._run_async(self._do_search))
-        manual = Button(text="URL manuale", size_hint_x=None, width=130)
+        manual = Button(text="URL manuale", size_hint_x=None, width=dp(130))
         manual.bind(on_release=lambda *_: self._manual_url_popup())
-        extract = Button(text="Estrai frame", size_hint_x=None, width=130)
+        extract = Button(text="Estrai frame", size_hint_x=None, width=dp(130))
         extract.bind(on_release=lambda *_: self._run_async(self._do_extract))
         video_line.add_widget(self.video_label)
         video_line.add_widget(play)
@@ -101,18 +109,18 @@ class MediaScreen(BoxLayout):
         video_line.add_widget(extract)
         self.column.add_widget(video_line)
 
-        ts_line = BoxLayout(size_hint_y=None, height=40, spacing=4)
-        ts_line.add_widget(Label(text="Start s", size_hint_x=None, width=80))
+        ts_line = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(4))
+        ts_line.add_widget(Label(text="Start s", size_hint_x=None, width=dp(80)))
         self.ts_start = TextInput(text=self._ts_text(self._media.ts_start),
-                                  multiline=False, size_hint_x=None, width=90)
+                                  multiline=False, size_hint_x=None, width=dp(90))
         self.ts_start.bind(focus=self._ts_handler("ts_start", self.ts_start))
         ts_line.add_widget(self.ts_start)
-        ts_line.add_widget(Label(text="Finish s", size_hint_x=None, width=80))
+        ts_line.add_widget(Label(text="Finish s", size_hint_x=None, width=dp(80)))
         self.ts_finish = TextInput(text=self._ts_text(self._media.ts_finish),
-                                   multiline=False, size_hint_x=None, width=90)
+                                    multiline=False, size_hint_x=None, width=dp(90))
         self.ts_finish.bind(focus=self._ts_handler("ts_finish", self.ts_finish))
         ts_line.add_widget(self.ts_finish)
-        heuristic = Button(text="EURISTICA 10%/50%", size_hint_x=None, width=160)
+        heuristic = Button(text="EURISTICA 10%/50%", size_hint_x=None, width=dp(160))
         heuristic.bind(on_release=lambda *_: self._apply_heuristic())
         ts_line.add_widget(heuristic)
         self.column.add_widget(ts_line)
@@ -174,14 +182,14 @@ class MediaScreen(BoxLayout):
     def _render_results(self, *_):
         self.results.clear_widgets()
         for indice, scelta in enumerate(self._media.scelte):
-            row = BoxLayout(size_hint_y=None, height=44, spacing=6)
+            row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
             info = Button(text=f"{indice + 1}. {scelta.title[:60]} ({_formatta_durata(scelta.duration)})",
                           )
             info.bind(on_release=lambda _, i=indice: self._run_async(lambda: self._choose(i)))
             video_id = (scelta.url.split("v=")[-1] if "v=" in scelta.url
                         else scelta.url.rstrip("/").split("/")[-1])[:11]
             preview = AsyncImage(source=f"https://img.youtube.com/vi/{video_id}/default.jpg",
-                                 fit_mode="contain", size_hint_x=None, width=100)
+                                 fit_mode="contain", size_hint_x=None, width=dp(100))
             row.add_widget(preview)
             row.add_widget(info)
             self.results.add_widget(row)
@@ -200,8 +208,8 @@ class MediaScreen(BoxLayout):
     def _manual_url_popup(self):
         input_url = TextInput(hint_text="https://www.youtube.com/watch?v=...",
                               multiline=False)
-        buttons = BoxLayout(size_hint_y=None, height=44, spacing=8)
-        content = BoxLayout(orientation="vertical", spacing=6)
+        buttons = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        content = BoxLayout(orientation="vertical", spacing=dp(6))
         popup = Popup(title="URL video manuale", content=content, size_hint=(0.9, 0.35))
         ok = Button(text="Imposta")
         cancel = Button(text="Annulla")
@@ -234,7 +242,7 @@ class MediaScreen(BoxLayout):
     def _build_frame_section(self):
         self.frames_row = BoxLayout(
             orientation=self._ui.frame_axis, size_hint_y=None,
-            height=390 if self._ui.frame_axis == "horizontal" else 780, spacing=8)
+            height=dp(195 if self._ui.frame_axis == "horizontal" else 390), spacing=dp(8))
         self._scrub_jobs: dict[str, object] = {}
         self._scrub_generazioni: dict[str, int] = {}
         self._scrub_pendente: dict[str, float] = {}
@@ -242,17 +250,17 @@ class MediaScreen(BoxLayout):
         self._scrub_in_volo: set[str] = set()
         self._scrub_slider: dict[str, Slider] = {}
         for suffisso in ("start", "finish"):
-            panel = BoxLayout(orientation="vertical", spacing=2)
+            panel = BoxLayout(orientation="vertical", spacing=dp(2))
             preview = Image(source=self._media.frame(suffisso) or "",
                             fit_mode="contain", size_hint_y=1)
             panel.add_widget(preview)
             setattr(self, f"preview_{suffisso}", preview)
             panel.add_widget(self._build_scrub(suffisso))
             sliders = {}
-            lato_line = BoxLayout(size_hint_y=None, height=max(90, self._ui.target_minimum * 2), spacing=2)
+            lato_line = BoxLayout(size_hint_y=None, height=dp(max(90, self._ui.target_minimum * 2)), spacing=dp(2))
             for lato in ("sinistra", "alto", "destra", "basso"):
                 box = BoxLayout(orientation="vertical")
-                box.add_widget(Label(text=lato, size_hint_y=None, height=20))
+                box.add_widget(Label(text=lato, size_hint_y=None, height=dp(24)))
                 slider = Slider(min=0, max=45, value=0, orientation="vertical")
                 self._blocca_scroll(slider)
                 box.add_widget(slider)
@@ -262,12 +270,12 @@ class MediaScreen(BoxLayout):
                 slider.bind(on_value=self._preview_handler(suffisso, sliders))
             self._preview_jobs = getattr(self, "_preview_jobs", {})
             panel.add_widget(lato_line)
-            actions = BoxLayout(size_hint_y=None, height=self._ui.target_minimum, spacing=4)
+            actions = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum), spacing=dp(4))
             apply = Button(text="Applica")
             apply.bind(on_release=lambda _, s=suffisso, sl=sliders: self._apply_crop(s, sl))
             restore = Button(text="Ripristina")
             restore.bind(on_release=lambda _, s=suffisso: self._restore(s))
-            import_btn = Button(text="Immagine…", size_hint_x=None, width=self._ui.target_minimum * 2)
+            import_btn = Button(text="Immagine…", size_hint_x=None, width=dp(self._ui.target_minimum * 2))
             import_btn.bind(on_release=lambda _, s=suffisso: self._import_image(s))
             actions.add_widget(apply)
             actions.add_widget(restore)
@@ -293,13 +301,13 @@ class MediaScreen(BoxLayout):
         slider.bind(on_touch_down=down, on_touch_up=up)
 
     def _build_scrub(self, suffisso: str):
-        barra = BoxLayout(orientation="vertical", size_hint_y=None, height=66, spacing=0)
+        barra = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(72), spacing=0)
         etichetta = Label(
             text=self._scrub_testo(getattr(self._media, f"ts_{suffisso}")),
-            size_hint_y=None, height=20, font_size="13sp", halign="left")
+            size_hint_y=None, height=dp(24), font_size="13sp", halign="left")
         barra.add_widget(etichetta)
         setattr(self, f"scrub_etichetta_{suffisso}", etichetta)
-        slider = Slider(min=0, max=1, value=0, size_hint_y=None, height=44)
+        slider = Slider(min=0, max=1, value=0, size_hint_y=None, height=dp(48))
         self._blocca_scroll(slider)
         slider.bind(on_value=self._scrub_handler(suffisso, slider))
         slider.bind(on_touch_up=lambda _, touch, s=suffisso, sl=slider:
@@ -504,6 +512,8 @@ class MediaScreen(BoxLayout):
             return
         self._busy = True
         self._back.disabled = True  # niente ritorno (e niente Salva) durante il worker
+        if self._menu is not None:
+            self._menu.disabled = True
         self.status.text = "Elaboro…"
 
         def worker():
@@ -521,6 +531,8 @@ class MediaScreen(BoxLayout):
     def _finish_async(self, errore):
         self._busy = False
         self._back.disabled = False
+        if self._menu is not None:
+            self._menu.disabled = False
         self.status.text = errore if errore else ""
         if not errore:
             self._refresh_status()

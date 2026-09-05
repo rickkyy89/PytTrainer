@@ -1,5 +1,6 @@
 """Android credential provider tests that do not require Android or pyjnius."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,3 +54,43 @@ def test_android_provider_reports_clear_error_when_native_authorization_is_unava
 
 def test_android_provider_import_does_not_load_pyjnius():
     assert "jnius" not in sys.modules
+
+
+def test_core_platform_import_does_not_load_desktop_crypto_stack():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import core.platform; "
+            "assert 'google.auth.crypt' not in sys.modules",
+        ],
+        cwd=PROJECT_ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0
+
+
+def test_android_manifest_declares_google_runtime_dependencies():
+    requirements_line = next(
+        line for line in (PROJECT_ROOT / "buildozer.spec").read_text(encoding="utf-8").splitlines()
+        if line.startswith("requirements = ")
+    )
+    requirements = requirements_line.split("=", 1)[1].split(",")
+    declared = {item.split("==", 1)[0] for item in requirements}
+
+    assert {
+        "cachetools",
+        "google-api-core",
+        "googleapis-common-protos",
+        "httplib2",
+        "proto-plus",
+        "protobuf",
+        "pyasn1",
+        "pyasn1-modules",
+        "pyparsing",
+        "rsa",
+        "uritemplate",
+    } <= declared
+    assert "google-auth==2.23.4" in requirements
+    assert "cryptography" not in declared

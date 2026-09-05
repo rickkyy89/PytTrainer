@@ -1439,8 +1439,10 @@ def test_get_credentials_manual_flow_senza_credentials_json(tmp_path, monkeypatc
 
 
 def test_get_credentials_manual_flow_restituisce_url_autorizzazione(tmp_path, monkeypatch):
+    from google_auth_oauthlib import flow
+
     (tmp_path / "credentials.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(platform, "InstalledAppFlow", _FakeInstalledAppFlow)
+    monkeypatch.setattr(flow, "InstalledAppFlow", _FakeInstalledAppFlow)
 
     with pytest.raises(google_docs_helper.GoogleAuthError) as errore:
         google_docs_helper.get_credentials_manual_flow(base_dir=tmp_path)
