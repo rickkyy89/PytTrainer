@@ -4,7 +4,7 @@ Keep ``__version__`` as a plain literal: Buildozer can read it without
 importing Kivy.  The last component is the build number.
 """
 
-__version__ = "0.2.0.7"
+__version__ = "0.2.0.10"
 
 
 def version_name() -> str:
