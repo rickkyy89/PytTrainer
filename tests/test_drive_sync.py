@@ -246,6 +246,21 @@ def test_check_conflict_torna_none_senza_edit_locali_o_senza_stato(tmp_path):
     assert service.check_conflict(tmp_path / "altro.scheda", None) is None
 
 
+def test_local_ahead_vero_solo_con_edit_locali_e_remoto_invariato(tmp_path):
+    service, client = sync(tmp_path)
+    file_id = client.files_api.add("gambe.scheda", b"original", "2026-09-02T10:00:00Z")
+    local = service.download_scheda(file_id)
+
+    assert service.local_ahead(local, file_id) is False
+
+    local.write_bytes(b"local edit")
+    os.utime(local, ns=(local.stat().st_atime_ns, local.stat().st_mtime_ns + 1))
+    assert service.local_ahead(local, file_id) is True
+
+    client.files_api.records[file_id]["modifiedTime"] = "2026-09-02T11:00:00Z"
+    assert service.local_ahead(local, file_id) is False
+
+
 def test_upload_force_sovrascrive_il_remoto_ignorando_il_conflitto(tmp_path):
     service, client, file_id, local = _conflicted_setup(tmp_path)
 

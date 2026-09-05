@@ -22,6 +22,26 @@ class AndroidCredentialProvider:
         """Start the native consent flow before a Drive request needs its token."""
         self._bridge.start_authorization()
 
+    def riautentica(self, timeout: float = 12.0) -> bool:
+        """Riavvia l'autorizzazione nativa e attende un token non vuoto.
+
+        Il consenso e' gia' stato dato in passato, quindi il bridge completa
+        in silenzio: serve quando il token nativo (vita ~1 ora) e' scaduto.
+        """
+        import time
+
+        try:
+            self._bridge.start_authorization()
+        except Exception:
+            return False
+        fine = time.monotonic() + timeout
+        while time.monotonic() < fine:
+            time.sleep(0.3)
+            token = self._bridge.get_access_token()
+            if isinstance(token, str) and token.strip():
+                return True
+        return False
+
     def get_credentials(self, scopes: list[str]) -> Credentials:
         token = self._bridge.get_access_token()
         if not isinstance(token, str) or not token.strip():
@@ -100,6 +120,7 @@ class AndroidFrameExtractor:
                     f"MediaMetadataRetriever: codifica JPEG fallita per {output_path}."
                 )
             stream.flush()
+            stream.close()
             return output_path
         except self._java_exception as exc:
             raise FrameExtractionError(

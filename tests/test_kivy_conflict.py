@@ -44,6 +44,9 @@ class RecordingSync:
         self.downloads.append((file_id, name))
         return self.cache_dir / name
 
+    def local_ahead(self, local_path, file_id=None):
+        return False
+
     def create_scheda(self, path):
         self.creates.append(Path(path))
         return UploadResult(RemoteScheda(Path(path).name, "dup-id", "2026-09-02T13:00:00Z"),

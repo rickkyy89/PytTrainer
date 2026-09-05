@@ -64,6 +64,9 @@ class FakeSync:
         self.downloaded = (file_id, name)
         return self.cache_dir / name
 
+    def local_ahead(self, local_path, file_id=None):
+        return False
+
     def create_scheda(self, path):
         if self.error:
             raise self.error
@@ -215,6 +218,69 @@ def test_drive_errors_are_mapped_to_explicit_unavailable_state(tmp_path, operati
 
 def test_authentication_errors_are_mapped_to_explicit_unavailable_state(tmp_path):
     controller, _ = make_controller(tmp_path, provider=FakeProvider(OSError("offline")))
+
+    with pytest.raises(HomeUnavailableError, match="Drive non disponibile"):
+        controller.refresh()
+
+
+def test_expired_native_token_triggers_riautentica_and_one_retry(tmp_path):
+    from core.platform import CredentialProviderError
+
+    class ReauthProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.riautenticazioni = 0
+
+        def riautentica(self):
+            self.riautenticazioni += 1
+            return True
+
+    provider = ReauthProvider()
+    casi = {"chiamate": 0}
+
+    def sync_factory(service, folder_id, cache_dir):
+        class FlakySync:
+            def list_schede(self):
+                casi["chiamate"] += 1
+                if casi["chiamate"] == 1:
+                    raise CredentialProviderError("Autorizzazione Google Android non disponibile.")
+                return [RemoteScheda("gambe.scheda", "one", "2026-09-02T10:00:00Z")]
+
+        return FlakySync()
+
+    controller = DriveHomeController(
+        FolderConfigStore(tmp_path / "folders.json"), tmp_path / "cache",
+        credential_provider=provider,
+        drive_service_factory=lambda credentials: "service",
+        sync_factory=sync_factory,
+    )
+
+    records = controller.refresh()
+
+    assert provider.riautenticazioni == 1
+    assert [r.id for r in records] == ["one"]
+
+
+def test_riautentica_assente_o_fallita_lascia_errore_chiara(tmp_path):
+    from core.platform import CredentialProviderError
+
+    class DeadReauthProvider(FakeProvider):
+        def riautentica(self):
+            return False
+
+    def sync_factory(service, folder_id, cache_dir):
+        class AlwaysAuthFail:
+            def list_schede(self):
+                raise CredentialProviderError("Autorizzazione Google Android non disponibile.")
+
+        return AlwaysAuthFail()
+
+    controller = DriveHomeController(
+        FolderConfigStore(tmp_path / "folders.json"), tmp_path / "cache",
+        credential_provider=DeadReauthProvider(),
+        drive_service_factory=lambda credentials: "service",
+        sync_factory=sync_factory,
+    )
 
     with pytest.raises(HomeUnavailableError, match="Drive non disponibile"):
         controller.refresh()

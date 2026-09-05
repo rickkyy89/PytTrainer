@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 
 from kivy.clock import Clock
-from kivy.metrics import dp
+from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.image import AsyncImage, Image
@@ -26,7 +26,7 @@ from kivy.uix.textinput import TextInput
 from kivy.core.window import Window
 
 from .file_picker import choose_file
-from .launcher import apri_url
+from .launcher import apri_url, ultimo_errore
 from .media import MediaFlowError
 from .material import profile_for_window
 from .media_layout import media_layout
@@ -46,7 +46,8 @@ class MediaScreen(BoxLayout):
         self._on_back = on_back
         self._on_menu = on_menu
         self._busy = False
-        self._ui = media_layout(profile_for_window(Window))
+        self._profile = profile_for_window(Window)
+        self._ui = media_layout(self._profile)
 
         header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         if self._on_menu is not None:
@@ -109,18 +110,22 @@ class MediaScreen(BoxLayout):
         video_line.add_widget(extract)
         self.column.add_widget(video_line)
 
-        ts_line = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(4))
-        ts_line.add_widget(Label(text="Start s", size_hint_x=None, width=dp(80)))
+        row_h = dp(max(56, self._ui.target_minimum))
+        ts_line = BoxLayout(size_hint_y=None, height=row_h, spacing=dp(4), padding=[dp(8), dp(6)])
+        self._tinta_riquadro(ts_line)
+        ts_line.add_widget(Label(text="Start s", size_hint_x=None, width=dp(96),
+                                 halign="left", valign="middle"))
         self.ts_start = TextInput(text=self._ts_text(self._media.ts_start),
-                                  multiline=False, size_hint_x=None, width=dp(90))
+                                  multiline=False, size_hint_x=None, width=dp(110))
         self.ts_start.bind(focus=self._ts_handler("ts_start", self.ts_start))
         ts_line.add_widget(self.ts_start)
-        ts_line.add_widget(Label(text="Finish s", size_hint_x=None, width=dp(80)))
+        ts_line.add_widget(Label(text="Finish s", size_hint_x=None, width=dp(110),
+                                 halign="left", valign="middle"))
         self.ts_finish = TextInput(text=self._ts_text(self._media.ts_finish),
-                                    multiline=False, size_hint_x=None, width=dp(90))
+                                    multiline=False, size_hint_x=None, width=dp(110))
         self.ts_finish.bind(focus=self._ts_handler("ts_finish", self.ts_finish))
         ts_line.add_widget(self.ts_finish)
-        heuristic = Button(text="EURISTICA 10%/50%", size_hint_x=None, width=dp(160))
+        heuristic = Button(text="EURISTICA 10%/50%", size_hint_x=None, width=dp(170))
         heuristic.bind(on_release=lambda *_: self._apply_heuristic())
         ts_line.add_widget(heuristic)
         self.column.add_widget(ts_line)
@@ -179,12 +184,26 @@ class MediaScreen(BoxLayout):
         self._media.cerca()
         Clock.schedule_once(lambda *_: self._render_results(), 0)
 
+    def _tinta_riquadro(self, contenitore):
+        from kivy.graphics import Color, Rectangle
+        with contenitore.canvas.before:
+            Color(0.13, 0.15, 0.17, 1)
+            retta = Rectangle(pos=contenitore.pos, size=contenitore.size)
+
+        def follow(*_):
+            retta.pos = contenitore.pos
+            retta.size = contenitore.size
+
+        contenitore.bind(pos=follow, size=follow)
+
     def _render_results(self, *_):
         self.results.clear_widgets()
         for indice, scelta in enumerate(self._media.scelte):
             row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
             info = Button(text=f"{indice + 1}. {scelta.title[:60]} ({_formatta_durata(scelta.duration)})",
-                          )
+                          halign="left", valign="middle", shorten=True)
+            info.bind(width=lambda _, v, b=info: setattr(b, "text_size", (max(v - dp(20), 10), b.height)),
+                      height=lambda _, h, b=info: setattr(b, "text_size", (max(b.width - dp(20), 10), h)))
             info.bind(on_release=lambda _, i=indice: self._run_async(lambda: self._choose(i)))
             video_id = (scelta.url.split("v=")[-1] if "v=" in scelta.url
                         else scelta.url.rstrip("/").split("/")[-1])[:11]
@@ -240,9 +259,13 @@ class MediaScreen(BoxLayout):
     # ------------------------------------------------------------- frames
 
     def _build_frame_section(self):
+        anteprima_min = self._profile.tokens.dimensions["frame_min_height"]
+        scrub_h = 72
+        lato_h = max(90, self._ui.target_minimum * 2)
+        azioni_h = self._ui.target_minimum
         self.frames_row = BoxLayout(
             orientation=self._ui.frame_axis, size_hint_y=None,
-            height=dp(195 if self._ui.frame_axis == "horizontal" else 390), spacing=dp(8))
+            height=dp(anteprima_min + scrub_h + lato_h + azioni_h + 24), spacing=dp(8))
         self._scrub_jobs: dict[str, object] = {}
         self._scrub_generazioni: dict[str, int] = {}
         self._scrub_pendente: dict[str, float] = {}
@@ -252,7 +275,7 @@ class MediaScreen(BoxLayout):
         for suffisso in ("start", "finish"):
             panel = BoxLayout(orientation="vertical", spacing=dp(2))
             preview = Image(source=self._media.frame(suffisso) or "",
-                            fit_mode="contain", size_hint_y=1)
+                            fit_mode="contain", size_hint_y=1, nocache=True)
             panel.add_widget(preview)
             setattr(self, f"preview_{suffisso}", preview)
             panel.add_widget(self._build_scrub(suffisso))
@@ -304,7 +327,7 @@ class MediaScreen(BoxLayout):
         barra = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(72), spacing=0)
         etichetta = Label(
             text=self._scrub_testo(getattr(self._media, f"ts_{suffisso}")),
-            size_hint_y=None, height=dp(24), font_size="13sp", halign="left")
+            size_hint_y=None, height=dp(24), font_size=sp(13), halign="left")
         barra.add_widget(etichetta)
         setattr(self, f"scrub_etichetta_{suffisso}", etichetta)
         slider = Slider(min=0, max=1, value=0, size_hint_y=None, height=dp(48))
@@ -325,7 +348,8 @@ class MediaScreen(BoxLayout):
         if apri_url(url):
             self.status.text = f"Play dal punto START nel player di sistema: {url}"
         else:
-            self.status.text = f"Nessun player disponibile per aprire: {url}"
+            self.status.text = (f"Nessun player disponibile "
+                                f"({ultimo_errore() or 'motivo sconosciuto'}): {url}")
 
     def _scrub_testo(self, valore) -> str:
         durata = self._media.durata

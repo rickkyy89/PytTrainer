@@ -59,6 +59,7 @@ class DriveHomeController:
         self._save_scheda = save_scheda
         self._config = config_store.load()
         self._sync = None
+        self.avvertenza: str | None = None
 
     @property
     def folder_config(self) -> DriveFolderConfig:
@@ -186,17 +187,32 @@ class DriveHomeController:
             n += 1
 
     def import_remote_into(self, editor, remote: RemoteScheda, *, sostituisci: bool,
-                           posizione: int | None = None) -> int:
-        """Download another bundle and merge its exercises into the editor."""
+                           posizione: int | None = None,
+                           indici: set[int] | None = None) -> int:
+        """Download another bundle and merge its exercises into the editor.
+
+        ``indici`` selects only some exercises (by position in the remote
+        bundle); ``None`` imports all of them.
+        """
         def operation():
             esercizi, _, _ = self._download_editable(remote)
+            self.avvertenza = None
+            if indici is not None:
+                esercizi = [es for i, es in enumerate(esercizi) if i in indici]
             editor.importa_esercizi(esercizi, sostituisci=sostituisci, posizione=posizione)
             return len(esercizi)
         return self._call("importare la scheda", operation)
 
     def _download_editable(self, remote: RemoteScheda):
         def operation():
-            local_path = self._drive().download_scheda(remote.id, remote.name)
+            local_path = self.cache_path(remote.name)
+            drive = self._drive()
+            if drive.local_ahead(local_path, remote.id):
+                self.avvertenza = ("Copia locale più recente di Drive (upload non riuscito): "
+                                   "aperta senza scaricare.")
+            else:
+                self.avvertenza = None
+                local_path = drive.download_scheda(remote.id, remote.name)
             esercizi, lavoro = self._load_scheda(str(local_path))
             return esercizi, lavoro, local_path
         return self._call("aprire la scheda", operation)
@@ -231,13 +247,40 @@ class DriveHomeController:
             raise HomeUnavailableError("Il nome della scheda non puo contenere cartelle.")
         return filename
 
-    @staticmethod
-    def _call(action: str, operation):
+    def _call(self, action: str, operation):
         try:
             return operation()
         except HomeUnavailableError:
             raise
         except Exception as exc:
+            if self._errore_di_autenticazione(exc) and self._riautentica():
+                self._sync = None
+                try:
+                    return operation()
+                except HomeUnavailableError:
+                    raise
+                except Exception as retry_exc:
+                    raise HomeUnavailableError(
+                        f"Impossibile {action}: Drive non disponibile. "
+                        "Verifica la connessione e riprova."
+                    ) from retry_exc
             raise HomeUnavailableError(
                 f"Impossibile {action}: Drive non disponibile. Verifica la connessione e riprova."
             ) from exc
+
+    @staticmethod
+    def _errore_di_autenticazione(exc: Exception) -> bool:
+        if type(exc).__name__ in ("CredentialProviderError", "RefreshError", "GoogleAuthError"):
+            return True
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        return status in (401, 403)
+
+    def _riautentica(self) -> bool:
+        """Ask the credential provider for a silent re-authorization (Android only)."""
+        riautentica = getattr(self._credential_provider, "riautentica", None)
+        if riautentica is None:
+            return False
+        try:
+            return bool(riautentica())
+        except Exception:
+            return False

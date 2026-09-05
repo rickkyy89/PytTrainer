@@ -346,6 +346,9 @@ class FakeSync:
     def download_scheda(self, file_id, name):
         return self.cache_dir / name
 
+    def local_ahead(self, local_path, file_id=None):
+        return False
+
     def upload_scheda(self, path, file_id=None):
         self.uploads.append((Path(path), file_id))
         return UploadResult(RemoteScheda(Path(path).name, file_id or "one", "2026-09-03T10:00:00Z"),

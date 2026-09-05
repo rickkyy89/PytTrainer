@@ -14,6 +14,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.image import Image
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
@@ -106,53 +107,91 @@ class WorkoutScreen(BoxLayout):
 
         top_height = max(56, self._profile.tokens.typography["title"] * 1.5)
         top = BoxLayout(size_hint_y=None, height=dp(top_height), spacing=dp(6))
-        checkbox = CheckBox(size_hint_x=None, width=dp(self._ui.minimum_target),
-                            active=self._session.completato(indice))
+        cella = FloatLayout(size_hint_x=None, width=dp(self._ui.minimum_target))
+        checkbox = CheckBox(active=self._session.completato(indice))
+        checkbox.size_hint = (None, None)
+        checkbox.size = (dp(38), dp(38))
+        checkbox.pos_hint = {"center_x": 0.5, "center_y": 0.5}
         checkbox.bind(active=lambda _, active: self._toggle(indice, active))
         self._checkboxes[indice] = checkbox
-        top.add_widget(checkbox)
+        cella.add_widget(checkbox)
+        top.add_widget(cella)
         title_px = markup_px(self._profile, self._profile.tokens.typography["title"])
         body_px = markup_px(self._profile, self._profile.tokens.typography["body"])
         primary = colors["primary"].lstrip("#")
-        top.add_widget(_etichetta(
+        titolo = _etichetta(
             f"[b][size={title_px}]{escape_markup(str(esercizio.get('nome') or '(senza nome)'))}[/size][/b]  "
             f"[size={body_px}]{escape_markup(str(esercizio.get('ripetizioni') or ''))}[/size]  "
             f"[color={primary}][size={body_px}]{escape_markup(str(esercizio.get('recupero') or ''))}[/size][/color]",
-            top, size_hint_x=1))
+            top, size_hint_x=1)
+        top.add_widget(titolo)
+        titolo.bind(texture_size=lambda _, ts, box=top, base=top_height:
+                    setattr(box, "height", dp(max(base, ts[1] + 8))))
         card.add_widget(top)
 
         frames = BoxLayout(orientation=self._ui.frame_axis, size_hint_y=None,
                            height=dp(140 if self._ui.frame_axis == "horizontal" else 280), spacing=dp(4))
         for chiave in ("frame_start", "frame_finish"):
             percorso = esercizio.get(chiave)
-            frames.add_widget(Image(source=percorso or "", fit_mode="contain"))
+            immagine = Image(source=percorso or "", fit_mode="contain", nocache=True)
+            immagine.bind(on_touch_down=self._tocco_frame(chiave, esercizio))
+            frames.add_widget(immagine)
         card.add_widget(frames)
 
+        muted = colors["muted"].lstrip("#")
+        spiegazione = str(esercizio.get("spiegazione") or "").strip()
+        if spiegazione:
+            card.add_widget(_etichetta(escape_markup(spiegazione), card,
+                                       font_size=sp(self._ui.body_font_size),
+                                       size_hint_y=None))
         note = str(esercizio.get("note") or "").strip()
         if note:
-            card.add_widget(_etichetta(escape_markup(note), card,
-                                        font_size=sp(self._ui.body_font_size),
-                                       size_hint_y=None))
+            card.add_widget(_etichetta(
+                f"[color={muted}]Note:[/color] {escape_markup(note)}", card,
+                font_size=sp(self._ui.body_font_size),
+                size_hint_y=None))
         azioni = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(6))
-        avvia = Button(text=f"▶ Recupero {indice + 1}")
+        avvia = Button(text=f"» Recupero {indice + 1}")
         avvia.bind(on_release=lambda *_: self._start_timer(indice))
         azioni.add_widget(avvia)
         if str(esercizio.get("video_url") or "").strip():
-            video = Button(text="▶ Video", size_hint_x=None, width=dp(120))
+            video = Button(text="» Video", size_hint_x=None, width=dp(120))
             video.bind(on_release=lambda _, e=esercizio: self._play_video(e))
             azioni.add_widget(video)
         card.add_widget(azioni)
         return card
 
     def _play_video(self, esercizio):
-        from .launcher import apri_url
+        from .launcher import apri_url, ultimo_errore
         from .media import url_con_inizio
         url = url_con_inizio(str(esercizio.get("video_url")), esercizio.get("ts_start"))
         if apri_url(url):
             return
-        label = Label(text=f"Nessun player disponibile.\n{url}", markup=False,
-                      halign="center", valign="middle")
+        label = Label(text=f"Nessun player disponibile.\n{ultimo_errore()}\n{url}",
+                      markup=False, halign="center", valign="middle",
+                      text_size=(Window.width * 0.8, None))
         popup = Popup(title="Video", content=label, size_hint=(0.9, 0.4))
+        popup.open()
+
+    def _tocco_frame(self, chiave, esercizio):
+        def on_touch(immagine, tocco):
+            if not immagine.collide_point(*tocco.pos):
+                return False
+            percorso = str(esercizio.get(chiave) or "").strip()
+            if not percorso:
+                return False
+            self._mostra_frame(chiave, percorso)
+            return True
+        return on_touch
+
+    def _mostra_frame(self, chiave, percorso):
+        etichetta = "START" if chiave.endswith("start") else "FINISH"
+        contenuto = BoxLayout(orientation="vertical", spacing=dp(6))
+        contenuto.add_widget(Image(source=percorso, fit_mode="contain", nocache=True))
+        popup = Popup(title=f"Frame {etichetta}", content=contenuto, size_hint=(0.92, 0.85))
+        chiudi = Button(text="Chiudi", size_hint_y=None, height=dp(self._ui.minimum_target))
+        chiudi.bind(on_release=lambda *_: popup.dismiss())
+        contenuto.add_widget(chiudi)
         popup.open()
 
     # -------------------------------------------------------- interazioni

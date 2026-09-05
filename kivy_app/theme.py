@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from kivy.core.window import Window
 from kivy.uix.button import Button
+from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
@@ -16,6 +17,19 @@ from kivy.uix.textinput import TextInput
 from kivy.metrics import sp
 
 from .material import UiProfile, hex_to_rgba
+
+
+def _imposta_default_font(cls, nome: str, valore: float) -> None:
+    """Retune a widget-class font default without clobbering the descriptor.
+
+    ``cls.font_size = 12.0`` replaces the Kivy Property descriptor on the
+    class with a plain float, which later crashes ``EventDispatcher.__cinit__``
+    ("Cannot convert float to kivy.properties.Property") and silently stores
+    raw values that skip unit parsing. Writing the descriptor's own
+    ``defaultvalue`` keeps the property machinery intact.
+    """
+    owner = next(c for c in cls.__mro__ if nome in c.__dict__)
+    owner.__dict__[nome].defaultvalue = valore
 
 
 def applica_tema(profile: UiProfile) -> None:
@@ -35,10 +49,13 @@ def applica_tema(profile: UiProfile) -> None:
     TextInput.cursor_color = hex_to_rgba(colors["accent"])
     ScrollView.bar_color = (0, 0, 0, 0)
     Popup.separator_color = hex_to_rgba(colors["surface_variant"])
-    Button.font_size = sp(profile.tokens.typography["label"])
-    Label.font_size = sp(profile.tokens.typography["body"])
-    TextInput.font_size = sp(profile.tokens.typography["body"])
-    Popup.title_size = sp(profile.tokens.typography["section"])
+    CheckBox.active_color = hex_to_rgba(colors["accent"])
+    CheckBox.background_color = (1, 1, 1, 0.8)
+    body = sp(profile.tokens.typography["body"])
+    _imposta_default_font(Button, "font_size", body)
+    _imposta_default_font(Label, "font_size", body)
+    _imposta_default_font(TextInput, "font_size", body)
+    _imposta_default_font(Popup, "title_size", sp(profile.tokens.typography["section"]))
 
 
 def configura_tema_md(theme_cls, profile: UiProfile) -> None:

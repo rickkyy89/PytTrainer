@@ -87,9 +87,11 @@ def run() -> None:
         from core.platform import PcFfmpegBackend
         media_backend = PcFfmpegBackend()
 
-    def _label_righe(testo, contenitore, *, font_size="16sp", **kw):
+    def _label_righe(testo, contenitore, *, font_size=None, **kw):
+        if font_size is not None:
+            kw["font_size"] = font_size
         label = Label(text=testo, markup=True, halign="left", valign="top",
-                      size_hint_y=None, font_size=font_size, **kw)
+                      size_hint_y=None, **kw)
         contenitore.bind(
             width=lambda _, v, l=label: setattr(l, "text_size", (max(v - 24, 10), None)))
         label.bind(texture_size=lambda l, ts: setattr(l, "height", ts[1]))
@@ -354,7 +356,11 @@ def run() -> None:
             for remote in self._ultime_schede:
                 row = BoxLayout(size_hint_y=None, height=dp(profile.touch_target + 16), spacing=dp(6),
                                  padding=dp(profile.tokens.spacing["xs"]))
-                open_button = Button(text=f"{remote.name}   —   {remote.modified_time}")
+                open_button = Button(text=f"{remote.name}   —   {remote.modified_time}",
+                                     halign="left", valign="middle", shorten=True)
+                open_button.bind(width=lambda _, v, b=open_button,
+                                 h=profile.touch_target + 16:
+                                 setattr(b, "text_size", (max(v - dp(20), 10), dp(h))))
                 open_button.bind(on_release=lambda _, item=remote: self.open(item))
                 delete = Button(text="Elimina", size_hint_x=None,
                                 width=dp(profile.touch_target * 2.2))
@@ -394,6 +400,8 @@ def run() -> None:
                 self.status.text = str(exc)
                 return
             self.status.text = f"{scheda.name}: sola lettura"
+            if getattr(controller, "avvertenza", None):
+                self.status.text += f" — {controller.avvertenza}"
             self._mostra_lettura(remote, scheda)
 
         def _mostra_lettura(self, remote, scheda):

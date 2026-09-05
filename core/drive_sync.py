@@ -179,6 +179,32 @@ class DriveSync:
             return self._conflict(path, entry, remote)
         return None
 
+    def local_ahead(self, local_path: str | os.PathLike,
+                    file_id: str | None = None) -> bool:
+        """True when the local bundle has unsynchronized edits and Drive does not.
+
+        The upload failed (or never ran) after a local save: the remote copy is
+        the last synced one.  Re-downloading would silently discard the local
+        changes, so callers keep the local copy instead.
+        """
+        path = Path(local_path).resolve()
+        if not path.is_file() or path.suffix != ".scheda":
+            return False
+        entry = self._load_state().get(str(path))
+        remote_id = file_id or (entry or {}).get("file_id")
+        if remote_id is None or not entry:
+            return False
+        remote = self._remote(self._drive_service.files().get(
+            fileId=remote_id, fields="id,name,modifiedTime"
+        ).execute())
+        fingerprint = entry.get("local_fingerprint")
+        if isinstance(fingerprint, str):
+            local_changed = self._fingerprint(path) != fingerprint
+        else:
+            local_changed = path.stat().st_mtime_ns != entry.get("local_mtime_ns")
+        return local_changed and self._timestamp(remote.modified_time) <= self._timestamp(
+            entry["remote_modified_time"])
+
     def _conflict(self, path: Path, entry: dict, remote: RemoteScheda) -> SyncConflict:
         return SyncConflict(
             file_id=remote.id,

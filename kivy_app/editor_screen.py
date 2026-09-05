@@ -8,11 +8,14 @@ this module only renders and forwards events.
 from __future__ import annotations
 
 import math
+import threading
 
+from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.checkbox import CheckBox
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
@@ -46,6 +49,7 @@ class EditorScreen(BoxLayout):
         self._on_menu = on_menu
         self._fields = []
         self._open_index = 0
+        self._saving = False
 
         self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
         if self._on_menu is not None:
@@ -287,14 +291,19 @@ class EditorScreen(BoxLayout):
         self._wrap(lambda: self._editor.aggiorna(indice, gruppo=nome), rebuild=True)
 
     def _numero_popup(self, titolo, prompt, minimo, massimo, confermato, iniziale=None):
-        content = BoxLayout(orientation="vertical", spacing=8)
-        popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.35))
-        content.add_widget(Label(text=f"{prompt} ({minimo}-{massimo})", halign="left",
-                                 size_hint_y=None, height=30, text_size=(None, 30)))
+        profile = profile_for_window(Window)
+        riga = max(48, int(profile.touch_target))
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title=titolo, content=content, size_hint=(0.8, None),
+                      height=dp(3 * riga + 64))
+        etichetta = Label(text=f"{prompt} ({minimo}-{massimo})", halign="left",
+                          valign="middle", size_hint_y=None, height=dp(riga))
+        etichetta.bind(width=lambda _, v, l=etichetta: setattr(l, "text_size", (v, dp(riga))))
+        content.add_widget(etichetta)
         campo = TextInput(text=str(iniziale if iniziale is not None else minimo),
-                          multiline=False, input_filter="int", size_hint_y=None, height=44)
+                          multiline=False, input_filter="int", size_hint_y=None, height=dp(riga))
         content.add_widget(campo)
-        bot = BoxLayout(size_hint_y=None, height=44, spacing=8)
+        bot = BoxLayout(size_hint_y=None, height=dp(riga), spacing=dp(8))
         ok = Button(text="Ok")
         cancel = Button(text="Annulla")
 
@@ -389,40 +398,128 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def _scheda_mode(self, remote):
-        self._mode_popup(
-            f"Importa {remote.name}",
-            lambda sostituisci, posizione: self._controller.import_remote_into(
-                self._editor, remote, sostituisci=sostituisci, posizione=posizione))
+        self.status.text = "Carico gli esercizi della scheda…"
+
+        def fine(esercizi, errore):
+            self._attendo_import = False
+            if errore is not None:
+                self._mostra_errore(errore)
+            else:
+                self._popup_selezione_import(remote, esercizi)
+
+        def lavoro():
+            try:
+                esercizi = self._controller.open_for_workout(remote)
+            except Exception as exc:
+                Clock.schedule_once(lambda _, e=exc: fine(None, e), 0)
+            else:
+                Clock.schedule_once(lambda _, es=esercizi: fine(es, None), 0)
+
+        if getattr(self, "_attendo_import", False):
+            return
+        self._attendo_import = True
+        threading.Thread(target=lavoro, daemon=True).start()
+
+    def _popup_selezione_import(self, remote, esercizi):
+        scroll = ScrollView()
+        interno = BoxLayout(orientation="vertical", spacing=dp(4), size_hint_y=None)
+        interno.bind(minimum_height=interno.setter("height"))
+        caselle: list[tuple[int, CheckBox]] = []
+        tutto = {"attivo": True}
+        toggle = Button(text="Deseleziona tutti", size_hint_y=None, height=dp(52))
+
+        def commuta(*_):
+            tutto["attivo"] = not tutto["attivo"]
+            for _, casella in caselle:
+                casella.active = tutto["attivo"]
+            toggle.text = ("Deseleziona tutti" if tutto["attivo"] else "Seleziona tutti")
+
+        toggle.bind(on_release=commuta)
+        interno.add_widget(toggle)
+        for indice, esercizio in enumerate(esercizi):
+            riga = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+            casella = CheckBox(active=True)
+            caselle.append((indice, casella))
+            etichetta = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
+                              halign="left", valign="middle")
+            etichetta.bind(width=lambda _, v, l=etichetta: setattr(l, "text_size", (v, None)))
+            riga.add_widget(casella)
+            riga.add_widget(etichetta)
+            interno.add_widget(riga)
+        avanti = Button(text="Avanti…", size_hint_y=None, height=dp(52))
+
+        def conferma(*_):
+            indici = {i for i, casella in caselle if casella.active}
+            popup.dismiss()
+            if not indici:
+                self.status.text = "Seleziona almeno un esercizio da importare."
+                return
+            self._mode_popup(
+                f"Importa {len(indici)} esercizi da {remote.name}",
+                lambda sostituisci, posizione: self._controller.import_remote_into(
+                    self._editor, remote, sostituisci=sostituisci, posizione=posizione,
+                    indici=indici))
+
+        avanti.bind(on_release=conferma)
+        interno.add_widget(avanti)
+        scroll.add_widget(interno)
+        popup = Popup(title="Scegli gli esercizi", content=scroll, size_hint=(0.85, 0.8),
+                      auto_dismiss=False)
+        popup.open()
+
+    def _blocca(self, value):
+        for widget in self.walk(restrict=True):
+            if isinstance(widget, Button):
+                widget.disabled = value
 
     def _save(self, sincronizza=True, chiudi=False, on_close=None):
         self._commit_active_field()
         target = on_close or self._on_back
-        try:
-            risultato = self._editor.salva(sincronizza=sincronizza)
-        except EditorValidationError as exc:
-            self.status.text = str(exc)
+        if self._saving:
+            self.status.text = "Salvataggio gia in corso: attendi il termine."
             return
-        except Exception as exc:
-            self.status.text = (f"Salvataggio locale ok, Drive non raggiungibile: {exc}"
-                                if sincronizza else f"Salvataggio locale fallito: {exc}")
-            self._refresh_status()
-            return
-        if not sincronizza:
-            self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
-            if chiudi:
-                target()
-            return
-        if isinstance(risultato, SyncConflict):
-            from .conflict_dialog import apri_dialogo_conflitto
-            apri_dialogo_conflitto(self._controller, risultato, self._esito_conflitto,
-                                   local_path=self._editor.percorso_bundle)
-            return
-        if self._editor.sporco:
-            self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
-        else:
-            self.status.text = "Salvato su Drive."
-            if chiudi:
-                target()
+        self._saving = True
+        self._blocca(True)
+        self.status.text = ("Salvataggio su Drive in corso…" if sincronizza
+                            else "Salvataggio locale in corso…")
+
+        def worker():
+            try:
+                risultato = self._editor.salva(sincronizza=sincronizza)
+            except Exception as exc:
+                Clock.schedule_once(lambda _, e=exc: esito(e, None), 0)
+            else:
+                Clock.schedule_once(lambda _, r=risultato: esito(None, r), 0)
+
+        def esito(eccezione, risultato):
+            self._saving = False
+            self._blocca(False)
+            if eccezione is not None:
+                if isinstance(eccezione, EditorValidationError):
+                    self.status.text = str(eccezione)
+                else:
+                    self.status.text = (f"Salvataggio locale ok, Drive non raggiungibile: {eccezione}"
+                                        if sincronizza else f"Salvataggio locale fallito: {eccezione}")
+                self._refresh_status()
+                return
+            if not sincronizza:
+                self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
+                if chiudi:
+                    target()
+                return
+            if isinstance(risultato, SyncConflict):
+                from .conflict_dialog import apri_dialogo_conflitto
+                apri_dialogo_conflitto(self._controller, risultato, self._esito_conflitto,
+                                       local_path=self._editor.percorso_bundle)
+                return
+            if self._editor.sporco:
+                self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
+            else:
+                self.status.text = "Salvato su Drive."
+                if chiudi:
+                    target()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _esito_conflitto(self, choice, esito):
         if isinstance(esito, Exception):
@@ -488,4 +585,7 @@ class EditorScreen(BoxLayout):
             parti.append("o salvata in locale: Drive da sincronizzare")
         else:
             parti.append("nessuna modifica pending")
+        avvertenza = getattr(self._controller, "avvertenza", None)
+        if avvertenza:
+            parti.insert(0, avvertenza)
         self.status.text = " - ".join(parti)
