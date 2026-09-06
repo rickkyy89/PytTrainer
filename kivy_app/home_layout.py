@@ -17,6 +17,11 @@ class ReadonlyCardModel:
     frame_axis: str
 
 
+def etichetta_recupero(valore: str) -> str:
+    """Return the user-facing recovery label, without adding empty metadata."""
+    return f"Recupero: {valore}" if valore else ""
+
+
 def home_plan(profile: UiProfile) -> LayoutPlan:
     return profile.layout("home")
 

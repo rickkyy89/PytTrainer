@@ -5,7 +5,8 @@
     "junior_coder": {
       "description": "Manovalanza di programmazione: scrittura di codice semplice o massivo (boilerplate, rinomine, refactoring meccanici, commenti), esecuzione di commit git. Usarlo per i task di implementazione routine che non richiedono decisioni architetturali.",
       "mode": "subagent",
-      "model": "openai/gpt-5.6-luna",
+      "model": "opencode-go/qwen3.8-flash",
+      "fallback_models": ["openai/gpt-5.6-luna"],
       "color": "#4caf50",
       "permission": {
         "edit": "allow",

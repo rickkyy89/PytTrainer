@@ -237,7 +237,8 @@ def _tokens(target: float, body: float) -> UiTokens:
         spacing={"xxs": 2.0, "xs": 4.0, "sm": 8.0, "md": 12.0, "lg": 20.0, "xl": 28.0},
         dimensions={
             "toolbar_height": max(48.0, target), "field_height": max(48.0, target),
-            "card_radius": 10.0, "border_width": 1.0, "content_max_width": 1120.0,
+            "card_radius": 10.0, "control_radius": 12.0, "border_width": 1.0,
+            "focus_border_width": 2.0, "content_max_width": 1120.0,
             "dialog_max_width": 560.0, "frame_min_height": 180.0,
         },
         icons={"family": "bundled-material", "size_sm": 18.0, "size_md": 24.0, "size_lg": 32.0},
@@ -293,8 +294,10 @@ def primitive_specs(profile: UiProfile) -> dict[str, dict[str, object]]:
     d = profile.tokens.dimensions
     return {
         "text": {"color": profile.tokens.colors["text"], "font_size": profile.tokens.typography["body"]},
-        "button": {"min_height": profile.touch_target, "min_width": profile.touch_target},
-        "field": {"height": d["field_height"], "font_size": profile.tokens.typography["body"]},
+        "button": {"min_height": profile.touch_target, "min_width": profile.touch_target,
+                   "radius": d["control_radius"], "border_width": d["border_width"]},
+        "field": {"height": d["field_height"], "font_size": profile.tokens.typography["body"],
+                  "radius": d["control_radius"], "focus_border_width": d["focus_border_width"]},
         "card": {"radius": d["card_radius"], "border_width": d["border_width"]},
         "toolbar": {"height": d["toolbar_height"]},
         "menu": {"min_height": profile.touch_target},

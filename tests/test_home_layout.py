@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from kivy_app.home_layout import home_toolbar_rows, readonly_card
+from kivy_app.home_layout import etichetta_recupero, home_toolbar_rows, readonly_card
 from kivy_app.material import ViewportMetrics, adaptive_profile
 
 
@@ -28,6 +28,11 @@ def test_expanded_profile_preserves_body_typography():
     profile = adaptive_profile(ViewportMetrics(1200, 800))
     assert profile.tokens.typography["body"] == 18
     assert profile.tokens.dimensions["content_max_width"] > 0
+
+
+def test_readonly_recovery_label_is_explicit_and_empty_values_stay_empty():
+    assert etichetta_recupero("90 SEC") == "Recupero: 90 SEC"
+    assert etichetta_recupero("") == ""
 
 
 def test_home_toolbar_reflows_text_and_scale_without_hiding_actions():

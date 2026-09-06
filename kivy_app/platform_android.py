@@ -6,6 +6,8 @@ production bridge is instantiated on Android.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from google.oauth2.credentials import Credentials
 
 from core.platform import CredentialProviderError
@@ -71,6 +73,14 @@ class PyjniusGoogleBridge:
 
     def get_status(self) -> str:
         return self._bridge.getStatus()
+
+
+def android_pdf_cache_dir() -> Path:
+    """Private cache subtree covered by the manifest FileProvider path."""
+    from jnius import autoclass
+
+    activity = autoclass("org.kivy.android.PythonActivity").mActivity
+    return Path(str(activity.getCacheDir().getAbsolutePath())) / "pdf"
 
 
 class AndroidFrameExtractor:

@@ -45,8 +45,23 @@ def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeControll
     return build_controller(base_dir, is_android=False)
 
 
+def pc_icon_path() -> Path:
+    """Return the tracked PC icon independently of the current directory."""
+    return Path(__file__).resolve().parent.parent / "assets" / "pc" / "icon.ico"
+
+
+def configure_pc_window_icon() -> None:
+    """Configure Kivy's PC window icon before the window is created."""
+    if sys.platform == "android":
+        return
+    from kivy.config import Config
+
+    Config.set("kivy", "window_icon", str(pc_icon_path()))
+
+
 def run() -> None:
     """Run the small PC Kivy shell without exposing Kivy to pytest imports."""
+    configure_pc_window_icon()
     from kivy.core.window import Window
     from kivy.metrics import dp, sp
     from kivy.uix.boxlayout import BoxLayout
@@ -67,13 +82,14 @@ def run() -> None:
     from .media_screen import MediaScreen
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
-    from .home_layout import home_toolbar_rows, readonly_card
+    from .home_layout import etichetta_recupero, home_toolbar_rows, readonly_card
     from .material import (TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP, ScalePreferenceStore,
                            etichetta_testo, hex_to_rgba, imposta_scala,
                            imposta_testo, markup_px, profile_for_window,
                            scala_corrente, testo_corrente)
     from .theme import applica_tema, aggiorna_testo_widget, configura_tema_md
     from .compact_menu import apri_menu
+    from .launcher import apri_url, ultimo_errore, url_cartella_drive
     from .version import version_label
 
     controller = build_controller()
@@ -81,11 +97,13 @@ def run() -> None:
     imposta_scala(scala_store.load_scale())
     imposta_testo(scala_store.load_text())
     if sys.platform == "android":
-        from .platform_android import AndroidFrameExtractor
+        from .platform_android import AndroidFrameExtractor, android_pdf_cache_dir
         media_backend = AndroidFrameExtractor()
+        pdf_cache_dir = android_pdf_cache_dir()
     else:
         from core.platform import PcFfmpegBackend
         media_backend = PcFfmpegBackend()
+        pdf_cache_dir = None
 
     def _label_righe(testo, contenitore, *, font_size=None, **kw):
         if font_size is not None:
@@ -235,7 +253,7 @@ def run() -> None:
             try:
                 export = DocExportController(
                     editor, credential_provider=controller.credential_provider,
-                    base_dir=controller.base_dir,
+                    base_dir=controller.base_dir, pdf_cache_dir=pdf_cache_dir,
                 )
             except Exception as exc:
                 self.status.text = str(exc)
@@ -267,9 +285,19 @@ def run() -> None:
                 ("Aggiorna", self._lista_aggiornata),
                 ("Nuova scheda", lambda: self._azione_da_home(self.create_dialog)),
                 ("Cartelle", lambda: self._azione_da_home(self.folder_dialog)),
+                ("Apri cartella Drive", lambda: self._azione_da_home(self.apri_cartella_drive)),
                 (f"Scala {scala_corrente()}", self.ciclo_scala),
                 (etichetta_testo(), self.apri_testo),
             ))
+
+        def apri_cartella_drive(self):
+            """Open the selected Drive folder and expose launcher failures in Home."""
+            url = url_cartella_drive(controller.folder_config.current_folder_id)
+            if apri_url(url):
+                self.status.text = "Cartella Drive aperta."
+            else:
+                dettaglio = ultimo_errore() or "il launcher non ha aperto l'URL"
+                self.status.text = f"Impossibile aprire la cartella Drive: {dettaglio}"
 
         def _azione_da_home(self, action):
             if self._view_kind != "home":
@@ -476,7 +504,7 @@ def run() -> None:
                 titolo += f"   [size={detail}]{escape_markup(exercise.repetitions)}[/size]"
             if exercise.recovery:
                 titolo += (f"   [size={detail}][color={accent}]"
-                           f"{escape_markup(exercise.recovery)}[/color][/size]")
+                           f"{escape_markup(etichetta_recupero(exercise.recovery))}[/color][/size]")
             card.add_widget(_label_righe(titolo, card))
             if (exercise.explanation or "").strip():
                 card.add_widget(_label_righe(

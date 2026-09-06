@@ -18,8 +18,10 @@ android.api = 33
 android.minapi = 24
 android.archs = arm64-v8a
 android.permissions = INTERNET,VIBRATE,POST_NOTIFICATIONS
-android.gradle_dependencies = com.google.android.gms:play-services-auth:21.2.0
+android.gradle_dependencies = com.google.android.gms:play-services-auth:21.2.0,androidx.core:core:1.8.0
+android.add_gradle_repositories = flatDir { dirs 'libs' }
 android.add_src = kivy_app/android/src
+android.add_aars = kivy_app/android/pytrainer-fileprovider.aar
 
 [buildozer]
 log_level = 2

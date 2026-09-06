@@ -128,6 +128,25 @@ streamlit run app.py
 L'app si aprirà nel browser all'indirizzo indicato in console (di norma
 `http://localhost:8501`).
 
+### Avvio Kivy su Windows
+
+La shell Kivy PC usa l'icona multirisoluzione tracciata in
+`assets/pc/icon.ico`, derivata dall'asset ufficiale Android. Per rigenerarla
+dopo una modifica dell'immagine sorgente:
+
+```powershell
+python scripts/build_pc_icon.py
+```
+
+Per creare o aggiornare il collegamento `pyTrainer.lnk` sul desktop, con
+working directory del progetto:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/create_pc_shortcut.ps1
+```
+
+Il collegamento esegue `scripts/start_pc.cmd`; non richiede PyInstaller.
+
 ## Formato del file CSV
 
 Per il caricamento massivo degli esercizi, il CSV deve contenere almeno

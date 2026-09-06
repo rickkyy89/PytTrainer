@@ -19,7 +19,7 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 
 from .export import DocExportError
-from .launcher import apri_url, condividi_url
+from .launcher import apri_url, condividi_pdf, ultimo_errore
 
 
 class ExportScreen(BoxLayout):
@@ -30,6 +30,7 @@ class ExportScreen(BoxLayout):
         self._on_menu = on_menu
         self._worker: threading.Thread | None = None
         self._url: str | None = None
+        self._document_id: str | None = None
         self._poll = None
 
         header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
@@ -99,6 +100,7 @@ class ExportScreen(BoxLayout):
     def _done(self, risultato):
         self._stop_polling()
         self._url = risultato.get("url")
+        self._document_id = risultato.get("document_id")
         parti = [f"Documento generato: {len(risultato.get('esercizi_inseriti', []))} esercizi inseriti."]
         if risultato.get("documento_rigenerato"):
             parti.append("ATTENZIONE: il documento precedente era stato cancellato, "
@@ -123,8 +125,8 @@ class ExportScreen(BoxLayout):
         if self._url:
             open_btn = Button(text="Apri documento")
             open_btn.bind(on_release=lambda *_: apri_url(self._url))
-            share_btn = Button(text="Condividi")
-            share_btn.bind(on_release=lambda *_: condividi_url(self._url, "Scheda d'allenamento"))
+            share_btn = Button(text="Condividi PDF")
+            share_btn.bind(on_release=lambda *_: self._share_pdf())
             retry = Button(text="Rigenera/riprendi", size_hint_x=None, width=160)
             retry.bind(on_release=lambda *_: self._restart())
             self.actions.add_widget(open_btn)
@@ -132,6 +134,50 @@ class ExportScreen(BoxLayout):
             self.actions.add_widget(retry)
         else:
             self.actions.add_widget(self.start_button)
+
+    def _share_pdf(self):
+        if self._worker is not None:
+            return
+        if not self._document_id:
+            self.progress.text = "Errore: il documento generato non ha un ID esportabile."
+            return
+        for widget in self.actions.children:
+            widget.disabled = True
+        self._back.disabled = True
+        if self._menu is not None:
+            self._menu.disabled = True
+        self.progress.text = "Esportazione PDF da Google Drive…"
+        self._worker = threading.Thread(target=self._run_pdf_worker, daemon=True)
+        self._worker.start()
+
+    def _run_pdf_worker(self):
+        try:
+            path = self._export.esporta_pdf(self._document_id)
+            Clock.schedule_once(lambda _, p=path: self._pdf_ready(p), 0)
+        except Exception as exc:
+            Clock.schedule_once(lambda _, t=f"Errore PDF: {exc}": self._pdf_failed(t), 0)
+
+    def _pdf_ready(self, path):
+        self._worker = None
+        self._back.disabled = False
+        if self._menu is not None:
+            self._menu.disabled = False
+        if condividi_pdf(path):
+            self.progress.text = (
+                f"PDF pronto: {path.name}\n"
+                "Aperto nel pannello di condivisione/gestore PDF del sistema."
+            )
+        else:
+            self.progress.text = f"Condivisione PDF fallita: {ultimo_errore()}"
+        self._build_result_actions()
+
+    def _pdf_failed(self, text):
+        self._worker = None
+        self._back.disabled = False
+        if self._menu is not None:
+            self._menu.disabled = False
+        self.progress.text = text
+        self._build_result_actions()
 
     def _restart(self):
         self.start_button.disabled = False

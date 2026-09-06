@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.drive_sync import SyncConflict
 from kivy_app.editor import SchedaEditorController
-from kivy_app.export import DocExportController, DocExportError
+from kivy_app.export import DocExportController, DocExportError, PdfExportError
 
 
 def make_editor(tmp_path, pronti=2, rotti=1, upload_result=None):
@@ -40,6 +40,7 @@ def make_editor(tmp_path, pronti=2, rotti=1, upload_result=None):
 
 def make_export(tmp_path, **kwargs):
     editor = kwargs.pop("editor", None) or make_editor(tmp_path)
+    credential_provider = kwargs.pop("credential_provider", "CP")
     created = {}
 
     def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
@@ -50,9 +51,61 @@ def make_export(tmp_path, **kwargs):
                 "esercizi_inseriti": created["esercizi"], "documento_rigenerato": False}
 
     controller = DocExportController(
-        editor, credential_provider="CP", base_dir=tmp_path, creator=creator,
+        editor, credential_provider=credential_provider, base_dir=tmp_path, creator=creator,
         stato_loader=lambda path: _leggi(path), **kwargs)
     return controller, editor, created
+
+
+class _ExportRequest:
+    def __init__(self, content):
+        self.content = content
+
+    def execute(self):
+        return self.content
+
+
+class _DriveFiles:
+    def __init__(self, content):
+        self.content = content
+        self.calls = []
+
+    def export(self, **kwargs):
+        self.calls.append(kwargs)
+        return _ExportRequest(self.content)
+
+
+class _Drive:
+    def __init__(self, content=b"%PDF-1.7\nbody"):
+        self.files_api = _DriveFiles(content)
+
+    def files(self):
+        return self.files_api
+
+
+class _Credentials:
+    def __init__(self):
+        self.scopes = []
+
+    def get_credentials(self, scopes):
+        self.scopes.append(scopes)
+        return "credentials"
+
+
+class _RefreshingCredentials(_Credentials):
+    def __init__(self, refresh_result=True):
+        super().__init__()
+        self.refresh_result = refresh_result
+        self.refresh_calls = 0
+
+    def riautentica(self):
+        self.refresh_calls += 1
+        return self.refresh_result
+
+
+class _HttpErrorLike(Exception):
+    def __init__(self, status):
+        super().__init__(f"HTTP {status}")
+        self.resp = type("Response", (), {"status": status})()
 
 
 def _leggi(path):
@@ -177,3 +230,163 @@ def test_genera_in_conflitto_propaga_esito_e_lascia_retry_su_salva(tmp_path):
     # dell'editor ritenta l'upload (contract del ticket 06/10).
     assert editor.sporco is False
     assert editor.salva() is conflict
+
+
+def test_esporta_pdf_usa_provider_drive_e_scrittura_atomica(tmp_path):
+    credentials = _Credentials()
+    drive = _Drive()
+    costruzioni = []
+    controller, _, _ = make_export(
+        tmp_path,
+        credential_provider=credentials,
+        drive_service_factory=lambda creds: costruzioni.append(creds) or drive,
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    path = controller.esporta_pdf("doc-123")
+
+    assert path == tmp_path / "pdf-cache" / "My.pdf"
+    assert path.read_bytes() == b"%PDF-1.7\nbody"
+    assert drive.files_api.calls == [
+        {"fileId": "doc-123", "mimeType": "application/pdf"}
+    ]
+    assert costruzioni == ["credentials"]
+    assert any("drive" in scope for scope in credentials.scopes[0])
+    assert not list((tmp_path / "pdf-cache").glob("*.tmp"))
+
+
+@pytest.mark.parametrize("content", [b"", "not bytes", b"not-a-pdf"])
+def test_esporta_pdf_non_pubblica_risposte_drive_invalide(tmp_path, content):
+    controller, _, _ = make_export(
+        tmp_path,
+        credential_provider=_Credentials(),
+        drive_service_factory=lambda _: _Drive(content),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    with pytest.raises(PdfExportError, match="PDF valido"):
+        controller.esporta_pdf("doc-123")
+
+    assert not list((tmp_path / "pdf-cache").glob("*.pdf"))
+
+
+def test_esporta_pdf_non_nasconde_un_fallimento_drive(tmp_path):
+    class BrokenRequest:
+        def execute(self):
+            raise OSError("rete assente")
+
+    class BrokenDrive:
+        def files(self):
+            return self
+
+        def export(self, **kwargs):
+            return BrokenRequest()
+
+    controller, _, _ = make_export(
+        tmp_path,
+        credential_provider=_Credentials(),
+        drive_service_factory=lambda _: BrokenDrive(),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    with pytest.raises(PdfExportError, match="rete assente"):
+        controller.esporta_pdf("doc-123")
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_esporta_pdf_riautentica_e_ritenta_una_volta_su_errore_auth(tmp_path, status):
+    credentials = _RefreshingCredentials()
+    attempts = []
+
+    class Request:
+        def execute(self):
+            attempts.append("export")
+            if len(attempts) == 1:
+                raise _HttpErrorLike(status)
+            return b"%PDF-1.7\nbody"
+
+    class Drive:
+        def files(self):
+            return self
+
+        def export(self, **kwargs):
+            return Request()
+
+    services = []
+    controller, _, _ = make_export(
+        tmp_path,
+        credential_provider=credentials,
+        drive_service_factory=lambda creds: services.append(creds) or Drive(),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    assert controller.esporta_pdf("doc-123").read_bytes().startswith(b"%PDF-")
+    assert attempts == ["export", "export"]
+    assert credentials.refresh_calls == 1
+    assert len(credentials.scopes) == 2
+    assert len(services) == 2
+
+
+def test_esporta_pdf_non_ritenta_due_volte_se_il_retry_auth_fallisce(tmp_path):
+    credentials = _RefreshingCredentials()
+    attempts = []
+
+    class BrokenDrive:
+        def files(self):
+            return self
+
+        def export(self, **kwargs):
+            class Request:
+                def execute(self):
+                    attempts.append("export")
+                    raise _HttpErrorLike(401)
+            return Request()
+
+    controller, _, _ = make_export(
+        tmp_path,
+        credential_provider=credentials,
+        drive_service_factory=lambda _: BrokenDrive(),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    with pytest.raises(PdfExportError, match="HTTP 401"):
+        controller.esporta_pdf("doc-123")
+
+    assert attempts == ["export", "export"]
+    assert credentials.refresh_calls == 1
+
+
+@pytest.mark.parametrize("title", ["CON", "nul", "COM1", "Lpt9", "CON.txt", "NUL .report"])
+def test_esporta_pdf_evade_i_nomi_riservati_windows(tmp_path, title):
+    editor = make_editor(tmp_path)
+    editor._titolo = title
+    controller, _, _ = make_export(
+        tmp_path,
+        editor=editor,
+        credential_provider=_Credentials(),
+        drive_service_factory=lambda _: _Drive(),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    path = controller.esporta_pdf("doc-123")
+
+    assert path.name.startswith("_")
+    assert path.suffix == ".pdf"
+
+
+def test_esporta_pdf_limita_il_nome_senza_spezzare_unicode_o_estensione(tmp_path):
+    editor = make_editor(tmp_path)
+    editor._titolo = "Allenamento 🏋️" * 100
+    controller, _, _ = make_export(
+        tmp_path,
+        editor=editor,
+        credential_provider=_Credentials(),
+        drive_service_factory=lambda _: _Drive(),
+        pdf_cache_dir=tmp_path / "pdf-cache",
+    )
+
+    path = controller.esporta_pdf("doc-123")
+
+    assert len(path.name.encode("utf-8")) <= 180
+    assert path.suffix == ".pdf"
+    assert path.read_bytes().startswith(b"%PDF-")

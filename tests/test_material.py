@@ -42,6 +42,14 @@ def test_targets_and_reflow_differ_by_input_mode():
     assert primitive_specs(touch)["button"]["min_height"] == 48
 
 
+def test_control_specs_share_material_radius_and_focus_border_tokens():
+    specs = primitive_specs(adaptive_profile(ViewportMetrics(400, 800), text=20))
+
+    assert specs["button"]["radius"] == 12
+    assert specs["field"]["radius"] == specs["button"]["radius"]
+    assert specs["field"]["focus_border_width"] == 2
+
+
 def test_scale_store_defaults_validates_and_writes_atomically(tmp_path):
     store = ScalePreferenceStore(tmp_path / "preferences.json")
     assert store.load_scale() == "auto"

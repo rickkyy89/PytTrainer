@@ -13,7 +13,10 @@ the "state pointed to a deleted doc, rebuilt with a new URL" condition.
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.docs_helper import carica_stato, create_workout_document
 from core.scheda_file import percorso_stato
@@ -21,6 +24,19 @@ from core.scheda_file import percorso_stato
 
 class DocExportError(Exception):
     """A user-facing failure of the document generation flow."""
+
+
+class PdfExportError(DocExportError):
+    """The generated Google Doc could not be materialized as a local PDF."""
+
+
+PDF_MIME_TYPE = "application/pdf"
+MAX_PDF_FILENAME_BYTES = 180
+WINDOWS_RESERVED_STEMS = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
 
 
 @dataclass(frozen=True)
@@ -37,12 +53,16 @@ class DocExportController:
 
     def __init__(self, editor, *, credential_provider=None, base_dir=None,
                  creator=create_workout_document,
-                 stato_loader=carica_stato):
+                 stato_loader=carica_stato, drive_service_factory=None,
+                 pdf_cache_dir=None):
         self._editor = editor
         self._credential_provider = credential_provider
         self._base_dir = base_dir
         self._creator = creator
         self._stato_loader = stato_loader
+        self._drive_service_factory = drive_service_factory or self._build_drive_service
+        default_cache = Path(base_dir or Path(editor.percorso_bundle).parent) / "drive-cache" / "pdf"
+        self._pdf_cache_dir = Path(pdf_cache_dir or default_cache)
         self._state_path: str | None = None
         self._totale_sessione: int = 0
         self._baseline: int = 0
@@ -105,6 +125,97 @@ class DocExportController:
             raise
         risultato["salvataggio"] = self._editor.salva()
         return risultato
+
+    def esporta_pdf(self, document_id: str) -> Path:
+        """Export ``document_id`` through Drive and atomically publish its PDF.
+
+        The final path is stable and human-readable, while the download first
+        lands in a same-directory temporary file.  Thus a failed/partial Drive
+        response never replaces a previously usable cached export.
+        """
+        if not str(document_id or "").strip():
+            raise PdfExportError("Documento Google senza ID: impossibile esportare il PDF.")
+        temporary: Path | None = None
+        try:
+            content = self._scarica_pdf(document_id)
+            if not isinstance(content, bytes) or not content.startswith(b"%PDF-"):
+                raise PdfExportError("Drive non ha restituito un PDF valido.")
+
+            self._pdf_cache_dir.mkdir(parents=True, exist_ok=True)
+            destination = self._pdf_cache_dir / f"{self._pdf_filename()}.pdf"
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix=f".{destination.stem}-", suffix=".tmp",
+                dir=str(self._pdf_cache_dir),
+            )
+            temporary = Path(raw_path)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+            temporary = None
+            return destination
+        except PdfExportError:
+            raise
+        except Exception as exc:
+            raise PdfExportError(f"Esportazione PDF fallita: {exc}") from exc
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def _pdf_filename(self) -> str:
+        title = self.riepilogo().titolo.strip() or "scheda-allenamento"
+        # Keep readable Unicode/casing; only filesystem separators/control and
+        # Windows-reserved punctuation are replaced.
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title).strip(" .-")
+        cleaned = cleaned or "scheda-allenamento"
+        windows_device_stem = cleaned.split(".", 1)[0].rstrip(" .").upper()
+        if windows_device_stem in WINDOWS_RESERVED_STEMS:
+            cleaned = f"_{cleaned}"
+
+        stem_budget = MAX_PDF_FILENAME_BYTES - len(".pdf".encode("ascii"))
+        encoded = cleaned.encode("utf-8")
+        if len(encoded) > stem_budget:
+            cleaned = encoded[:stem_budget].decode("utf-8", errors="ignore").rstrip(" .-")
+        return cleaned or "scheda-allenamento"
+
+    def _scarica_pdf(self, document_id: str) -> bytes:
+        """Download once, with one fresh-service retry after an auth failure."""
+        from core.docs_helper import SCOPES
+
+        for attempt in range(2):
+            try:
+                credentials = self._credential_provider.get_credentials(SCOPES)
+                drive = self._drive_service_factory(credentials)
+                return drive.files().export(
+                    fileId=document_id, mimeType=PDF_MIME_TYPE,
+                ).execute()
+            except Exception as exc:
+                if attempt == 0 and self._is_auth_error(exc) and self._riautentica():
+                    continue
+                raise
+        raise AssertionError("Ciclo di esportazione PDF terminato senza risultato.")
+
+    @staticmethod
+    def _is_auth_error(exc: Exception) -> bool:
+        return getattr(getattr(exc, "resp", None), "status", None) in (401, 403)
+
+    def _riautentica(self) -> bool:
+        riautentica = getattr(self._credential_provider, "riautentica", None)
+        if riautentica is None:
+            return False
+        try:
+            return bool(riautentica())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _build_drive_service(credentials):
+        from googleapiclient.discovery import build
+        return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     def progresso(self) -> tuple[int, int]:
         """(checkpointed exercises, total of this session) for the UI poll."""
