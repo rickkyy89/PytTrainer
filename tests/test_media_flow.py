@@ -409,12 +409,16 @@ def test_android_frame_extractor_ortodosso_scrive_il_jpeg(tmp_path):
     out = tmp_path / "frame.jpg"
 
     risultato = extractor.extract("https://stream", 12.34, str(out), {"Referer": "x"})
+    secondo = extractor.extract("https://stream", 20.0, str(tmp_path / "b.jpg"), {"Referer": "x"})
 
-    assert risultato == str(out)
+    assert risultato == str(out) and secondo == str(tmp_path / "b.jpg")
     assert out.read_bytes() == b"\xff\xd8jpeg"
     assert ("source", "https://stream", {"Referer": "x"}) in java.calls
-    assert ("frame", 12_340_000, 2) in java.calls
-    assert ("release",) in java.calls and ("close",) in java.calls
+    assert ("frame", 12_340_000, 3) in java.calls
+    # il retriever è riusato per lo stesso stream: un solo open, mai rilasciato al successo
+    assert java.calls.count(("source", "https://stream", {"Referer": "x"})) == 1
+    assert ("release",) not in java.calls
+    assert ("close",) in java.calls
 
 
 def test_android_frame_extractor_senza_frame_diventa_errore(tmp_path):

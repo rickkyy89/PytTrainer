@@ -26,6 +26,7 @@ from kivy.uix.textinput import TextInput
 from kivy.core.window import Window
 
 from .file_picker import choose_file
+from .fine_slider import FineSlider
 from .launcher import apri_url, ultimo_errore
 from .media import MediaFlowError
 from .material import profile_for_window
@@ -330,7 +331,7 @@ class MediaScreen(BoxLayout):
             size_hint_y=None, height=dp(24), font_size=sp(13), halign="left")
         barra.add_widget(etichetta)
         setattr(self, f"scrub_etichetta_{suffisso}", etichetta)
-        slider = Slider(min=0, max=1, value=0, size_hint_y=None, height=dp(48))
+        slider = FineSlider(min=0, max=1, value=0, size_hint_y=None, height=dp(48))
         self._blocca_scroll(slider)
         slider.bind(on_value=self._scrub_handler(suffisso, slider))
         slider.bind(on_touch_up=lambda _, touch, s=suffisso, sl=slider:

@@ -145,6 +145,19 @@ def run() -> None:
             self.show_home()
             return self.stack
 
+        def on_pause(self):
+            # Su Android il default (None) e' falsy: Kivy risponde chiudendo
+            # l'attivita' (finishAndRemoveTask) appena l'app va in background,
+            # che e' il "crash" al sleep del tablet. Restituire True permette
+            # all'app di restare in memoria e riprendere con on_resume.
+            return True
+
+        def on_resume(self):
+            # Al ritorno in foreground non devono restare schede pendenti di
+            # nessun tipo: la UI e' gia' coerente, il token Google viene
+            # rinfrescato da AndroidCredentialProvider alla prossima richiesta.
+            pass
+
         def _costruisce_home(self):
             profile = _ui_profile()
             applica_tema(profile)
