@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import threading
+from pathlib import Path
 
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -371,15 +372,70 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def _import_csv(self):
+        """Choose the CSV source: a local file or one already in the Drive folder."""
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Importa CSV", content=content, size_hint=(0.8, 0.32))
+        locale = Button(text="Da file locale")
+        drive = Button(text="Dalla cartella Drive")
+        locale.bind(on_release=lambda *_: (popup.dismiss(), self._import_csv_locale()))
+        drive.bind(on_release=lambda *_: (popup.dismiss(), self._csv_da_drive()))
+        content.add_widget(locale)
+        content.add_widget(drive)
+        popup.open()
+
+    def _import_csv_locale(self):
         def on_result(percorso):
-            if not percorso:
-                return
-            self._mode_popup(
-                f"Importa {percorso}",
-                lambda sostituisci, posizione: self._editor.importa_csv(
-                    percorso, sostituisci=sostituisci, posizione=posizione))
+            if percorso:
+                self._procedi_import_csv(percorso)
         choose_file(on_result, title="Importa CSV manifest", parent=self,
                     patterns=[("CSV", "*.csv")])
+
+    def _csv_da_drive(self):
+        """Let the user pick a CSV listed in the configured Drive folder."""
+        try:
+            csvs = self._controller.list_csv()
+        except Exception as exc:
+            self.status.text = str(exc)
+            return
+        content = BoxLayout(orientation="vertical", spacing=4)
+        popup = Popup(title="Importa CSV da Drive", content=content, size_hint=(0.8, 0.6))
+        for remote in csvs:
+            choice = Button(text=remote.name, size_hint_y=None, height=44)
+            choice.bind(on_release=lambda _, item=remote: (
+                popup.dismiss(), self._csv_da_drive_download(item)))
+            content.add_widget(choice)
+        if not csvs:
+            content.add_widget(Label(text="Nessun CSV trovato su Drive."))
+        popup.open()
+
+    def _csv_da_drive_download(self, remote):
+        self.status.text = "Scarico il CSV da Drive…"
+
+        def fine(percorso, errore):
+            self._attendo_csv = False
+            if errore is not None:
+                self._mostra_errore(errore)
+            else:
+                self._procedi_import_csv(percorso)
+
+        def lavoro():
+            try:
+                percorso = self._controller.download_csv(remote)
+            except Exception as exc:
+                Clock.schedule_once(lambda _, e=exc: fine(None, e), 0)
+            else:
+                Clock.schedule_once(lambda _, p=percorso: fine(p, None), 0)
+
+        if getattr(self, "_attendo_csv", False):
+            return
+        self._attendo_csv = True
+        threading.Thread(target=lavoro, daemon=True).start()
+
+    def _procedi_import_csv(self, percorso):
+        self._mode_popup(
+            f"Importa {Path(percorso).name}",
+            lambda sostituisci, posizione: self._editor.importa_csv(
+                percorso, sostituisci=sostituisci, posizione=posizione))
 
     def _import_scheda(self):
         try:

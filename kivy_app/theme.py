@@ -8,7 +8,8 @@ never set colors or fonts of their own.
 from __future__ import annotations
 
 from kivy.core.window import Window
-from kivy.graphics import Color, InstructionGroup, Line, RoundedRectangle
+from kivy.graphics import BorderImage, Color, InstructionGroup, Line, RoundedRectangle
+from kivy.graphics.texture import Texture
 from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
@@ -20,8 +21,8 @@ from kivy.metrics import dp, sp
 from .material import UiProfile, hex_to_rgba
 
 
-def _imposta_default_font(cls, nome: str, valore: float) -> None:
-    """Retune a widget-class font default without clobbering the descriptor.
+def _imposta_default(cls, nome: str, valore: object) -> None:
+    """Retune a widget-class default without clobbering its descriptor.
 
     ``cls.font_size = 12.0`` replaces the Kivy Property descriptor on the
     class with a plain float, which later crashes ``EventDispatcher.__cinit__``
@@ -29,7 +30,10 @@ def _imposta_default_font(cls, nome: str, valore: float) -> None:
     raw values that skip unit parsing. Writing the descriptor's own
     ``defaultvalue`` keeps the property machinery intact.
     """
-    owner = next(c for c in cls.__mro__ if nome in c.__dict__)
+    owner = next(
+        base for base in cls.__mro__
+        if nome in base.__dict__ and hasattr(base.__dict__[nome], "defaultvalue")
+    )
     owner.__dict__[nome].defaultvalue = valore
 
 
@@ -43,12 +47,47 @@ def _control_color(widget, *, pressed=False, disabled=False):
     return red, green, blue, alpha
 
 
+def _button_gradient(color):
+    """Create the restrained top-to-bottom fill used by every standard button."""
+    red, green, blue, alpha = color
+    top = tuple(min(channel * 1.06, 1.0) for channel in (red, green, blue))
+    bottom = tuple(channel * 0.90 for channel in (red, green, blue))
+    pixels = bytes(round(channel * 255) for rgba in ((bottom + (alpha,)), (top + (alpha,)))
+                   for channel in rgba)
+    texture = Texture.create(size=(1, 2), colorfmt="rgba")
+    texture.blit_buffer(pixels, colorfmt="rgba", bufferfmt="ubyte")
+    texture.wrap = "clamp_to_edge"
+    texture.min_filter = "linear"
+    texture.mag_filter = "linear"
+    return texture
+
+
+def _remove_native_button_background(button) -> None:
+    """Remove the KV BorderImage while preserving the Label text instructions."""
+    children = list(button.canvas.children)
+    image_index = next(
+        (index for index, instruction in enumerate(children) if isinstance(instruction, BorderImage)),
+        None,
+    )
+    if image_index is None:
+        return
+    native_color = next(
+        (instruction for instruction in reversed(children[:image_index]) if isinstance(instruction, Color)),
+        None,
+    )
+    button.canvas.remove(children[image_index])
+    if native_color is not None:
+        button.canvas.remove(native_color)
+
+
 def _paint_button(button, profile) -> None:
-    radius = dp(profile.tokens.dimensions["control_radius"])
+    radius = max(dp(profile.tokens.dimensions["control_radius"] * 2 / 3), dp(8))
     border = dp(profile.tokens.dimensions["border_width"])
     instructions = button.canvas.before
-    fill = Color(*_control_color(button))
-    shape = RoundedRectangle(pos=button.pos, size=button.size, radius=[(radius, radius)])
+    _remove_native_button_background(button)
+    fill = Color(1, 1, 1, 1)
+    shape = RoundedRectangle(pos=button.pos, size=button.size, radius=[(radius, radius)],
+                             texture=_button_gradient(_control_color(button)))
     outline = Color(*_control_color(button))
     line = Line(rounded_rectangle=(button.x, button.y, button.width, button.height, radius),
                 width=border)
@@ -58,9 +97,13 @@ def _paint_button(button, profile) -> None:
     instructions.add(line)
 
     def redraw(*_):
-        fill.rgba = _control_color(button, pressed=button.state == "down",
-                                   disabled=button.disabled)
-        outline.rgba = _control_color(button, disabled=button.disabled)
+        state_color = _control_color(button, pressed=button.state == "down",
+                                     disabled=button.disabled)
+        fill.rgba = (1, 1, 1, state_color[3])
+        shape.texture = _button_gradient(state_color)
+        outline.rgba = tuple(min(channel * 1.08, 1.0) for channel in state_color[:3]) + (
+            state_color[3] * 0.70,
+        )
         shape.pos = button.pos
         shape.size = button.size
         line.rounded_rectangle = (button.x, button.y, button.width, button.height, radius)
@@ -136,26 +179,23 @@ def applica_tema(profile: UiProfile) -> None:
     # Keep the focused field above the virtual keyboard on Android (no-op on
     # desktop), so the fixed bottom action bar never becomes unreachable.
     Window.softinput_mode = "below_target"
-    Button.background_normal = ""
-    Button.background_down = ""
-    Button.background_color = hex_to_rgba(colors["surface_variant"])
-    Button.color = hex_to_rgba(colors["text"])
-    Label.color = hex_to_rgba(colors["text"])
-    TextInput.background_color = hex_to_rgba(colors["surface"])
-    TextInput.background_normal = ""
-    TextInput.background_active = ""
-    TextInput.foreground_color = hex_to_rgba(colors["text"])
-    TextInput.hint_text_color = hex_to_rgba(colors["muted"])
-    TextInput.cursor_color = hex_to_rgba(colors["accent"])
-    ScrollView.bar_color = (0, 0, 0, 0)
-    Popup.separator_color = hex_to_rgba(colors["surface_variant"])
-    CheckBox.active_color = hex_to_rgba(colors["accent"])
-    CheckBox.background_color = (1, 1, 1, 0.8)
+    _imposta_default(Button, "background_color", hex_to_rgba(colors["primary"]))
+    _imposta_default(Button, "color", hex_to_rgba(colors["on_primary"]))
+    _imposta_default(Label, "color", hex_to_rgba(colors["text"]))
+    _imposta_default(TextInput, "background_color", hex_to_rgba(colors["surface"]))
+    _imposta_default(TextInput, "background_normal", "")
+    _imposta_default(TextInput, "background_active", "")
+    _imposta_default(TextInput, "foreground_color", hex_to_rgba(colors["text"]))
+    _imposta_default(TextInput, "hint_text_color", hex_to_rgba(colors["muted"]))
+    _imposta_default(TextInput, "cursor_color", hex_to_rgba(colors["accent"]))
+    _imposta_default(ScrollView, "bar_color", (0, 0, 0, 0))
+    _imposta_default(Popup, "separator_color", hex_to_rgba(colors["surface_variant"]))
+    _imposta_default(CheckBox, "color", hex_to_rgba(colors["accent"]))
     body = sp(profile.tokens.typography["body"])
-    _imposta_default_font(Button, "font_size", body)
-    _imposta_default_font(Label, "font_size", body)
-    _imposta_default_font(TextInput, "font_size", body)
-    _imposta_default_font(Popup, "title_size", sp(profile.tokens.typography["section"]))
+    _imposta_default(Button, "font_size", body)
+    _imposta_default(Label, "font_size", body)
+    _imposta_default(TextInput, "font_size", body)
+    _imposta_default(Popup, "title_size", sp(profile.tokens.typography["section"]))
     _installa_pittura_controlli(profile)
 
 

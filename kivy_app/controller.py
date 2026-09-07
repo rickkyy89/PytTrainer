@@ -77,6 +77,17 @@ class DriveHomeController:
     def refresh(self) -> list[RemoteScheda]:
         return self._call("aggiornare la lista delle schede", lambda: self._drive().list_schede())
 
+    def list_csv(self) -> list[RemoteScheda]:
+        """List plain manifest CSVs stored in the configured Drive folder."""
+        return self._call("elencare i CSV su Drive", lambda: self._drive().list_remote(".csv"))
+
+    def download_csv(self, remote: RemoteScheda) -> Path:
+        """Download a CSV manifest to the cache and return its local path."""
+        return self._call(
+            "scaricare il CSV da Drive",
+            lambda: self._drive().download_file(remote.id, remote.name),
+        )
+
     def select_folder(self, folder_id: str) -> DriveFolderConfig:
         if folder_id not in self._config.folder_ids:
             raise AppConfigError("La cartella selezionata non e configurata localmente.")

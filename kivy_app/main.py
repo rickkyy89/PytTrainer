@@ -402,6 +402,7 @@ def run() -> None:
                 delete = Button(text="Elimina", size_hint_x=None,
                                 width=dp(profile.touch_target * 2.2))
                 delete.background_color = hex_to_rgba(profile.tokens.colors["error_container"])
+                delete.color = hex_to_rgba(profile.tokens.colors["on_error"])
                 delete.bind(on_release=lambda _, item=remote: self.confirm_delete(item))
                 row.add_widget(open_button)
                 row.add_widget(duplicate)

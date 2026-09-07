@@ -83,7 +83,17 @@ class DriveSync:
 
     def list_schede(self) -> list[RemoteScheda]:
         """List bundles in the configured folder, sorted case-insensitively by name."""
-        schede = []
+        return self.list_remote(".scheda")
+
+    def list_remote(self, suffix: str) -> list[RemoteScheda]:
+        """List files in the configured folder whose name ends with ``suffix``.
+
+        Unlike :meth:`list_schede` this is not bound to the bundle format, so a
+        plain manifest CSV stored in the same Drive folder can be discovered and
+        imported too.
+        """
+        suffisso = suffix.casefold()
+        files = []
         page_token = None
         while True:
             request = {
@@ -93,14 +103,14 @@ class DriveSync:
             if page_token:
                 request["pageToken"] = page_token
             response = self._drive_service.files().list(**request).execute()
-            schede.extend(
+            files.extend(
                 self._remote(file) for file in response.get("files", [])
-                if file.get("name", "").endswith(".scheda")
+                if file.get("name", "").casefold().endswith(suffisso)
             )
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
-        return sorted(schede, key=lambda scheda: (scheda.name.casefold(), scheda.id))
+        return sorted(files, key=lambda remote: (remote.name.casefold(), remote.id))
 
     def download_scheda(self, file_id: str, name: str | None = None) -> Path:
         """Download a bundle into the cache and record its last-sync timestamp."""
@@ -124,6 +134,23 @@ class DriveSync:
             "local_fingerprint": self._fingerprint(destination),
         }
         self._save_state(state)
+        return destination
+
+    def download_file(self, file_id: str, name: str) -> Path:
+        """Download one file's bytes into the cache without any sync-state record.
+
+        Imports are one-shot: the downloaded manifest is consumed immediately by
+        the editor, so unlike :meth:`download_scheda` nothing is written to the
+        sync state (only ``.scheda`` bundles are tracked there).
+        """
+        if not name or Path(name).name != name:
+            raise DriveSyncError("Remote file name is not a safe filename.")
+        destination = self.cache_dir / name
+        content = self._drive_service.files().get_media(fileId=file_id).execute()
+        if not isinstance(content, bytes):
+            raise DriveSyncError("Drive media download did not return bytes.")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
         return destination
 
     def upload_scheda(self, local_path: str | os.PathLike, file_id: str | None = None,

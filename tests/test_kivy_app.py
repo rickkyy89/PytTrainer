@@ -59,7 +59,18 @@ class FakeSync:
             raise self.error
         return self.records
 
+    def list_remote(self, suffix):
+        if self.error:
+            raise self.error
+        return [record for record in self.records if record.name.casefold().endswith(suffix.casefold())]
+
     def download_scheda(self, file_id, name):
+        if self.error:
+            raise self.error
+        self.downloaded = (file_id, name)
+        return self.cache_dir / name
+
+    def download_file(self, file_id, name):
         if self.error:
             raise self.error
         self.downloaded = (file_id, name)
@@ -255,7 +266,21 @@ def test_duplicate_default_name_suggerisce_copia_senza_estensione():
     assert duplicate_default_name("Gambe Day") == "Gambe Day (copia)"
 
 
-@pytest.mark.parametrize("operation", ["refresh", "open", "create", "delete", "duplicate"])
+def test_list_csv_e_download_csv_delegano_a_drive(tmp_path):
+    controller, instances = make_controller(tmp_path)
+    remote = controller.refresh()[0]
+    instances[0].records = [remote,
+                            RemoteScheda("esercizi.csv", "csv1", "2026-09-02T11:00:00Z")]
+
+    csvs = controller.list_csv()
+    percorso = controller.download_csv(csvs[0])
+
+    assert [remote.name for remote in csvs] == ["esercizi.csv"]
+    assert instances[0].downloaded == ("csv1", "esercizi.csv")
+    assert percorso == tmp_path / "cache" / "esercizi.csv"
+
+
+@pytest.mark.parametrize("operation", ["refresh", "open", "create", "delete", "duplicate", "list_csv", "download_csv"])
 def test_drive_errors_are_mapped_to_explicit_unavailable_state(tmp_path, operation):
     controller, instances = make_controller(tmp_path)
     remote = controller.refresh()[0]
@@ -270,6 +295,10 @@ def test_drive_errors_are_mapped_to_explicit_unavailable_state(tmp_path, operati
             controller.create("nuova")
         elif operation == "duplicate":
             controller.duplicate(remote, "copia")
+        elif operation == "list_csv":
+            controller.list_csv()
+        elif operation == "download_csv":
+            controller.download_csv(RemoteScheda("esercizi.csv", "csv1", "2026-09-02T10:00:00Z"))
         else:
             controller.delete(remote)
 

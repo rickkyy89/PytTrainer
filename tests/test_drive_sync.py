@@ -6,11 +6,13 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 RADICE_PROGETTO = Path(__file__).resolve().parent.parent
 if str(RADICE_PROGETTO) not in sys.path:
     sys.path.insert(0, str(RADICE_PROGETTO))
 
-from core.drive_sync import DriveSync, SyncConflict, UploadResult  # noqa: E402
+from core.drive_sync import DriveSync, DriveSyncError, SyncConflict, UploadResult  # noqa: E402
 
 
 class FakeRequest:
@@ -270,3 +272,41 @@ def test_upload_force_sovrascrive_il_remoto_ignorando_il_conflitto(tmp_path):
     assert client.files_api.records[file_id]["content"] == b"local edit"
     # dopo il force, lo stato è riallineato: nessun conflitto residuo
     assert service.check_conflict(local, file_id) is None
+
+
+def test_list_remote_filtra_il_suffisso_csv(tmp_path):
+    service, client = sync(tmp_path)
+    client.files_api.add("esercizi.csv", b"c", "2026-09-02T10:00:00Z")
+    client.files_api.add("gambe.scheda", b"b", "2026-09-02T11:00:00Z")
+    client.files_api.add("note.txt", b"x", "2026-09-02T12:00:00Z")
+
+    csvs = service.list_remote(".csv")
+
+    assert [item.name for item in csvs] == ["esercizi.csv"]
+
+
+def test_list_remote_supporta_estensione_maiuscola(tmp_path):
+    service, client = sync(tmp_path)
+    client.files_api.add("SCHEDA.CSV", b"c", "2026-09-02T10:00:00Z")
+
+    csvs = service.list_remote(".csv")
+
+    assert [item.name for item in csvs] == ["SCHEDA.CSV"]
+
+
+def test_download_file_scarica_senza_scrivere_stato_di_sync(tmp_path):
+    service, client = sync(tmp_path)
+    file_id = client.files_api.add("esercizi.csv", b"nome,spiegazione\nSquat,scendi",
+                                   "2026-09-02T10:00:00Z")
+
+    local = service.download_file(file_id, "esercizi.csv")
+
+    assert local.read_bytes().startswith(b"nome,spiegazione")
+    assert (tmp_path / "cache" / ".drive-sync-state.json").exists() is False
+
+
+def test_download_file_rifiuta_nomi_di_percorso_non_sicuri(tmp_path):
+    service, client = sync(tmp_path)
+
+    with pytest.raises(DriveSyncError):
+        service.download_file("csv1", "../esercizi.csv")
