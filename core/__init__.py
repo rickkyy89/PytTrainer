@@ -1,1 +1,1 @@
-"""Core domain services for PytTrainer."""
+"""Core domain services for pyTrainer."""

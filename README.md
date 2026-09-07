@@ -98,7 +98,7 @@ all'account di servizio).
    - Dai un nome a piacere e crea.
 5. Scarica il file JSON delle credenziali appena create e rinominalo
    `credentials.json`, posizionandolo nella cartella principale del
-   progetto (`/home/user/PytTrainer/credentials.json`).
+   progetto (`/home/user/pyTrainer/credentials.json`).
 6. Al primo utilizzo della generazione documento, l'app aprirà una finestra
    del browser per completare l'autorizzazione; al termine verrà creato
    automaticamente un file `token.json` che verrà riutilizzato (e rinnovato
@@ -222,7 +222,7 @@ due chiamate:
 ## Struttura del progetto
 
 ```
-PytTrainer/
+pyTrainer/
 ├── app.py                   # Interfaccia Streamlit (in italiano)
 ├── core/                    # Logica condivisa, senza dipendenze UI
 ├── video_helper.py          # Wrapper compatibile di core.video_helper

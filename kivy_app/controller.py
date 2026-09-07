@@ -174,13 +174,19 @@ class DriveHomeController:
             raise HomeUnavailableError(f"Scelta di conflitto sconosciuta: {choice}.")
         return self._call("risolvere il conflitto", operation)
 
-    def _duplicate_path(self, name: str) -> Path:
-        """A cache path whose ``.scheda`` name is unused both locally and remotely."""
+    def _duplicate_path(self, name: str, *, start: int = 2) -> Path:
+        """A cache path whose ``.scheda`` name is unused both locally and remotely.
+
+        ``start`` is the first suffix counter tried: the conflict flow uses
+        the default ``2`` (never reuses the original name), while the
+        duplicate flow passes ``1`` so the user-requested name is kept
+        verbatim and only suffixed when it is already taken.
+        """
         stem = name[: -len(".scheda")] if name.endswith(".scheda") else name
         taken = {scheda.name for scheda in self._drive().list_schede()}
-        n = 2
+        n = start
         while True:
-            candidate_name = f"{stem} ({n}).scheda"
+            candidate_name = f"{stem}.scheda" if n == 1 else f"{stem} ({n}).scheda"
             candidate = self._cache_dir / candidate_name
             if candidate_name not in taken and not candidate.exists():
                 return candidate
@@ -228,6 +234,32 @@ class DriveHomeController:
 
     def delete(self, remote: RemoteScheda) -> None:
         self._call("eliminare la scheda", lambda: self._drive().delete_scheda(remote.id))
+
+    def duplicate(self, remote: RemoteScheda, new_name: str) -> RemoteScheda:
+        """Clone a remote bundle into a new, uniquely-named file on Drive.
+
+        The remote copy is downloaded first, but a cached bundle with unsynced
+        local edits is never clobbered: it is duplicated as-is and the reason
+        is surfaced through ``avvertenza`` (same contract as ``_download_editable``).
+        The requested name is used verbatim when free; otherwise
+        ``_duplicate_path`` bumps a suffix so neither the cache folder nor
+        Drive already holds it, then the copy is created as a new remote file.
+        """
+        filename = self._filename(new_name)
+        def operation():
+            drive = self._drive()
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            source = self.cache_path(remote.name)
+            if drive.local_ahead(source, remote.id):
+                self.avvertenza = ("Copia locale più recente di Drive (upload non riuscito): "
+                                   "duplicata da locale senza scaricare.")
+            else:
+                self.avvertenza = None
+                source = drive.download_scheda(remote.id, remote.name)
+            duplicate = self._duplicate_path(filename, start=1)
+            shutil.copy2(source, duplicate)
+            return drive.create_scheda(duplicate).remote
+        return self._call("duplicare la scheda", operation)
 
     def _drive(self):
         if self._sync is None:

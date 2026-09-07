@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.drive_sync import RemoteScheda
 from kivy_app.config import AppConfigError, DEFAULT_FOLDER_ID, FolderConfigStore
 from kivy_app.controller import DriveHomeController, HomeUnavailableError
-from kivy_app.main import build_controller
+from kivy_app.main import build_controller, duplicate_default_name
 
 
 class FakeProvider:
@@ -52,6 +52,7 @@ class FakeSync:
         self.created = []
         self.deleted = []
         self.error = None
+        self.ahead = False
 
     def list_schede(self):
         if self.error:
@@ -65,7 +66,7 @@ class FakeSync:
         return self.cache_dir / name
 
     def local_ahead(self, local_path, file_id=None):
-        return False
+        return self.ahead
 
     def create_scheda(self, path):
         if self.error:
@@ -199,7 +200,62 @@ def test_delete_delegates_to_drive(tmp_path):
     assert instances[0].deleted == ["one"]
 
 
-@pytest.mark.parametrize("operation", ["refresh", "open", "create", "delete"])
+def test_duplicate_downloads_source_and_creates_bundle_with_requested_name(tmp_path):
+    controller, instances = make_controller(tmp_path)
+    remote = controller.refresh()[0]
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "gambe.scheda").write_bytes(b"bundle")
+
+    created = controller.duplicate(remote, "gambe copia")
+
+    assert instances[0].downloaded == ("one", "gambe.scheda")
+    assert instances[0].created == [cache / "gambe copia.scheda"]
+    assert (cache / "gambe copia.scheda").read_bytes() == b"bundle"
+    assert created.name == "gambe copia.scheda"
+
+
+def test_duplicate_avoids_names_already_taken_locally_and_remotely(tmp_path):
+    controller, instances = make_controller(tmp_path)
+    remote = controller.refresh()[0]
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "gambe.scheda").write_bytes(b"bundle")
+    instances[0].records = [remote,
+                            RemoteScheda("Copia.scheda", "r1", "2026-09-02T10:00:00Z"),
+                            RemoteScheda("Copia (2).scheda", "r2", "2026-09-02T10:00:00Z")]
+    (cache / "Copia (3).scheda").write_bytes(b"stale")
+
+    created = controller.duplicate(remote, "Copia")
+
+    # .scheda aggiunto, "(2)" remoto occupato, "(3)" locale occupato → "(4)".
+    assert created.name == "Copia (4).scheda"
+    assert instances[0].created == [cache / "Copia (4).scheda"]
+    assert (cache / "Copia (3).scheda").read_bytes() == b"stale"
+
+
+def test_duplicate_keeps_unsynced_local_copy_and_skips_download(tmp_path):
+    controller, instances = make_controller(tmp_path)
+    remote = controller.refresh()[0]
+    cache = tmp_path / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "gambe.scheda").write_bytes(b"local edits")
+    instances[0].ahead = True
+
+    created = controller.duplicate(remote, "gambe copia")
+
+    assert instances[0].downloaded is None
+    assert created.name == "gambe copia.scheda"
+    assert (cache / "gambe copia.scheda").read_bytes() == b"local edits"
+    assert controller.avvertenza and "duplicata da locale" in controller.avvertenza
+
+
+def test_duplicate_default_name_suggerisce_copia_senza_estensione():
+    assert duplicate_default_name("gambe.scheda") == "gambe (copia)"
+    assert duplicate_default_name("Gambe Day") == "Gambe Day (copia)"
+
+
+@pytest.mark.parametrize("operation", ["refresh", "open", "create", "delete", "duplicate"])
 def test_drive_errors_are_mapped_to_explicit_unavailable_state(tmp_path, operation):
     controller, instances = make_controller(tmp_path)
     remote = controller.refresh()[0]
@@ -212,6 +268,8 @@ def test_drive_errors_are_mapped_to_explicit_unavailable_state(tmp_path, operati
             controller.open(remote)
         elif operation == "create":
             controller.create("nuova")
+        elif operation == "duplicate":
+            controller.duplicate(remote, "copia")
         else:
             controller.delete(remote)
 

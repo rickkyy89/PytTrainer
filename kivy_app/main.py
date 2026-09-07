@@ -45,6 +45,12 @@ def build_pc_controller(base_dir: str | Path | None = None) -> DriveHomeControll
     return build_controller(base_dir, is_android=False)
 
 
+def duplicate_default_name(sheet_name: str) -> str:
+    """Sensible name pre-filled in the duplicate dialog, without extension."""
+    stem = sheet_name[: -len(".scheda")] if sheet_name.endswith(".scheda") else sheet_name
+    return f"{stem} (copia)"
+
+
 def pc_icon_path() -> Path:
     """Return the tracked PC icon independently of the current directory."""
     return Path(__file__).resolve().parent.parent / "assets" / "pc" / "icon.ico"
@@ -390,11 +396,15 @@ def run() -> None:
                                  h=profile.touch_target + 16:
                                  setattr(b, "text_size", (max(v - dp(20), 10), dp(h))))
                 open_button.bind(on_release=lambda _, item=remote: self.open(item))
+                duplicate = Button(text="Duplica", size_hint_x=None,
+                                   width=dp(profile.touch_target * 2.2))
+                duplicate.bind(on_release=lambda _, item=remote: self.duplicate_dialog(item))
                 delete = Button(text="Elimina", size_hint_x=None,
                                 width=dp(profile.touch_target * 2.2))
                 delete.background_color = hex_to_rgba(profile.tokens.colors["error_container"])
                 delete.bind(on_release=lambda _, item=remote: self.confirm_delete(item))
                 row.add_widget(open_button)
+                row.add_widget(duplicate)
                 row.add_widget(delete)
                 contenuto.add_widget(row)
 
@@ -586,11 +596,37 @@ def run() -> None:
                                                 on_back=lambda: self._torna_in_lettura(remote),
                                                 on_menu=self.apri_menu))
 
-        def create_dialog(self):
-            input_name = TextInput(hint_text="Nome scheda")
-            popup = Popup(title="Nuova scheda", content=input_name, size_hint=(0.8, 0.3))
-            input_name.bind(on_text_validate=lambda *_: (popup.dismiss(), self.create(input_name.text)))
+        def _dialogo_nome(self, titolo, etichetta_conferma, nome_predefinito, on_conferma):
+            """Name popup with Enter submission and explicit confirm/cancel buttons."""
+            profile = _ui_profile()
+            content = BoxLayout(orientation="vertical",
+                                spacing=dp(profile.tokens.spacing["sm"]))
+            input_name = TextInput(hint_text="Nome scheda", text=nome_predefinito,
+                                   multiline=False)
+            buttons = BoxLayout(size_hint_y=None, height=dp(profile.touch_target),
+                                spacing=dp(profile.tokens.spacing["sm"]))
+            popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.35))
+
+            def submit(*_):
+                popup.dismiss()
+                on_conferma(input_name.text)
+
+            annulla = Button(text="Annulla")
+            conferma = Button(text=etichetta_conferma)
+            conferma.background_color = hex_to_rgba(profile.tokens.colors["coral"])
+            conferma.color = hex_to_rgba(profile.tokens.colors["on_coral"])
+            annulla.bind(on_release=lambda *_: popup.dismiss())
+            conferma.bind(on_release=submit)
+            input_name.bind(on_text_validate=submit)
+            buttons.add_widget(annulla)
+            buttons.add_widget(conferma)
+            content.add_widget(input_name)
+            content.add_widget(buttons)
             popup.open()
+            return popup
+
+        def create_dialog(self):
+            return self._dialogo_nome("Nuova scheda", "Crea", "", self.create)
 
         def create(self, name):
             try:
@@ -598,6 +634,22 @@ def run() -> None:
                 self.refresh()
             except HomeUnavailableError as exc:
                 self.status.text = str(exc)
+
+        def duplicate_dialog(self, remote):
+            return self._dialogo_nome(
+                f"Duplica {remote.name}", "Duplica", duplicate_default_name(remote.name),
+                lambda nome: self.duplicate(remote, nome))
+
+        def duplicate(self, remote, new_name):
+            try:
+                creata = controller.duplicate(remote, new_name)
+            except HomeUnavailableError as exc:
+                self.status.text = str(exc)
+                return
+            self.refresh()
+            self.status.text = f"Scheda duplicata come {creata.name}."
+            if getattr(controller, "avvertenza", None):
+                self.status.text += f" — {controller.avvertenza}"
 
         def confirm_delete(self, remote):
             buttons = BoxLayout(spacing=8)
