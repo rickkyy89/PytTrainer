@@ -32,6 +32,7 @@ class ExportScreen(BoxLayout):
         self._url: str | None = None
         self._document_id: str | None = None
         self._poll = None
+        self._force_regenerate = False
 
         header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         if self._on_menu is not None:
@@ -69,13 +70,40 @@ class ExportScreen(BoxLayout):
         self.start_button = Button(text="Avvia")
         self.start_button.bind(on_release=lambda *_: self._start())
         self.actions.add_widget(self.start_button)
+        self.regenerate_button = Button(text="Rigenera nuovo")
+        self.regenerate_button.bind(on_release=lambda *_: self._confirm_regenerate())
+        self.actions.add_widget(self.regenerate_button)
         self.add_widget(self.actions)
+
+    @property
+    def busy(self):
+        return self._worker is not None
+
+    def _confirm_regenerate(self):
+        if self.busy:
+            return
+        from kivy.uix.popup import Popup
+        content = BoxLayout(orientation="vertical")
+        content.add_widget(Label(text="Creare un nuovo documento?\nIl precedente resta su Drive."))
+        confirm = Button(text="Conferma nuovo documento")
+        cancel = Button(text="Annulla")
+        popup = Popup(title="Rigenerazione", content=content, size_hint=(0.9, 0.4))
+        def start(*_):
+            popup.dismiss()
+            self._force_regenerate = True
+            self._restart()
+        confirm.bind(on_release=start)
+        cancel.bind(on_release=lambda *_: popup.dismiss())
+        content.add_widget(confirm)
+        content.add_widget(cancel)
+        popup.open()
 
     def _start(self):
         if self._worker is not None:
             return
         self._url = None
         self.start_button.disabled = True
+        self.regenerate_button.disabled = True
         self._back.disabled = True  # niente editor (e niente Salva) durante il worker
         if self._menu is not None:
             self._menu.disabled = True
@@ -86,7 +114,7 @@ class ExportScreen(BoxLayout):
 
     def _run_worker(self):
         try:
-            risultato = self._export.genera()
+            risultato = self._export.genera(force_regenerate=self._force_regenerate)
             Clock.schedule_once(lambda *_: self._done(risultato), 0)
         except Exception as exc:
             testo = str(exc) if isinstance(exc, DocExportError) else f"Errore: {exc}"
@@ -103,7 +131,7 @@ class ExportScreen(BoxLayout):
         self._document_id = risultato.get("document_id")
         parti = [f"Documento generato: {len(risultato.get('esercizi_inseriti', []))} esercizi inseriti."]
         if risultato.get("documento_rigenerato"):
-            parti.append("ATTENZIONE: il documento precedente era stato cancellato, "
+            parti.append("ATTENZIONE: documento precedente incompleto, cancellato o rigenerato su richiesta; "
                          "creato uno nuovo con URL diverso.")
         salvataggio = risultato.get("salvataggio")
         from core.drive_sync import SyncConflict, UploadResult
@@ -119,21 +147,25 @@ class ExportScreen(BoxLayout):
         self._stop_polling()
         self.progress.text = testo
         self.start_button.disabled = False
+        self._force_regenerate = False
 
     def _build_result_actions(self):
         self.actions.clear_widgets()
+        self.regenerate_button.disabled = False
         if self._url:
             open_btn = Button(text="Apri documento")
             open_btn.bind(on_release=lambda *_: apri_url(self._url))
             share_btn = Button(text="Condividi PDF")
             share_btn.bind(on_release=lambda *_: self._share_pdf())
-            retry = Button(text="Rigenera/riprendi", size_hint_x=None, width=160)
+            retry = Button(text="Riprendi", size_hint_x=None, width=100)
             retry.bind(on_release=lambda *_: self._restart())
             self.actions.add_widget(open_btn)
             self.actions.add_widget(share_btn)
             self.actions.add_widget(retry)
+            self.actions.add_widget(self.regenerate_button)
         else:
             self.actions.add_widget(self.start_button)
+            self.actions.add_widget(self.regenerate_button)
 
     def _share_pdf(self):
         if self._worker is not None:
@@ -187,18 +219,23 @@ class ExportScreen(BoxLayout):
     def _build_actions_default(self):
         self.actions.clear_widgets()
         self.actions.add_widget(self.start_button)
+        self.actions.add_widget(self.regenerate_button)
 
     def _stop_polling(self):
         if self._poll is not None:
             self._poll.cancel()
             self._poll = None
         self._worker = None
+        self._force_regenerate = False
+        self.regenerate_button.disabled = False
         self.start_button.disabled = True
         self._back.disabled = False  # il worker e' terminato: si puo' tornare
         if self._menu is not None:
             self._menu.disabled = False
 
     def _exit(self):
+        if self.busy:
+            return
         if self._poll is not None:
             self._poll.cancel()
         self._on_back()

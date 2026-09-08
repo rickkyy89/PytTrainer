@@ -816,6 +816,18 @@ class FakeGoogleDocState:
                 replies.append(
                     {"createNamedRange": {"namedRangeId": f"nr_{self.named_ranges_creati}"}}
                 )
+            elif "insertText" in richiesta or "insertInlineImage" in richiesta:
+                key = "insertText" if "insertText" in richiesta else "insertInlineImage"
+                request = richiesta[key]
+                tables = [e for e in self.content if "table" in e]
+                if tables:
+                    cells = tables[-1]["table"]["tableRows"][0]["tableCells"]
+                    right_start = cells[1]["content"][0]["startIndex"]
+                    cell = cells[1] if key == "insertText" and request["location"]["index"] == right_start else cells[0]
+                    element = ({"textRun": {"content": request["text"]}} if key == "insertText"
+                               else {"inlineObjectElement": {"inlineObjectId": "image"}})
+                    cell["content"][0]["paragraph"].setdefault("elements", []).append(element)
+                replies.append({})
             else:
                 # Le altre richieste (insertText, updateTextStyle, insertInlineImage,
                 # updateTableCellStyle, updateTableColumnProperties, updateDocumentStyle,
@@ -871,6 +883,10 @@ class FakeDocumentsResource:
 
     def create(self, body):
         self.stato.create_calls += 1
+        self.stato.content = [{"startIndex": 1, "endIndex": 2, "paragraph": {}}]
+        self.stato.next_index = 2
+        if self.stato.create_calls > 1:
+            self.stato.doc_id = f"fake_doc_{self.stato.create_calls}"
         self.stato.title = body.get("title")
         return _RisultatoEseguibile({"documentId": self.stato.doc_id})
 
@@ -909,6 +925,9 @@ class FakeFilesResource:
         file_id = f"file_{self.stato._contatore}"
         self.stato.created_files.append(file_id)
         return _RisultatoEseguibile({"id": file_id})
+
+    def get(self, fileId, fields=None):
+        return _RisultatoEseguibile({"trashed": False})
 
     def delete(self, fileId):
         self.stato.deleted_files.append(fileId)
@@ -1151,6 +1170,16 @@ def test_create_workout_document_resumibilita(tmp_path):
     }
     percorso_stato.write_text(json.dumps(stato_iniziale), encoding="utf-8")
 
+    # The persisted exercises must actually exist in the remote document.
+    for _ in range(2):
+        stato_doc._insert_table()
+        cells = stato_doc.content[-2]["table"]["tableRows"][0]["tableCells"]
+        cells[0]["content"][0]["paragraph"]["elements"] = [
+            {"inlineObjectElement": {}}, {"inlineObjectElement": {}}]
+        cells[1]["content"][0]["paragraph"]["elements"] = [
+            {"textRun": {"content": f"ESERCIZIO {_ + 1}"}}]
+    stato_doc.tables_inserted = 0
+
     risultato = create_workout_document(
         esercizi,
         "Scheda Resumibile",
@@ -1264,7 +1293,86 @@ def test_create_workout_document_senza_stato_non_rigenera(tmp_path):
     )
 
     assert risultato["documento_rigenerato"] is False
+
+
+def test_documento_segnato_completo_ma_con_solo_11_tabelle_viene_rigenerato(tmp_path):
+    """Il caso reale 11/19 non deve diventare un no-op solo perché state.json dice 19."""
+    esercizi = [_crea_esercizio_di_prova(f"Esercizio {n + 1}", tmp_path) for n in range(19)]
+    stato_doc = FakeGoogleDocState()
+    for _ in range(11):
+        stato_doc._insert_table()
+    stato_doc.tables_inserted = 0  # da qui contiamo solo il lavoro della nuova esecuzione
+    percorso_stato = tmp_path / "scheda.state.json"
+    percorso_stato.write_text(json.dumps({
+        "doc_id": stato_doc.doc_id,
+        "titolo": "Scheda incompleta",
+        "status": "completed",
+        "expected_slugs": [slugify(e["nome"]) for e in esercizi],
+        "esercizi": [
+            {"nome": e["nome"], "slug": slugify(e["nome"]),
+             "named_range_id": f"nr_{n}", "gruppo": ""}
+            for n, e in enumerate(esercizi)
+        ],
+    }), encoding="utf-8")
+
+    risultato = create_workout_document(
+        esercizi, "Scheda incompleta", docs_service=FakeDocsService(stato_doc),
+        drive_service=FakeDriveService(FakeDriveState()), state_path=str(percorso_stato),
+    )
+
     assert stato_doc.create_calls == 1
+    assert stato_doc.tables_inserted == 19
+    assert risultato["documento_rigenerato"] is True
+    assert len(risultato["esercizi_inseriti"]) == 19
+
+
+def test_interruzione_durante_mutazione_non_ripete_batch_incerto_ma_rigenera(tmp_path):
+    esercizi = [_crea_esercizio_di_prova("Squat", tmp_path)]
+    stato_doc = FakeGoogleDocState()
+    stato_doc._insert_table()  # batch precedente potrebbe essere arrivato a Google
+    stato_doc.tables_inserted = 0
+    percorso_stato = tmp_path / "scheda.state.json"
+    percorso_stato.write_text(json.dumps({
+        "doc_id": stato_doc.doc_id, "titolo": "Scheda",
+        "status": "in_progress", "expected_slugs": ["squat"],
+        "pending": {"slug": "squat", "phase": "document_mutation"},
+        "esercizi": [],
+    }), encoding="utf-8")
+
+    risultato = create_workout_document(
+        esercizi, "Scheda", docs_service=FakeDocsService(stato_doc),
+        drive_service=FakeDriveService(FakeDriveState()), state_path=str(percorso_stato),
+    )
+
+    assert stato_doc.create_calls == 1
+    assert stato_doc.tables_inserted == 1
+    assert risultato["documento_rigenerato"] is True
+
+
+def test_get_transiente_viene_ritentato_ma_create_non_viene_ritentata(tmp_path, monkeypatch):
+    esercizio = _crea_esercizio_di_prova("Squat", tmp_path)
+    stato_doc = FakeGoogleDocState()
+    percorso_stato = tmp_path / "scheda.state.json"
+    _stato_orfano(percorso_stato, stato_doc.doc_id, [])
+    calls = {"get": 0}
+    originale_get = FakeDocumentsResource.get
+
+    def flaky_get(self, documentId):
+        calls["get"] += 1
+        if calls["get"] == 1:
+            raise _http_error(503)
+        return originale_get(self, documentId)
+
+    monkeypatch.setattr(FakeDocumentsResource, "get", flaky_get)
+    monkeypatch.setattr("core.google_retry.time.sleep", lambda _: None)
+
+    create_workout_document(
+        [esercizio], "Scheda", docs_service=FakeDocsService(stato_doc),
+        drive_service=FakeDriveService(FakeDriveState()), state_path=str(percorso_stato),
+    )
+
+    assert calls["get"] >= 2
+    assert stato_doc.create_calls == 0
 
 
 # ---------------------------------------------------------------------------

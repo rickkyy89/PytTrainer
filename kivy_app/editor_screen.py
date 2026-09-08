@@ -26,7 +26,7 @@ from kivy.uix.textinput import TextInput
 from core.drive_sync import SyncConflict
 
 from .editor import EditorValidationError
-from .file_picker import choose_file
+from .file_picker import choose_file, choose_save_file
 from .editor_layout import editor_layout, field_columns
 from .material import profile_for_window
 
@@ -269,11 +269,82 @@ class EditorScreen(BoxLayout):
                       auto_dismiss=True)
         locale = Button(text="Salva in locale")
         drive = Button(text="Salva su Drive")
-        locale.bind(on_release=lambda *_: (popup.dismiss(), self._save(False, chiudi, on_close)))
-        drive.bind(on_release=lambda *_: (popup.dismiss(), self._save(True, chiudi, on_close)))
+        locale.bind(on_release=lambda *_: (popup.dismiss(), self._salva_locale(chiudi, on_close)))
+        drive.bind(on_release=lambda *_: (popup.dismiss(), self._salva_drive(chiudi, on_close)))
         content.add_widget(locale)
         content.add_widget(drive)
         popup.open()
+
+    def _salva_locale(self, chiudi, on_close):
+        # On Android (local_store present) the mirror folder is fixed, so save
+        # directly; on the PC a native dialog picks the destination file.
+        if self._controller.local_store is not None:
+            self._save(False, chiudi, on_close)
+            return
+        default = Path(self._editor.percorso_bundle).name
+
+        def scelto(percorso):
+            self._save(False, chiudi, on_close, destinazione=percorso)
+        choose_save_file(scelto, default_name=default, title="Salva scheda con nome")
+
+    def _salva_drive(self, chiudi, on_close):
+        if self._editor.pubblicato_su_drive:
+            self._save(True, chiudi, on_close)
+            return
+        nome = Path(self._editor.percorso_bundle).name
+        try:
+            remoto = self._controller.remoto_con_nome(nome)
+        except Exception as exc:  # HomeUnavailableError e simili
+            self.status.text = str(exc)
+            return
+        if remoto is None:
+            self._pubblica(chiudi, on_close, None)
+            return
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Nome già in uso su Drive", content=content,
+                      size_hint=(0.85, 0.4), auto_dismiss=False)
+        popup.add_widget(Label(text=f"'{remoto.name}' esiste già su Drive. "
+                                    "Vuoi sovrascriverlo?"))
+        azioni = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+        sovrascrivi = Button(text="Sovrascrivi")
+        annulla = Button(text="Annulla")
+        sovrascrivi.bind(on_release=lambda *_: (popup.dismiss(), self._pubblica(chiudi, on_close, remoto)))
+        annulla.bind(on_release=lambda *_: popup.dismiss())
+        azioni.add_widget(sovrascrivi)
+        azioni.add_widget(annulla)
+        content.add_widget(azioni)
+        popup.open()
+
+    def _pubblica(self, chiudi, on_close, remoto):
+        if self._saving:
+            self.status.text = "Salvataggio gia in corso: attendi il termine."
+            return
+        self._saving = True
+        self._blocca(True)
+        self.status.text = "Pubblicazione su Drive in corso…"
+        target = on_close or self._on_back
+
+        def worker():
+            try:
+                self._controller.pubblica_in_drive(self._editor, remoto=remoto)
+            except Exception as exc:
+                Clock.schedule_once(lambda _, e=exc: esito(e, None), 0)
+            else:
+                Clock.schedule_once(lambda: esito(None, None), 0)
+
+        def esito(eccezione, _):
+            self._saving = False
+            self._blocca(False)
+            if eccezione is not None:
+                self.status.text = (f"Pubblicazione su Drive non riuscita: {eccezione}. "
+                                    "Modifiche salvate in locale.")
+                self._refresh_status()
+                return
+            self.status.text = "Scheda pubblicata su Drive."
+            if chiudi:
+                target()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _group_popup(self, indice):
         gruppi = self._editor.gruppi_esistenti()
@@ -439,7 +510,8 @@ class EditorScreen(BoxLayout):
 
     def _import_scheda(self):
         try:
-            schede = [r for r in self._controller.refresh() if r.id != self._remote.id]
+            remote_id = getattr(self._remote, "id", None)
+            schede = [r for r in self._controller.refresh() if r.id != remote_id]
         except Exception as exc:  # HomeUnavailableError e simili
             self.status.text = str(exc)
             return
@@ -528,7 +600,7 @@ class EditorScreen(BoxLayout):
             if isinstance(widget, Button):
                 widget.disabled = value
 
-    def _save(self, sincronizza=True, chiudi=False, on_close=None):
+    def _save(self, sincronizza=True, chiudi=False, on_close=None, destinazione=None):
         self._commit_active_field()
         target = on_close or self._on_back
         if self._saving:
@@ -541,7 +613,7 @@ class EditorScreen(BoxLayout):
 
         def worker():
             try:
-                risultato = self._editor.salva(sincronizza=sincronizza)
+                risultato = self._editor.salva(sincronizza=sincronizza, destinazione=destinazione)
             except Exception as exc:
                 Clock.schedule_once(lambda _, e=exc: esito(e, None), 0)
             else:
@@ -550,16 +622,19 @@ class EditorScreen(BoxLayout):
         def esito(eccezione, risultato):
             self._saving = False
             self._blocca(False)
+            copia = getattr(self._editor, "ultima_copia_locale", None)
+            se_copia = f" Copia in: {copia}." if copia else ""
             if eccezione is not None:
                 if isinstance(eccezione, EditorValidationError):
                     self.status.text = str(eccezione)
                 else:
-                    self.status.text = (f"Salvataggio locale ok, Drive non raggiungibile: {eccezione}"
+                    self.status.text = ((f"Salvataggio locale ok, Drive non raggiungibile: {eccezione}."
+                                         + se_copia)
                                         if sincronizza else f"Salvataggio locale fallito: {eccezione}")
                 self._refresh_status()
                 return
             if not sincronizza:
-                self.status.text = "Scheda salvata in locale (Drive non aggiornato)."
+                self.status.text = "Scheda salvata in locale (Drive non aggiornato)." + se_copia
                 if chiudi:
                     target()
                 return
@@ -569,7 +644,8 @@ class EditorScreen(BoxLayout):
                                        local_path=self._editor.percorso_bundle)
                 return
             if self._editor.sporco:
-                self.status.text = "Salvato solo in locale: upload su Drive non riuscito."
+                self.status.text = ("Salvato solo in locale: upload su Drive non riuscito."
+                                    + se_copia)
             else:
                 self.status.text = "Salvato su Drive."
                 if chiudi:

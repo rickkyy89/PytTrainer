@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from googleapiclient.http import MediaFileUpload
+from .google_retry import safe_service
 
 
 STATE_FILENAME = ".drive-sync-state.json"
@@ -72,7 +73,7 @@ class DriveSync:
     def __init__(self, drive_service, folder_id: str, cache_dir: str | os.PathLike, *, media_factory=None):
         if not folder_id:
             raise ValueError("folder_id is required.")
-        self._drive_service = drive_service
+        self._drive_service = safe_service(drive_service)
         self.folder_id = folder_id
         self.cache_dir = Path(cache_dir).resolve()
         self._media_factory = media_factory or self._default_media_factory

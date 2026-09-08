@@ -12,7 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.platform import CredentialProviderError
 from core.video_helper import FrameExtractionError
-from kivy_app.platform_android import AndroidCredentialProvider, AndroidFrameExtractor
+from kivy_app.platform_android import (AndroidCredentialProvider, AndroidExportGuard,
+                                       AndroidFrameExtractor)
 
 
 class FakeBridge:
@@ -224,3 +225,30 @@ def test_android_manifest_declares_google_runtime_dependencies():
     } <= declared
     assert "google-auth==2.23.4" in requirements
     assert "cryptography" not in declared
+
+
+def test_android_export_guard_delega_al_servizio_foreground_nativo():
+    events = []
+    bridge = type("Bridge", (), {
+        "start": lambda self: events.append("start"),
+        "stop": lambda self: events.append("stop"),
+    })()
+
+    guard = AndroidExportGuard(bridge=bridge)
+    guard.start()
+    guard.stop()
+
+    assert events == ["start", "stop"]
+
+
+def test_android_build_dichiara_foreground_service_wakelock_e_java_bridge():
+    spec = (PROJECT_ROOT / "buildozer.spec").read_text(encoding="utf-8")
+    java = PROJECT_ROOT / "kivy_app/android/src/org/ptt/pyTrainer/ExportKeepAliveService.java"
+
+    assert "FOREGROUND_SERVICE" in spec
+    assert "WAKE_LOCK" in spec
+    assert "p4a.extra_args = --native-service=org.ptt.pyTrainer.ExportKeepAliveService" in spec
+    assert java.exists()
+    source = java.read_text(encoding="utf-8")
+    assert "startForeground(" in source
+    assert "PARTIAL_WAKE_LOCK" in source

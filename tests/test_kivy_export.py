@@ -43,10 +43,14 @@ def make_export(tmp_path, **kwargs):
     credential_provider = kwargs.pop("credential_provider", "CP")
     created = {}
 
-    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
+    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None,
+                checkpoint_callback=None):
         created.update(esercizi=[e["nome"] for e in esercizi], titolo=titolo,
-                       state_path=state_path, cp=credential_provider, bd=base_dir)
+                       state_path=state_path, cp=credential_provider, bd=base_dir,
+                       checkpoint_callback=checkpoint_callback)
         Path(state_path).write_text('{"doc_id": "d1", "esercizi": []}', encoding="utf-8")
+        if checkpoint_callback:
+            checkpoint_callback()
         return {"document_id": "d1", "url": "https://docs/d1",
                 "esercizi_inseriti": created["esercizi"], "documento_rigenerato": False}
 
@@ -142,6 +146,7 @@ def test_genera_passa_pronti_state_path_provider_e_salva_stato(tmp_path):
     assert created["state_path"] == str(tmp_path / "my.work" / "state.json")
     assert created["cp"] == "CP"
     assert created["bd"] == tmp_path
+    assert callable(created["checkpoint_callback"])
     assert risultato["url"] == "https://docs/d1"
     assert editor.sporco is False  # editor.salva ha completato (upload None)
 
@@ -171,7 +176,8 @@ def test_genera_passa_snapshot_isolato_all_creator(tmp_path):
     editor = make_editor(tmp_path)
     visti = []
 
-    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
+    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None,
+                checkpoint_callback=None):
         visti.extend(esercizi)
         return {"document_id": "d", "url": "u", "esercizi_inseriti": [],
                 "documento_rigenerato": False}
@@ -189,10 +195,12 @@ def test_genera_passa_snapshot_isolato_all_creator(tmp_path):
 def test_errore_di_generazione_persiste_il_checkpoint_nel_bundle(tmp_path):
     editor = make_editor(tmp_path)
 
-    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None):
+    def creator(esercizi, titolo, state_path=None, credential_provider=None, base_dir=None,
+                checkpoint_callback=None):
         from core.docs_helper import salva_stato
         salva_stato(state_path, {"doc_id": "d1", "titolo": titolo,
                                  "esercizi": [{"nome": "E0", "slug": "e0"}]})
+        checkpoint_callback()
         raise OSError("drive perso a meta')")
 
     bundle = Path(tmp_path / "my.scheda")
@@ -205,6 +213,57 @@ def test_errore_di_generazione_persiste_il_checkpoint_nel_bundle(tmp_path):
         controller.genera()
 
     assert bundle.exists()  # il bundle e' stato riscritto con lo stato parziale
+
+
+def test_genera_protegge_il_worker_e_persiste_ogni_checkpoint_localmente(tmp_path):
+    class Guard:
+        def __init__(self):
+            self.active = False
+            self.events = []
+
+        def start(self):
+            self.active = True
+            self.events.append("start")
+
+        def stop(self):
+            self.active = False
+            self.events.append("stop")
+
+    guard = Guard()
+    editor = make_editor(tmp_path)
+    salvataggi_locali = []
+    editor.salva_locale = lambda: salvataggi_locali.append("checkpoint")
+
+    def creator(esercizi, titolo, **kwargs):
+        assert guard.active is True
+        kwargs["checkpoint_callback"]()
+        return {"document_id": "d", "url": "u", "esercizi_inseriti": [],
+                "documento_rigenerato": False}
+
+    controller = DocExportController(editor, creator=creator, background_guard=guard)
+    controller.genera()
+
+    assert guard.events == ["start", "stop"]
+    assert salvataggi_locali == ["checkpoint"]
+
+
+def test_genera_ferma_la_protezione_background_anche_su_errore(tmp_path):
+    class Guard:
+        def __init__(self):
+            self.events = []
+        def start(self):
+            self.events.append("start")
+        def stop(self):
+            self.events.append("stop")
+
+    guard = Guard()
+    controller, _, _ = make_export(tmp_path, background_guard=guard)
+    controller._creator = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("rete"))
+
+    with pytest.raises(OSError, match="rete"):
+        controller.genera()
+
+    assert guard.events == ["start", "stop"]
 
 
 def test_salva_stato_e_atomico_e_carica_stato_riapre(tmp_path):

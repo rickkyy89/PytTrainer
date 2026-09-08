@@ -10,6 +10,8 @@ from pathlib import Path
 
 DEFAULT_FOLDER_ID = "1UthYZdR1GiVADYNUWBN1cX3z790FEkXq"
 
+DESTINAZIONI_LOCALI = ("documenti", "download")
+
 
 class AppConfigError(ValueError):
     """Raised when the local folder configuration is invalid."""
@@ -59,3 +61,41 @@ class FolderConfigStore:
         if not isinstance(value, str) or not value.strip():
             raise AppConfigError("L'ID della cartella Drive non puo essere vuoto.")
         return value.strip()
+
+
+@dataclass(frozen=True)
+class LocalPrefs:
+    """Dove l'app copia i bundle affinche siano ritrovabili dall'utente."""
+
+    destinazione: str = "documenti"
+
+
+class LocalPrefsStore:
+    """JSON-backed store for the local save destination (Documents/Download).
+
+    Never raises for a missing or corrupt file: the destination is only a
+    convenience, so a bad read falls back to the default rather than blocking
+    the whole home screen.
+    """
+
+    def __init__(self, path: str | os.PathLike):
+        self.path = Path(path)
+
+    def load(self) -> LocalPrefs:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return LocalPrefs()
+        destinazione = payload.get("destinazione") if isinstance(payload, dict) else None
+        if destinazione not in DESTINAZIONI_LOCALI:
+            return LocalPrefs()
+        return LocalPrefs(destinazione)
+
+    def save(self, prefs: LocalPrefs) -> None:
+        if prefs.destinazione not in DESTINAZIONI_LOCALI:
+            raise AppConfigError("Destinazione di salvataggio locale non valida.")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
+        temporary.write_text(json.dumps({"destinazione": prefs.destinazione}, indent=2),
+                             encoding="utf-8")
+        os.replace(temporary, self.path)

@@ -17,6 +17,7 @@ from googleapiclient.http import MediaFileUpload
 from . import video_helper
 from .csv_utils import slugify, slugs_unici
 from .platform import CredentialProviderError, LocalCredentialsProvider
+from .google_retry import safe_service
 
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
@@ -387,14 +388,26 @@ def _documento_raggiungibile(docs_service, doc_id: str) -> bool:
     return True
 
 
-def _crea_documento_scheda(docs_service, doc_title: str, state_path: str | None) -> tuple[str, dict]:
+def _crea_documento_scheda(docs_service, doc_title: str, state_path: str | None,
+                          checkpoint_callback=None) -> tuple[str, dict]:
     """
     Crea un nuovo Google Doc per la scheda: formato A4 verticale con margini
     di 36pt e titolo centrato in grassetto. Ritorna (doc_id, stato) con lo
     stato iniziale già salvato su state_path se indicato.
     """
+    stato = {"doc_id": None, "titolo": doc_title, "esercizi": [],
+             "pending": {"phase": "create"}, "status": "in_progress"}
+    def checkpoint():
+        if state_path:
+            salva_stato(state_path, stato)
+            if checkpoint_callback:
+                checkpoint_callback()
+    checkpoint()
     documento = docs_service.documents().create(body={"title": doc_title}).execute()
     doc_id = documento["documentId"]
+    stato.update(doc_id=doc_id, url=f"https://docs.google.com/document/d/{doc_id}/edit",
+                 pending={"phase": "initialization"})
+    checkpoint()
 
     # Impostiamo il formato pagina A4 verticale (in punti) e margini di 36pt.
     docs_service.documents().batchUpdate(
@@ -439,14 +452,8 @@ def _crea_documento_scheda(docs_service, doc_title: str, state_path: str | None)
         },
     ).execute()
 
-    stato = {
-        "doc_id": doc_id,
-        "titolo": doc_title,
-        "url": f"https://docs.google.com/document/d/{doc_id}/edit",
-        "esercizi": [],
-    }
-    if state_path:
-        salva_stato(state_path, stato)
+    stato.pop("pending", None)
+    checkpoint()
     return doc_id, stato
 
 
@@ -460,6 +467,8 @@ def create_workout_document(
     *,
     credential_provider=None,
     base_dir: str | os.PathLike | None = None,
+    checkpoint_callback=None,
+    force_regenerate: bool = False,
 ) -> dict:
     """
     Crea (o riprende) un Google Doc A4 verticale con un modulo per ogni
@@ -488,6 +497,13 @@ def create_workout_document(
     docs_service e drive_service possono essere passati esplicitamente (utile
     per i test con mock); se omessi vengono costruiti a partire dalle
     credenziali restituite da get_credentials().
+
+    checkpoint_callback() persists state_path into the caller's durable bundle
+    before remote mutations and after completed exercises. A pending mutation
+    or damaged remote table requires a new document, never replay of a batch
+    with uncertain outcome. An uncertain create without a returned ID requires
+    force_regenerate=True after the user has checked Drive. Explicit regeneration
+    leaves the previous document untouched.
     """
     if docs_service is None or drive_service is None:
         creds = get_credentials(credential_provider=credential_provider, base_dir=base_dir)
@@ -496,15 +512,70 @@ def create_workout_document(
         if drive_service is None:
             drive_service = build("drive", "v3", credentials=creds)
 
+    docs_service = safe_service(docs_service)
+    drive_service = safe_service(drive_service)
     file_id_caricati: list[str] = []
     esercizi_inseriti: list[str] = []
 
     try:
-        stato = carica_stato(state_path) if state_path else None
+        try:
+            stato = carica_stato(state_path) if state_path and not force_regenerate else None
+            if stato is not None and (
+                not isinstance(stato, dict) or "doc_id" not in stato
+                or not isinstance(stato.get("esercizi"), list)
+                or any(not isinstance(e, dict)
+                       or not all(isinstance(e.get(k), str) for k in ("nome", "slug", "gruppo"))
+                       for e in stato["esercizi"])
+            ):
+                raise ValueError("Struttura checkpoint non valida")
+        except (ValueError, TypeError) as exc:
+            raise GoogleDocsError("Checkpoint illeggibile: usa Rigenera nuovo documento.") from exc
         doc_id = stato.get("doc_id") if stato else None
-        documento_rigenerato = False
+        documento_rigenerato = bool(force_regenerate)
+        if stato and not doc_id and stato.get("pending") and not force_regenerate:
+            raise GoogleDocsError("Creazione precedente con esito incerto. Verifica Drive; "
+                                  "usa Rigenera nuovo documento per crearne esplicitamente un altro.")
 
-        if doc_id and not _documento_raggiungibile(docs_service, doc_id):
+        expected_slugs = slugs_unici(exercises)
+        reachable = not doc_id or force_regenerate or _documento_raggiungibile(docs_service, doc_id)
+        if doc_id and not force_regenerate and reachable:
+            documento = docs_service.documents().get(documentId=doc_id).execute()
+            # Drive trash can leave Docs.get reachable.
+            try:
+                metadata = drive_service.files().get(fileId=doc_id, fields="trashed").execute()
+            except HttpError as exc:
+                if _stato_http(exc) != 404:
+                    raise
+                metadata = {"trashed": True}
+            tables = [e for e in documento["body"]["content"] if "table" in e]
+            recorded = stato.get("esercizi", [])
+            invalid = (metadata.get("trashed") or stato.get("pending")
+                       or len(tables) != len(recorded)
+                       or (stato.get("expected_slugs") is not None
+                           and stato["expected_slugs"] != expected_slugs))
+            ranges = documento.get("namedRanges")
+            if ranges is not None:
+                invalid = invalid or any(f"esercizio_{e['slug']}" not in ranges for e in recorded)
+            for table, entry in zip(tables, recorded):
+                rows = table["table"].get("tableRows", [])
+                cells = rows[0].get("tableCells", []) if len(rows) == 1 else []
+                if len(cells) != 2:
+                    invalid = True
+                    break
+                left = [e for p in cells[0].get("content", [])
+                        for e in p.get("paragraph", {}).get("elements", [])]
+                right_text = "".join(e.get("textRun", {}).get("content", "")
+                                     for p in cells[1].get("content", [])
+                                     for e in p.get("paragraph", {}).get("elements", []))
+                if (sum("inlineObjectElement" in e for e in left) != 2
+                        or not right_text.strip()
+                        or entry["nome"].upper() not in right_text):
+                    invalid = True
+                    break
+            if invalid:
+                force_regenerate = True
+
+        if force_regenerate or not reachable:
             # Il documento a cui punta lo stato non esiste più (eliminato
             # definitivamente da Drive): lo stato è orfano, quindi lo si
             # scarta e si riparte da un documento nuovo con TUTTI gli
@@ -516,7 +587,17 @@ def create_workout_document(
         if doc_id is None:
             # Ripresa di una scheda già iniziata: riusiamo il documento
             # esistente; altrimenti (o se è appena sparito) ne creiamo uno.
-            doc_id, stato = _crea_documento_scheda(docs_service, doc_title, state_path)
+            doc_id, stato = _crea_documento_scheda(
+                docs_service, doc_title, state_path, checkpoint_callback)
+
+        def checkpoint():
+            if state_path:
+                salva_stato(state_path, stato)
+                if checkpoint_callback:
+                    checkpoint_callback()
+
+        stato.update(status="in_progress", expected_slugs=expected_slugs)
+        checkpoint()
 
         slug_già_inseriti = {voce["slug"] for voce in stato["esercizi"]}
         # Mappa esercizio id -> slug unico per gestire omonimi (squat, squat_2)
@@ -540,6 +621,8 @@ def create_workout_document(
             gruppo_già_iniziato = any(voce["gruppo"] == nome_gruppo for voce in stato["esercizi"])
 
             if not gruppo_già_iniziato:
+                stato["pending"] = {"phase": "group", "gruppo": nome_gruppo}
+                checkpoint()
                 if contenuto_già_presente and page_break_per_gruppo:
                     _inserisci_page_break(docs_service, doc_id)
                 if nome_gruppo:
@@ -552,6 +635,9 @@ def create_workout_document(
                 if slug in slug_già_inseriti:
                     # Già presente nello stato (esecuzione precedente interrotta): saltiamo.
                     continue
+
+                stato["pending"] = {"phase": "document_mutation", "slug": slug}
+                checkpoint()
 
                 # Carichiamo prima le immagini su Drive: ci servono gli URI pubblici
                 # per poterle referenziare nell'insertInlineImage.
@@ -693,10 +779,13 @@ def create_workout_document(
                     }
                 )
                 slug_già_inseriti.add(slug)
-                if state_path:
-                    salva_stato(state_path, stato)
+                stato.pop("pending", None)
+                checkpoint()
                 esercizi_inseriti.append(esercizio["nome"])
 
+        stato.pop("pending", None)
+        stato["status"] = "completed"
+        checkpoint()
         return {
             "document_id": doc_id,
             "url": f"https://docs.google.com/document/d/{doc_id}/edit",

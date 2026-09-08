@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from datetime import datetime, timedelta
 
 from google.oauth2.credentials import Credentials
 
@@ -26,6 +27,7 @@ class AndroidCredentialProvider:
 
     def __init__(self, bridge):
         self._bridge = bridge
+        self._refresh_lock = threading.Lock()
 
     def start_authorization(self) -> None:
         """Start the native consent flow before a Drive request needs its token."""
@@ -40,7 +42,8 @@ class AndroidCredentialProvider:
         import time
 
         try:
-            self._bridge.start_authorization()
+            refresh = getattr(self._bridge, "refresh_authorization", self._bridge.start_authorization)
+            refresh()
         except Exception:
             return False
         fine = time.monotonic() + timeout
@@ -60,7 +63,12 @@ class AndroidCredentialProvider:
                 "Accedi con Google e completa il consenso prima di usare Drive "
                 f"(stato nativo: {status or 'sconosciuto'})."
             )
-        return Credentials(token=token, scopes=scopes)
+        def refresh_handler(request, scopes=None):
+            with self._refresh_lock:
+                if not self.riautentica():
+                    raise CredentialProviderError("Rinnovo credenziali Android fallito: accedi con Google.")
+                return self._bridge.get_access_token(), datetime.utcnow() + timedelta(minutes=45)
+        return Credentials(token=token, scopes=scopes, refresh_handler=refresh_handler)
 
 
 class PyjniusGoogleBridge:
@@ -80,6 +88,31 @@ class PyjniusGoogleBridge:
 
     def get_status(self) -> str:
         return self._bridge.getStatus()
+
+    def refresh_authorization(self) -> None:
+        self._bridge.refreshAuthorization(self._activity)
+
+
+class AndroidExportGuard:
+    """Keep the existing Python worker's process foreground, not a second worker."""
+    def __init__(self, bridge=None):
+        if bridge is None:
+            from jnius import autoclass
+            activity = autoclass("org.kivy.android.PythonActivity").mActivity
+            service = autoclass("org.ptt.pyTrainer.ExportKeepAliveService")
+            class Bridge:
+                def start(self):
+                    service.start(activity)
+                def stop(self):
+                    service.stop(activity)
+            bridge = Bridge()
+        self._bridge = bridge
+
+    def start(self):
+        self._bridge.start()
+
+    def stop(self):
+        self._bridge.stop()
 
 
 def android_pdf_cache_dir() -> Path:

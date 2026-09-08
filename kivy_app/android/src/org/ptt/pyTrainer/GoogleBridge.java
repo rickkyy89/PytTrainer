@@ -62,6 +62,22 @@ public final class GoogleBridge implements PythonActivity.ActivityResultListener
         });
     }
 
+    public static void refreshAuthorization(Activity activity) {
+        final String staleToken = accessToken;
+        accessToken = "";
+        status = "authorizing";
+        new Thread(() -> {
+            try {
+                if (!staleToken.isEmpty()) {
+                    com.google.android.gms.auth.GoogleAuthUtil.clearToken(activity, staleToken);
+                }
+                activity.runOnUiThread(() -> startAuthorization(activity));
+            } catch (Exception error) {
+                status = "error: " + error.getClass().getSimpleName();
+            }
+        }, "pytrainer-auth-refresh").start();
+    }
+
     private void handleAuthorization(AuthorizationResult result) {
         if (result.hasResolution()) {
             status = "consent_required";

@@ -82,7 +82,8 @@ class SchedaEditorController:
 
     def __init__(self, esercizi: list[dict], *, percorso_bundle: str,
                  cartella_lavoro: str | None = None, titolo: str | None = None,
-                 save_scheda=salva_scheda, upload=None, path_cls=Path):
+                 save_scheda=salva_scheda, upload=None, path_cls=Path,
+                 local_store=None, percorso_remoto: str | None = None):
         self._esercizi = esercizi
         self._percorso = percorso_bundle
         self._lavoro = cartella_lavoro
@@ -90,12 +91,25 @@ class SchedaEditorController:
         self._save_scheda = save_scheda
         self._upload = upload
         self._path_cls = path_cls
+        self._local_store = local_store
+        self._percorso_remoto = percorso_remoto
+        self.ultima_copia_locale: str | None = None
         self._dirty = False
         self._non_sync = False
         self._undo_stack = []
         self._redo_stack = []
         self._checkpoint = deepcopy(esercizi)
         self._checkpoint_files = self._snapshot_files(self._frames_root())
+
+    @property
+    def pubblicato_su_drive(self) -> bool:
+        """True when this editor has a Drive counterpart (upload or known file)."""
+        return self._upload is not None or self._percorso_remoto is not None
+
+    def aggancia_drive(self, upload) -> None:
+        """Bind the editor to its Drive counterpart after a first publish."""
+        self._upload = upload
+        self._non_sync = False
 
     @property
     def can_undo(self) -> bool:
@@ -341,13 +355,18 @@ class SchedaEditorController:
 
         self._modifica(operation)
 
-    def salva(self, sincronizza: bool = True):
+    def salva(self, sincronizza: bool = True, *, destinazione: str | None = None):
         """Rewrite the bundle and (optionally) upload it.
 
         Returns the UploadResult on success, or the SyncConflict emitted by
         ``drive_sync``.  The bundle is always written locally first; the dirty
         flag is cleared only once the remote accepted the upload, so a failed
         or conflicting save keeps asking the user to retry.
+
+        ``destinazione`` (from the PC save dialog) receives a discoverable copy
+        of the freshly written bundle; on Android the copy is instead mirrored
+        through the injected ``local_store``.  Either way the path is exposed as
+        :attr:`ultima_copia_locale`.
 
         With ``sincronizza=False`` the bundle is saved only on disk: the local
         copy stays flagged as ``non_sincronizzato`` until the next real sync.
@@ -367,6 +386,7 @@ class SchedaEditorController:
         self._checkpoint_files = self._snapshot_files(self._frames_root())
         self._clear_history()
         self._dirty = False
+        self._copia_locale(destinazione)
         if not sincronizza:
             self._non_sync = True
             return None
@@ -384,12 +404,46 @@ class SchedaEditorController:
             self._non_sync = False
         return risultato
 
+    def _copia_locale(self, destinazione: str | None) -> str | None:
+        """Make the just-written bundle findable by the user; never fatal.
+
+        Returns the copy path, or ``None`` when no destination is configured.
+        A failure is swallowed so a Drive or permission hiccup never discards
+        the edits already safely on disk.
+        """
+        self.ultima_copia_locale = None
+        if self._local_store is not None:
+            nome = self._path_cls(self._percorso).name
+            try:
+                self.ultima_copia_locale = self._local_store.salva(self._percorso, nome)
+            except Exception:
+                pass
+            return self.ultima_copia_locale
+        if destinazione:
+            try:
+                self._path_cls(destinazione).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self._percorso, destinazione)
+                self.ultima_copia_locale = str(destinazione)
+            except Exception:
+                pass
+        return self.ultima_copia_locale
+
     def salva_locale(self):
         """Create a local checkpoint and leave Drive untouched."""
         return self.salva(sincronizza=False)
 
     def salva_drive(self):
         """Create a local checkpoint, then upload it to Drive."""
+        return self.salva(sincronizza=True)
+
+    def pubblica(self, upload):
+        """Save locally, then push to Drive through ``upload`` (first publish).
+
+        Used by editors opened from a device file: ``upload`` creates or
+        overwrites the remote bundle. A failure keeps ``non_sincronizzato`` set
+        so the edits are not lost and the user can retry.
+        """
+        self._upload = upload
         return self.salva(sincronizza=True)
 
     @classmethod

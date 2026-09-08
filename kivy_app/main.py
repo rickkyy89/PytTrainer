@@ -13,7 +13,7 @@ from .controller import DriveHomeController, HomeUnavailableError
 
 def build_controller(
     base_dir: str | Path | None = None, *, is_android: bool | None = None,
-    android_bridge_factory=None,
+    android_bridge_factory=None, local_store=None, prefs_store=None,
 ) -> DriveHomeController:
     """Compose the platform credential provider only at application startup."""
     base = Path(base_dir or Path(__file__).resolve().parent.parent).expanduser()
@@ -36,7 +36,7 @@ def build_controller(
         FolderConfigStore(base / "drive-folders.json"), base / "drive-cache",
         credential_provider=credential_provider,
         drive_service_factory=drive_service_factory,
-        base_dir=base,
+        base_dir=base, local_store=local_store, prefs_store=prefs_store,
     )
 
 
@@ -81,9 +81,12 @@ def run() -> None:
     from kivymd.app import MDApp
     from kivymd.uix.card import MDCard
 
+    from .config import FolderConfigStore, LocalPrefsStore
+    from .controller import DriveHomeController, HomeUnavailableError
     from .editor_screen import EditorScreen
     from .export import DocExportController
     from .export_screen import ExportScreen
+    from .file_picker import choose_file, choose_save_file
     from .media import MediaFlowController
     from .media_screen import MediaScreen
     from .workout import WorkoutSessionController
@@ -98,18 +101,26 @@ def run() -> None:
     from .launcher import apri_url, ultimo_errore, url_cartella_drive
     from .version import version_label
 
-    controller = build_controller()
+    base_dir = Path(__file__).resolve().parent.parent
+    prefs_store = LocalPrefsStore(base_dir / "local-save.json")
+    local_store = None
+    if sys.platform == "android":
+        from .local_store import AndroidLocalStore
+        local_store = AndroidLocalStore(kind=prefs_store.load().destinazione)
+    controller = build_controller(base_dir, local_store=local_store, prefs_store=prefs_store)
     scala_store = ScalePreferenceStore(controller.base_dir / "ui-preferences.json")
     imposta_scala(scala_store.load_scale())
     imposta_testo(scala_store.load_text())
     if sys.platform == "android":
-        from .platform_android import AndroidFrameExtractor, android_pdf_cache_dir
+        from .platform_android import AndroidFrameExtractor, AndroidExportGuard, android_pdf_cache_dir
         media_backend = AndroidFrameExtractor()
         pdf_cache_dir = android_pdf_cache_dir()
+        export_guard = AndroidExportGuard()
     else:
         from core.platform import PcFfmpegBackend
         media_backend = PcFfmpegBackend()
         pdf_cache_dir = None
+        export_guard = None
 
     def _label_righe(testo, contenitore, *, font_size=None, **kw):
         if font_size is not None:
@@ -153,9 +164,7 @@ def run() -> None:
             return True
 
         def on_resume(self):
-            # Al ritorno in foreground non devono restare schede pendenti di
-            # nessun tipo: la UI e' gia' coerente, il token Google viene
-            # rinfrescato da AndroidCredentialProvider alla prossima richiesta.
+            # The transport refreshes a rejected native token, including saves.
             pass
 
         def _costruisce_home(self):
@@ -184,11 +193,13 @@ def run() -> None:
             create.bind(on_release=lambda *_: self.create_dialog())
             folders = Button(text="Cartelle")
             folders.bind(on_release=lambda *_: self.folder_dialog())
+            open_local = Button(text="Apri locale")
+            open_local.bind(on_release=lambda *_: self.apri_locale())
             self._scala_btn = Button(text=f"Scala {scala_corrente()}")
             self._scala_btn.bind(on_release=lambda *_: self.ciclo_scala())
             self._testo_btn = Button(text=etichetta_testo())
             self._testo_btn.bind(on_release=lambda *_: self.apri_testo())
-            for widget in (refresh, create, folders):
+            for widget in (refresh, create, folders, open_local):
                 first_row.add_widget(widget)
             for widget in (self._scala_btn, self._testo_btn):
                 second_row.add_widget(widget)
@@ -244,20 +255,63 @@ def run() -> None:
                 return
             self.show_editor(remote, editor)
 
-        def show_editor(self, remote, editor):
+        def apri_locale(self):
+            """Pick a .scheda on the device (or Documents/Download) and edit it."""
+            def scelto(percorso):
+                if not percorso:
+                    return
+                try:
+                    editor = controller.open_for_edit_locale(percorso)
+                except Exception as exc:
+                    self.status.text = f"Impossibile aprire il file: {exc}"
+                    return
+                self.show_editor(None, editor, on_back=self.go_home)
+            choose_file(scelto, title="Apri scheda locale",
+                        patterns=[("Scheda pyTrainer", "*.scheda")])
+
+        def destinazione_locale(self):
+            """Choose the Android Documents/Download folder for local mirrors."""
+            if local_store is None:
+                self.status.text = "Su PC il salvataggio locale sceglie il percorso col dialogo."
+                return
+            content = BoxLayout(orientation="vertical", spacing=8)
+            popup = Popup(title="Salvataggio locale", content=content, size_hint=(0.8, 0.42))
+            etichette = {"documenti": "Documenti/pyTrainer", "download": "Download/pyTrainer"}
+            for kind, etichetta in etichette.items():
+                spunta = " ✓" if controller.destinazione_locale == kind else ""
+                bottone = Button(text=etichetta + spunta)
+                bottone.bind(on_release=lambda _, k=kind, p=popup: self._scegli_destinazione(k, p))
+                content.add_widget(bottone)
+            popup.open()
+
+        def _scegli_destinazione(self, kind, popup):
+            popup.dismiss()
+            try:
+                controller.imposta_destinazione_locale(kind)
+            except Exception as exc:
+                self.status.text = f"Destinazione non salvata: {exc}"
+                return
+            self.status.text = f"Salvataggio locale in: {local_store.percorso_descrizione}."
+
+        def show_editor(self, remote, editor, *, on_back=None):
             self.stack.clear_widgets()
             self._view_kind = "editor"
+            back = on_back or (lambda: self._torna_in_lettura(remote))
+            riapri = lambda: self.show_editor(remote, editor, on_back=back)
             self._editor_view = EditorScreen(
                 controller, editor, remote,
-                on_back=lambda: self._torna_in_lettura(remote),
-                open_media=lambda ed, i: self.open_media(remote, ed, i),
-                on_export=lambda ed: self.open_export(remote, ed),
+                on_back=back,
+                open_media=lambda ed, i: self.open_media(riapri, ed, i),
+                on_export=lambda ed: self.open_export(riapri, ed),
                 on_conflict_exit=self.go_home_message,
                 on_menu=self.apri_menu,
             )
             self.stack.add_widget(self._editor_view)
 
         def _on_request_close(self, *_):
+            current = self.stack.children[0] if self.stack.children else None
+            if self._view_kind == "export" and getattr(current, "busy", False):
+                return True
             if self._editor_view is None:
                 return False
             if self._editor_view.modifiche_non_salvate:
@@ -268,21 +322,21 @@ def run() -> None:
         def _torna_in_lettura(self, remote):
             self._apri_in_lettura(remote)
 
-        def open_export(self, remote, editor):
+        def open_export(self, riapri, editor):
             try:
                 export = DocExportController(
                     editor, credential_provider=controller.credential_provider,
                     base_dir=controller.base_dir, pdf_cache_dir=pdf_cache_dir,
+                    background_guard=export_guard,
                 )
             except Exception as exc:
                 self.status.text = str(exc)
                 return
             self.stack.clear_widgets()
             self._view_kind = "export"
-            self.stack.add_widget(ExportScreen(export, on_back=lambda: self.show_editor(remote, editor),
-                                               on_menu=self.apri_menu))
+            self.stack.add_widget(ExportScreen(export, on_back=riapri, on_menu=self.apri_menu))
 
-        def open_media(self, remote, editor, indice):
+        def open_media(self, riapri, editor, indice):
             try:
                 output_dir = editor.output_frames()
                 media = MediaFlowController(
@@ -296,14 +350,15 @@ def run() -> None:
                 return
             self.stack.clear_widgets()
             self._view_kind = "media"
-            self.stack.add_widget(MediaScreen(media, on_back=lambda: self.show_editor(remote, editor),
-                                              on_menu=self.apri_menu))
+            self.stack.add_widget(MediaScreen(media, on_back=riapri, on_menu=self.apri_menu))
 
         def apri_menu(self):
             return apri_menu((
                 ("Aggiorna", self._lista_aggiornata),
                 ("Nuova scheda", lambda: self._azione_da_home(self.create_dialog)),
+                ("Apri da locale", lambda: self._azione_da_home(self.apri_locale)),
                 ("Cartelle", lambda: self._azione_da_home(self.folder_dialog)),
+                ("Salvataggio locale", lambda: self._azione_da_home(self.destinazione_locale)),
                 ("Apri cartella Drive", lambda: self._azione_da_home(self.apri_cartella_drive)),
                 (f"Scala {scala_corrente()}", self.ciclo_scala),
                 (etichetta_testo(), self.apri_testo),
@@ -692,6 +747,10 @@ def run() -> None:
                 content.add_widget(folder)
             input_id = TextInput(hint_text="Nuovo ID cartella Drive", multiline=False)
             content.add_widget(input_id)
+            if local_store is not None:
+                destinazione = Button(text=f"Salvataggio locale: {local_store.etichetta}")
+                destinazione.bind(on_release=lambda *_: (popup.dismiss(), self.destinazione_locale()))
+                content.add_widget(destinazione)
             popup = Popup(title="Cartelle Drive", content=content, size_hint=(0.8, 0.55))
             input_id.bind(on_text_validate=lambda *_: self.add_folder(input_id.text, popup))
             popup.open()

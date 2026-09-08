@@ -371,3 +371,47 @@ def test_riautentica_assente_o_fallita_lascia_errore_chiara(tmp_path):
 
     with pytest.raises(HomeUnavailableError, match="Drive non disponibile"):
         controller.refresh()
+
+
+def test_refresh_ritenta_errori_transienti_con_limite(tmp_path):
+    provider = FakeProvider()
+    calls = []
+
+    def sync_factory(service, folder_id, cache_dir):
+        class FlakySync:
+            def list_schede(self):
+                calls.append("list")
+                if len(calls) < 3:
+                    raise OSError("connessione resettata")
+                return []
+        return FlakySync()
+
+    controller = DriveHomeController(
+        FolderConfigStore(tmp_path / "folders.json"), tmp_path / "cache",
+        credential_provider=provider, drive_service_factory=lambda credentials: "service",
+        sync_factory=sync_factory, retry_sleep=lambda _: None,
+    )
+
+    assert controller.refresh() == []
+    assert calls == ["list", "list", "list"]
+
+
+def test_create_non_ritenta_operazione_drive_non_idempotente(tmp_path):
+    calls = []
+
+    def sync_factory(service, folder_id, cache_dir):
+        class BrokenSync:
+            def create_scheda(self, path):
+                calls.append("create")
+                raise OSError("esito create incerto")
+        return BrokenSync()
+
+    controller = DriveHomeController(
+        FolderConfigStore(tmp_path / "folders.json"), tmp_path / "cache",
+        credential_provider=FakeProvider(), drive_service_factory=lambda credentials: "service",
+        sync_factory=sync_factory, retry_sleep=lambda _: None,
+    )
+
+    with pytest.raises(HomeUnavailableError):
+        controller.create("nuova")
+    assert calls == ["create"]

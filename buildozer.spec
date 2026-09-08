@@ -17,7 +17,8 @@ android.add_resources = %(source.dir)s/assets/android/res
 android.api = 33
 android.minapi = 24
 android.archs = arm64-v8a
-android.permissions = INTERNET,VIBRATE,POST_NOTIFICATIONS
+android.permissions = INTERNET,VIBRATE,POST_NOTIFICATIONS,WRITE_EXTERNAL_STORAGE,FOREGROUND_SERVICE,WAKE_LOCK
+p4a.extra_args = --native-service=org.ptt.pyTrainer.ExportKeepAliveService
 android.gradle_dependencies = com.google.android.gms:play-services-auth:21.2.0,androidx.core:core:1.8.0
 android.add_gradle_repositories = flatDir { dirs 'libs' }
 android.add_src = kivy_app/android/src

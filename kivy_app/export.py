@@ -5,9 +5,10 @@ exercises (both frames on disk) with a ``state_path`` inside the bundle work
 directory, so generation checkpoints after every exercise and resuming after
 an interruption inserts only the missing ones.  ``progresso()`` lets the UI
 poll the state file while generation runs on a worker thread.  On success the
-state is persisted into the ``.scheda`` bundle through the editor's own save
-flow (bundle rewrite + Drive upload), and ``documento_rigenerato`` surfaces
-the "state pointed to a deleted doc, rebuilt with a new URL" condition.
+state is synced to Drive through the editor's save flow. Each intermediate
+checkpoint is already persisted locally into the bundle, independently of UI
+polling and exception handlers. ``documento_rigenerato`` surfaces a new URL
+after deletion, partial mutation, remote damage or explicit regeneration.
 """
 
 from __future__ import annotations
@@ -54,8 +55,9 @@ class DocExportController:
     def __init__(self, editor, *, credential_provider=None, base_dir=None,
                  creator=create_workout_document,
                  stato_loader=carica_stato, drive_service_factory=None,
-                 pdf_cache_dir=None):
+                 pdf_cache_dir=None, background_guard=None):
         self._editor = editor
+        self._background_guard = background_guard
         self._credential_provider = credential_provider
         self._base_dir = base_dir
         self._creator = creator
@@ -65,7 +67,6 @@ class DocExportController:
         self._pdf_cache_dir = Path(pdf_cache_dir or default_cache)
         self._state_path: str | None = None
         self._totale_sessione: int = 0
-        self._baseline: int = 0
         self._ultimo_inseriti: int = 0
 
     # ------------------------------------------------------------- prepara
@@ -92,7 +93,7 @@ class DocExportController:
 
     # --------------------------------------------------------------- genera
 
-    def genera(self) -> dict:
+    def genera(self, *, force_regenerate=False) -> dict:
         """Generate/resume the document, then persist the state into the bundle.
 
         Returns the ``create_workout_document`` result plus a ``salvataggio``
@@ -110,21 +111,28 @@ class DocExportController:
             )
         self._state_path = percorso_stato(self._editor.cartella_lavoro)
         self._totale_sessione = len(pronti)
-        self._baseline = self._conteggio_stato()
         self._ultimo_inseriti = 0
         riepilogo = self.riepilogo()
         try:
+            if self._background_guard:
+                self._background_guard.start()
+            options = {"force_regenerate": True} if force_regenerate else {}
             risultato = self._creator(
                 [dict(esercizio) for esercizio in pronti], riepilogo.titolo,
                 state_path=self._state_path,
                 credential_provider=self._credential_provider,
                 base_dir=self._base_dir,
+                checkpoint_callback=self._editor.salva_locale,
+                **options,
             )
+            risultato["salvataggio"] = self._editor.salva()
+            return risultato
         except Exception:
             self._persisti_checkpoint()  # meglio un bundle con checkpoint parziale
             raise
-        risultato["salvataggio"] = self._editor.salva()
-        return risultato
+        finally:
+            if self._background_guard:
+                self._background_guard.stop()
 
     def esporta_pdf(self, document_id: str) -> Path:
         """Export ``document_id`` through Drive and atomically publish its PDF.
@@ -137,6 +145,8 @@ class DocExportController:
             raise PdfExportError("Documento Google senza ID: impossibile esportare il PDF.")
         temporary: Path | None = None
         try:
+            if self._background_guard:
+                self._background_guard.start()
             content = self._scarica_pdf(document_id)
             if not isinstance(content, bytes) or not content.startswith(b"%PDF-"):
                 raise PdfExportError("Drive non ha restituito un PDF valido.")
@@ -160,6 +170,8 @@ class DocExportController:
         except Exception as exc:
             raise PdfExportError(f"Esportazione PDF fallita: {exc}") from exc
         finally:
+            if self._background_guard:
+                self._background_guard.stop()
             if temporary is not None:
                 try:
                     temporary.unlink()
@@ -189,7 +201,8 @@ class DocExportController:
         for attempt in range(2):
             try:
                 credentials = self._credential_provider.get_credentials(SCOPES)
-                drive = self._drive_service_factory(credentials)
+                from core.google_retry import safe_service
+                drive = safe_service(self._drive_service_factory(credentials))
                 return drive.files().export(
                     fileId=document_id, mimeType=PDF_MIME_TYPE,
                 ).execute()
@@ -221,7 +234,7 @@ class DocExportController:
         """(checkpointed exercises, total of this session) for the UI poll."""
         totale = self._totale_sessione or len(self.esercizi_pronti())
         current = self._conteggio_stato()
-        inseriti = min(totale, max(self._ultimo_inseriti, current - self._baseline))
+        inseriti = min(totale, current)
         self._ultimo_inseriti = inseriti
         return inseriti, totale
 
@@ -232,11 +245,11 @@ class DocExportController:
         try:
             stato = self._stato_loader(self._state_path)
         except Exception:
-            return self._ultimo_inseriti + self._baseline
+            return self._ultimo_inseriti
         return len(stato.get("esercizi", [])) if stato else 0
 
     def _persisti_checkpoint(self) -> None:
         try:
-            self._editor.salva()
+            self._editor.salva_locale()
         except Exception:
             pass

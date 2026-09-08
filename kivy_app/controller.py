@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
+import time
 
 from core.drive_sync import DriveSync, RemoteScheda
 from core.scheda_file import carica_scheda, salva_scheda
+from core.google_retry import transient
 
 from .config import AppConfigError, DriveFolderConfig, FolderConfigStore
 
@@ -48,7 +50,8 @@ class DriveHomeController:
     def __init__(self, config_store: FolderConfigStore, cache_dir: str | Path, *,
                  credential_provider, drive_service_factory, sync_factory=DriveSync,
                  load_scheda=carica_scheda, save_scheda=salva_scheda,
-                 base_dir: str | Path | None = None):
+                  base_dir: str | Path | None = None, local_store=None, prefs_store=None,
+                  retry_sleep=None):
         self._config_store = config_store
         self._cache_dir = Path(cache_dir)
         self._base_dir = Path(base_dir) if base_dir is not None else self._cache_dir.parent
@@ -57,9 +60,33 @@ class DriveHomeController:
         self._sync_factory = sync_factory
         self._load_scheda = load_scheda
         self._save_scheda = save_scheda
+        self._local_store = local_store
+        self._prefs_store = prefs_store
+        self._retry_sleep = retry_sleep or time.sleep
         self._config = config_store.load()
         self._sync = None
         self.avvertenza: str | None = None
+
+    @property
+    def local_store(self):
+        """Visible local mirror (Android) or None (PC uses the save dialog)."""
+        return self._local_store
+
+    @property
+    def destinazione_locale(self) -> str:
+        """'documenti' or 'download' where local mirrors are written (Android)."""
+        if self._prefs_store is None:
+            return "documenti"
+        return self._prefs_store.load().destinazione
+
+    def imposta_destinazione_locale(self, kind: str) -> None:
+        """Persist and apply the local mirror destination (Android only)."""
+        from .config import LocalPrefs
+
+        if self._prefs_store is not None:
+            self._prefs_store.save(LocalPrefs(kind))
+        if self._local_store is not None:
+            self._local_store.set_kind(kind)
 
     @property
     def folder_config(self) -> DriveFolderConfig:
@@ -75,11 +102,11 @@ class DriveHomeController:
         return self._base_dir
 
     def refresh(self) -> list[RemoteScheda]:
-        return self._call("aggiornare la lista delle schede", lambda: self._drive().list_schede())
+        return self._call("aggiornare la lista delle schede", lambda: self._drive().list_schede(), safe=True)
 
     def list_csv(self) -> list[RemoteScheda]:
         """List plain manifest CSVs stored in the configured Drive folder."""
-        return self._call("elencare i CSV su Drive", lambda: self._drive().list_remote(".csv"))
+        return self._call("elencare i CSV su Drive", lambda: self._drive().list_remote(".csv"), safe=True)
 
     def download_csv(self, remote: RemoteScheda) -> Path:
         """Download a CSV manifest to the cache and return its local path."""
@@ -128,10 +155,73 @@ class DriveHomeController:
         return SchedaEditorController.da_bundle(
             esercizi, str(local_path), lavoro,
             save_scheda=self._save_scheda,
+            local_store=self._local_store,
             # Pin the upload to the opened file id: same-name bundles must not
             # cross-update each other even if the name-keyed cache collides.
             upload=lambda path: self._drive().upload_scheda(path, file_id=remote.id),
         )
+
+    def open_for_edit_locale(self, percorso: str):
+        """Return an editor over a bundle chosen from the device, not from Drive.
+
+        The editor has no Drive counterpart yet (``upload`` stays unset), so a
+        later save must go through :meth:`pubblica_in_drive`, which asks the UI
+        to resolve a same-name collision.
+        """
+        from .editor import SchedaEditorController
+
+        finale = self._importa_locale(percorso)
+        esercizi, lavoro = self._load_scheda(str(finale))
+        return SchedaEditorController.da_bundle(
+            esercizi, str(finale), lavoro,
+            save_scheda=self._save_scheda,
+            local_store=self._local_store,
+        )
+
+    def remoto_con_nome(self, nome: str) -> RemoteScheda | None:
+        """The Drive file whose name matches ``nome`` (with or without extension)."""
+        target = self._filename(nome).casefold()
+        def operation():
+            matches = [r for r in self._drive().list_schede() if r.name.casefold() == target]
+            return matches[0] if matches else None
+        return self._call("cercare la scheda su Drive", operation)
+
+    def pubblica_in_drive(self, editor, *, remoto: RemoteScheda | None = None):
+        """Write the bundle, then create-or-overwrite it on Drive and bind it.
+
+        ``remoto`` is the same-name file the UI already confirmed to overwrite
+        (``force`` upload); ``None`` creates a new bundle. On success the editor
+        is pinned to the resulting file id so later saves are plain updates.
+        """
+        captured: dict[str, str] = {}
+
+        def upload(path):
+            drive = self._drive()
+            if remoto is not None:
+                risultato = drive.upload_scheda(path, remoto.id, force=True)
+            else:
+                risultato = drive.create_scheda(path)
+            captured["id"] = risultato.remote.id
+            return risultato
+
+        def operation():
+            risultato = editor.pubblica(upload)
+            if "id" in captured:
+                file_id = captured["id"]
+                editor.aggancia_drive(
+                    lambda p, fid=file_id: self._drive().upload_scheda(p, file_id=fid))
+            return risultato
+        return self._call("pubblicare la scheda su Drive", operation)
+
+    def _importa_locale(self, percorso: str) -> Path:
+        """Return a cache path for a device file (content:// copied in on Android)."""
+        if self._local_store is not None:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            return Path(self._local_store.importa(percorso, self._cache_dir))
+        path = Path(percorso)
+        if not path.is_file():
+            raise HomeUnavailableError(f"File non trovato: {percorso}")
+        return path
 
     def open_for_workout(self, remote: RemoteScheda) -> list[dict]:
         """Download the bundle and return the raw exercise dicts for workout mode.
@@ -290,33 +380,34 @@ class DriveHomeController:
             raise HomeUnavailableError("Il nome della scheda non puo contenere cartelle.")
         return filename
 
-    def _call(self, action: str, operation):
-        try:
-            return operation()
-        except HomeUnavailableError:
-            raise
-        except Exception as exc:
-            if self._errore_di_autenticazione(exc) and self._riautentica():
-                self._sync = None
-                try:
-                    return operation()
-                except HomeUnavailableError:
-                    raise
-                except Exception as retry_exc:
-                    raise HomeUnavailableError(
-                        f"Impossibile {action}: Drive non disponibile. "
-                        "Verifica la connessione e riprova."
-                    ) from retry_exc
-            raise HomeUnavailableError(
-                f"Impossibile {action}: Drive non disponibile. Verifica la connessione e riprova."
-            ) from exc
+    def _call(self, action: str, operation, *, safe=False):
+        refreshed = False
+        for attempt in range(3):
+            try:
+                return operation()
+            except HomeUnavailableError:
+                raise
+            except Exception as exc:
+                # Never replay a workflow containing create/upload after an
+                # error: an earlier write in that workflow may have succeeded.
+                if safe and attempt < 2 and not getattr(exc, "google_read_retries_exhausted", False):
+                    if not refreshed and self._errore_di_autenticazione(exc) and self._riautentica():
+                        refreshed = True
+                        self._sync = None
+                        continue
+                    if transient(exc) or isinstance(exc, OSError):
+                        self._retry_sleep(0.5 * 2 ** attempt)
+                        continue
+                raise HomeUnavailableError(
+                    f"Impossibile {action}: Drive non disponibile. Verifica la connessione e riprova."
+                ) from exc
 
     @staticmethod
     def _errore_di_autenticazione(exc: Exception) -> bool:
         if type(exc).__name__ in ("CredentialProviderError", "RefreshError", "GoogleAuthError"):
             return True
         status = getattr(getattr(exc, "resp", None), "status", None)
-        return status in (401, 403)
+        return status == 401
 
     def _riautentica(self) -> bool:
         """Ask the credential provider for a silent re-authorization (Android only)."""

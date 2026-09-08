@@ -27,9 +27,9 @@ def home_plan(profile: UiProfile) -> LayoutPlan:
 
 
 def home_toolbar_rows(profile: UiProfile) -> tuple[tuple[str, ...], ...]:
-    """Keep five Home actions reachable without horizontal overflow."""
-    actions = ("refresh", "create", "folders", "scale", "text")
-    return (actions[:3], actions[3:]) if profile.category == "compact" else (actions,)
+    """Keep six Home actions reachable without horizontal overflow."""
+    actions = ("refresh", "create", "folders", "open_local", "scale", "text")
+    return (actions[:4], actions[4:]) if profile.category == "compact" else (actions,)
 
 
 def readonly_card(exercise, profile: UiProfile) -> ReadonlyCardModel:
