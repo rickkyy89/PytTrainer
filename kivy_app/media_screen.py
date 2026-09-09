@@ -4,25 +4,30 @@ Functional parity with the Streamlit "Video & Frame" tab: search results with
 title/duration and selection, manual URL override, timestamp fields with the
 10%/50% heuristic proposal, extraction through the platform backend, frame
 previews, per-side percentage crop with ``*_orig.jpg`` backup and restore,
-and user image import for START/FINISH.
+user image import, placeholder frames and a 5:4 free-hand drawing popup for
+START/FINISH.
 
 Imported only from ``kivy_app.main.run`` so pytest never loads Kivy.
 """
 
 from __future__ import annotations
 
+import os
 import threading
 
 from kivy.clock import Clock
+from kivy.graphics import Color, Line, Rectangle
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.image import AsyncImage, Image
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
+from kivy.uix.widget import Widget
 from kivy.core.window import Window
 
 from .file_picker import choose_file
@@ -38,6 +43,126 @@ def _formatta_durata(secondi) -> str:
         return "n/d"
     secondi = int(secondi)
     return f"{secondi // 60}:{secondi % 60:02d}"
+
+
+class _TelaDisegno(Widget):
+    """Foglio bianco 5:4 per disegnare a mano un frame START/FINISH.
+
+    Dito, penna e mouse arrivano tutti da ``on_touch_*`` con il grab del
+    touch: il tratto e' nero e i punti sono salvati in coordinate
+    normalizzate 0..1 (y verso il basso, come nei pixel dell'immagine),
+    cosi' l'export PNG 5:4 e il ridimensionamento del popup non deformano
+    ne' perdono nulla.
+    """
+
+    LARGHEZZA_EXPORT = 1000
+    ALTEZZA_EXPORT = 800  # 5:4 come i placeholder estratti dal controller
+    SPESSORE_EXPORT = 6   # pixel di tratto su LARGHEZZA_EXPORT
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("size_hint", (None, None))
+        super().__init__(**kwargs)
+        self.tratti: list[list[tuple[float, float]]] = []
+        self._istruzioni: list = []
+        self._linea_corrente: Line | None = None
+        self._touch = None
+        with self.canvas:
+            Color(1, 1, 1, 1)
+            self._sfondo = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._aggiorna, size=self._aggiorna)
+
+    # ------------------------------------------------------------- disegno
+
+    def on_touch_down(self, touch):
+        if self._touch is not None or not self.collide_point(*touch.pos):
+            return False
+        if getattr(touch, "button", None) not in (None, "left"):
+            return False  # mouse: solo il tasto sinistro traccia (destra/rotella ignora)
+        self._touch = touch
+        touch.grab(self)
+        self.tratti.append([self._punto_norm(touch)])
+        self._ridisegna()
+        return True
+
+    def on_touch_move(self, touch):
+        if touch.grab_current is not self or touch is not self._touch:
+            return False
+        self.tratti[-1].append(self._punto_norm(touch))
+        if self._linea_corrente is not None:
+            self._linea_corrente.points = self._punti_schermo(self.tratti[-1])
+        return True
+
+    def on_touch_up(self, touch):
+        if touch.grab_current is not self or touch is not self._touch:
+            return False
+        touch.ungrab(self)
+        self._touch = None
+        return True
+
+    def annulla_tratto(self):
+        """Rimuove l'ultimo tratto disegnato."""
+        if self.tratti:
+            self.tratti.pop()
+            self._ridisegna()
+
+    def pulisci(self):
+        self.tratti = []
+        self._ridisegna()
+
+    # -------------------------------------------------------------- render
+
+    def _punto_norm(self, touch) -> tuple[float, float]:
+        nx = min(max((touch.x - self.x) / max(self.width, 1), 0.0), 1.0)
+        ny = min(max(1.0 - (touch.y - self.y) / max(self.height, 1), 0.0), 1.0)
+        return nx, ny
+
+    def _punti_schermo(self, tratto) -> list[float]:
+        punti = []
+        for nx, ny in tratto:
+            punti.extend((self.x + nx * self.width, self.y + (1 - ny) * self.height))
+        return punti if len(punti) > 2 else punti * 2  # il tap singolo diventi un segmento
+
+    def _spessore_display(self) -> float:
+        return max(2.0, self.width * self.SPESSORE_EXPORT / self.LARGHEZZA_EXPORT)
+
+    def _aggiorna(self, *_):
+        self._sfondo.pos = self.pos
+        self._sfondo.size = self.size
+        self._ridisegna()
+
+    def _ridisegna(self, *_):
+        for istruzione in self._istruzioni:
+            self.canvas.remove(istruzione)
+        self._istruzioni = []
+        self._linea_corrente = None
+        spessore = self._spessore_display()
+        for tratto in self.tratti:
+            with self.canvas:
+                colore = Color(0, 0, 0, 1)
+                linea = Line(points=self._punti_schermo(tratto), width=spessore)
+            self._istruzioni.extend((colore, linea))
+            self._linea_corrente = linea
+
+    # --------------------------------------------------------------- export
+
+    def esporta_png(self, percorso: str) -> str:
+        """Rasterizza i tratti su un PNG bianco 5:4 leggibile da importa_immagine."""
+        from PIL import Image as ApriImmagine, ImageDraw  # locale: ``Image`` e' gia' Kivy
+        immagine = ApriImmagine.new("RGB", (self.LARGHEZZA_EXPORT, self.ALTEZZA_EXPORT), "white")
+        disegno = ImageDraw.Draw(immagine)
+        raggio = self.SPESSORE_EXPORT / 2.0
+        for tratto in self.tratti:
+            punti = [(nx * self.LARGHEZZA_EXPORT, ny * self.ALTEZZA_EXPORT)
+                     for nx, ny in tratto]
+            if len(punti) == 1:
+                x, y = punti[0]
+                disegno.ellipse((x - raggio, y - raggio, x + raggio, y + raggio),
+                                fill=(0, 0, 0))
+            else:
+                disegno.line(punti, fill=(0, 0, 0), width=self.SPESSORE_EXPORT,
+                             joint="curve")
+        immagine.save(percorso, "PNG")
+        return percorso
 
 
 class MediaScreen(BoxLayout):
@@ -263,10 +388,18 @@ class MediaScreen(BoxLayout):
         anteprima_min = self._profile.tokens.dimensions["frame_min_height"]
         scrub_h = 72
         lato_h = max(90, self._ui.target_minimum * 2)
-        azioni_h = self._ui.target_minimum
+        # due righe di azioni: cinque pulsanti su una sola linea schiacciano
+        # le etichette (soprattutto su compact) rendendoli poco accessibili
+        azioni_h = self._ui.target_minimum * 2 + 4
+        # altezza di UN pannello START/FINISH completo (preview + scrub + crop
+        # + azioni, con un po' di margine per gli spacing interni del pannello)
+        pannello_h = anteprima_min + scrub_h + lato_h + azioni_h + 24
+        # in compact i due pannelli si impilano (asse verticale): la riga deve
+        # contenerne DUE piu' lo spacing, non dividere l'altezza di uno
+        altezza_riga = pannello_h * 2 + 8 if self._ui.frame_axis == "vertical" else pannello_h
         self.frames_row = BoxLayout(
             orientation=self._ui.frame_axis, size_hint_y=None,
-            height=dp(anteprima_min + scrub_h + lato_h + azioni_h + 24), spacing=dp(8))
+            height=dp(altezza_riga), spacing=dp(8))
         self._scrub_jobs: dict[str, object] = {}
         self._scrub_generazioni: dict[str, int] = {}
         self._scrub_pendente: dict[str, float] = {}
@@ -294,17 +427,27 @@ class MediaScreen(BoxLayout):
                 slider.bind(on_value=self._preview_handler(suffisso, sliders))
             self._preview_jobs = getattr(self, "_preview_jobs", {})
             panel.add_widget(lato_line)
-            actions = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum), spacing=dp(4))
             apply = Button(text="Applica")
             apply.bind(on_release=lambda _, s=suffisso, sl=sliders: self._apply_crop(s, sl))
             restore = Button(text="Ripristina")
             restore.bind(on_release=lambda _, s=suffisso: self._restore(s))
             import_btn = Button(text="Immagine…", size_hint_x=None, width=dp(self._ui.target_minimum * 2))
             import_btn.bind(on_release=lambda _, s=suffisso: self._import_image(s))
-            actions.add_widget(apply)
-            actions.add_widget(restore)
-            actions.add_widget(import_btn)
-            panel.add_widget(actions)
+            placeholder_btn = Button(text="Placeholder")
+            placeholder_btn.bind(on_release=lambda _, s=suffisso: self._placeholder(s))
+            draw_btn = Button(text="Disegna")
+            draw_btn.bind(on_release=lambda _, s=suffisso: self._apri_disegno(s))
+            azioni_sopra = BoxLayout(size_hint_y=None,
+                                      height=dp(self._ui.target_minimum), spacing=dp(4))
+            azioni_sopra.add_widget(apply)
+            azioni_sopra.add_widget(restore)
+            azioni_sotto = BoxLayout(size_hint_y=None,
+                                     height=dp(self._ui.target_minimum), spacing=dp(4))
+            azioni_sotto.add_widget(import_btn)
+            azioni_sotto.add_widget(placeholder_btn)
+            azioni_sotto.add_widget(draw_btn)
+            panel.add_widget(azioni_sopra)
+            panel.add_widget(azioni_sotto)
             self.frames_row.add_widget(panel)
         self.column.add_widget(self.frames_row)
         self._sync_scrub_sliders()
@@ -400,9 +543,10 @@ class MediaScreen(BoxLayout):
 
     def _scrub_fatto(self, suffisso, generazione, percorso, errore):
         self._scrub_in_volo.discard(suffisso)
-        if errore:
+        corrente = generazione == self._scrub_generazioni.get(suffisso)
+        if errore and corrente:
             self.status.text = errore
-        elif generazione == self._scrub_generazioni.get(suffisso):
+        elif corrente:
             # mostra SEMPRE l'ultimo frame richiesto, anche se un frame reale
             # esiste gia': lo scrub serve proprio a sceglierne uno nuovo
             preview = getattr(self, f"preview_{suffisso}")
@@ -520,7 +664,102 @@ class MediaScreen(BoxLayout):
         choose_file(on_result, title=f"Scegli immagine {suffisso.upper()}",
                     patterns=[("Immagini", ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"])])
 
+    def _occupato(self) -> bool:
+        """True se un worker asincrono e' in corso: blocca le azioni che
+        toccherebbero i frame in parallelo (transazioni concorrenti)."""
+        if self._busy:
+            self.status.text = "Attendere: operazione in corso…"
+            return True
+        return False
+
+    def _placeholder(self, suffisso):
+        if self._occupato():
+            return
+        try:
+            self._media.crea_placeholder(suffisso)
+        except MediaFlowError as exc:
+            self.status.text = str(exc)
+            return
+        self.status.text = f"Placeholder {suffisso.upper()} impostato come frame."
+        self._refresh_frames()
+        self._refresh_status()
+
+    def _apri_disegno(self, suffisso):
+        """Popup con foglio bianco 5:4 per disegnare il frame a mano."""
+        if self._occupato():
+            return
+        tela = _TelaDisegno()
+        area = FloatLayout()
+        content = BoxLayout(orientation="vertical", spacing=dp(6))
+        popup = Popup(title=f"Disegna frame {suffisso.upper()}", content=content,
+                      size_hint=(0.92, 0.88))
+
+        def adatta(*_):
+            # il foglio resta 5:4 e il piu' grande possibile nello spazio dato
+            lato_lungo = min(area.width, area.height * 5 / 4)
+            tela.size = (lato_lungo, lato_lungo * 4 / 5)
+            tela.pos = (area.center_x - tela.width / 2, area.center_y - tela.height / 2)
+
+        area.add_widget(tela)
+        area.bind(size=adatta, pos=adatta)
+        content.add_widget(area)
+        comandi = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum),
+                            spacing=dp(6))
+        undo = Button(text="Annulla")
+        undo.bind(on_release=lambda _: tela.annulla_tratto())
+        clean = Button(text="Pulisci")
+        clean.bind(on_release=lambda _: tela.pulisci())
+        close = Button(text="Chiudi")
+        close.bind(on_release=lambda _: popup.dismiss())
+        save = Button(text="Salva")
+        save.bind(on_release=lambda _: self._salva_disegno(tela, suffisso, popup))
+        for pulsante in (undo, clean, close, save):
+            comandi.add_widget(pulsante)
+        content.add_widget(comandi)
+        popup.open()
+        Clock.schedule_once(lambda *_: adatta(), 0)  # geometria definitiva post-open
+
+    def _salva_disegno(self, tela, suffisso, popup):
+        if self._occupato():
+            return  # popup lasciati aperti: il disegno si recupera e si riprova
+        if not tela.tratti:
+            self.status.text = "Nessun tratto da salvare: disegna almeno un segno."
+            return
+        cartella = os.path.dirname(self._media.percorso_anteprima(suffisso))
+        disegno = os.path.join(cartella, f"_disegno_{suffisso}.png")
+        try:
+            os.makedirs(cartella, exist_ok=True)
+            tela.esporta_png(disegno)
+            self._media.importa_immagine(disegno, suffisso)
+        except (MediaFlowError, OSError, ValueError) as exc:
+            self.status.text = str(exc)
+            return
+        finally:
+            try:
+                os.remove(disegno)
+            except OSError:
+                pass
+        popup.dismiss()
+        self.status.text = f"Disegno salvato come frame {suffisso.upper()}."
+        self._refresh_frames()
+        self._refresh_status()
+
+    def _invalida_scrub(self):
+        """Azzera gli scrub pendenti e rende innocui quelli in volo: una
+        preview tardiva non deve coprire un frame reale appena impostato
+        (placeholder/disegno/import/crop/estrazione). Non serve fermare il
+        thread: il callback del worker verra' scartato dal mismatch di
+        generazione in ``_scrub_fatto`` (tutto gira sul thread Clock)."""
+        for suffisso in ("start", "finish"):
+            job = self._scrub_jobs.get(suffisso)
+            if job is not None:
+                Clock.unschedule(job)
+            self._scrub_jobs[suffisso] = None
+            self._scrub_pendente[suffisso] = None  # niente recupero a valle
+            self._scrub_generazioni[suffisso] = self._scrub_generazioni.get(suffisso, 0) + 1
+
     def _refresh_frames(self):
+        self._invalida_scrub()
         for suffisso in ("start", "finish"):
             preview = getattr(self, f"preview_{suffisso}")
             preview.source = self._media.frame(suffisso) or ""

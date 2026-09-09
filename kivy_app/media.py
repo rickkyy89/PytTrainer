@@ -18,6 +18,8 @@ import os
 import shutil
 from dataclasses import dataclass
 
+from PIL import Image, ImageDraw, ImageFont
+
 from core.video_helper import (
     FrameExtractionError,
     VideoSearchError,
@@ -35,6 +37,31 @@ from core.video_helper import (
 
 class MediaFlowError(Exception):
     """A user-facing failure of the video & frame flow."""
+
+
+def crea_immagine_placeholder(percorso: str, etichetta: str, *,
+                              dimensioni: tuple[int, int] = (1000, 800)) -> str:
+    """Crea un canvas 5:4 bianco con bordo leggero ed etichetta centrata."""
+    larghezza, altezza = dimensioni
+    if larghezza <= 0 or altezza <= 0 or larghezza * 4 != altezza * 5:
+        raise ValueError("Il placeholder deve avere proporzioni 5:4.")
+    os.makedirs(os.path.dirname(os.path.abspath(percorso)), exist_ok=True)
+    immagine = Image.new("RGB", dimensioni, "white")
+    disegno = ImageDraw.Draw(immagine)
+    margine = max(4, round(min(dimensioni) * 0.025))
+    spessore = max(2, round(min(dimensioni) * 0.004))
+    disegno.rectangle(
+        (margine, margine, larghezza - margine - 1, altezza - margine - 1),
+        outline=(190, 194, 198), width=spessore,
+    )
+    try:
+        font = ImageFont.load_default(size=max(24, round(altezza * 0.11)))
+    except TypeError:  # Pillow precedenti mantengono un font bitmap senza size.
+        font = ImageFont.load_default()
+    disegno.text((larghezza / 2, altezza / 2), str(etichetta).upper(),
+                 fill=(70, 74, 78), font=font, anchor="mm")
+    immagine.save(percorso, "PNG")
+    return percorso
 
 
 def percorso_backup_frame(percorso_frame: str) -> str:
@@ -416,6 +443,33 @@ class MediaFlowController:
             self._e[f"frame_{suffisso}"] = destinazione
             self._on_change()
             return destinazione
+        return self._run_transaction(operation)
+
+    def crea_placeholder(self, suffisso: str) -> str:
+        """Inserisce un placeholder 5:4 come frame START o FINISH."""
+        if suffisso not in ("start", "finish"):
+            raise MediaFlowError(f"Suffisso frame non valido: {suffisso}.")
+        nome = str(self._e.get("nome") or "").strip()
+        if not nome:
+            raise MediaFlowError("Dai un nome all'esercizio prima di creare un placeholder.")
+
+        def operation():
+            temporaneo = os.path.join(self._output_dir, f"_placeholder_{suffisso}.png")
+            try:
+                crea_immagine_placeholder(temporaneo, suffisso)
+                destinazione = self._image_importer(temporaneo, nome, suffisso,
+                                                    self._output_dir)
+            except (FrameExtractionError, OSError, ValueError) as exc:
+                raise MediaFlowError(str(exc)) from exc
+            finally:
+                try:
+                    os.remove(temporaneo)
+                except OSError:
+                    pass
+            self._e[f"frame_{suffisso}"] = destinazione
+            self._on_change()
+            return destinazione
+
         return self._run_transaction(operation)
 
     # ------------------------------------------------------------------ hook

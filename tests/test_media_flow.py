@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -13,6 +14,7 @@ from core.video_helper import FrameExtractionError, VideoSearchError, extract_fr
 from kivy_app.media import (
     MediaFlowController,
     MediaFlowError,
+    crea_immagine_placeholder,
     url_con_inizio,
     percorso_backup_frame,
 )
@@ -349,6 +351,52 @@ def test_importa_immagine_aggiorna_il_frame_giusto(tmp_path):
 
     with pytest.raises(MediaFlowError, match="Suffisso frame non valido"):
         media.importa_immagine(str(tmp_path / "foto.png"), "errato")
+
+
+def test_crea_immagine_placeholder_5_4_bianca_con_etichetta(tmp_path):
+    percorso = crea_immagine_placeholder(str(tmp_path / "placeholder.png"), "START")
+
+    with Image.open(percorso) as immagine:
+        assert immagine.size == (1000, 800)
+        assert immagine.mode == "RGB"
+        centro = immagine.crop((350, 300, 650, 500))
+        assert centro.getbbox() is not None
+        assert any(pixel != (255, 255, 255) for pixel in centro.getdata())
+        assert immagine.getpixel((100, 100)) == (255, 255, 255)
+
+
+def test_placeholder_aggiorna_frame_e_partecipa_alla_transazione(tmp_path):
+    esercizio = _esercizio()
+    editor = SchedaEditorController([esercizio], percorso_bundle="s.scheda")
+
+    def importa(src, nome, suffisso, output_dir):
+        destinazione = Path(output_dir) / f"{nome}_{suffisso}.jpg"
+        with Image.open(src) as immagine:
+            immagine.save(destinazione, "JPEG")
+        return str(destinazione)
+
+    media, _, changed = make_media(esercizio=esercizio, tmp_path=tmp_path,
+                                   image_importer=importa)
+    media._transaction = lambda operation: editor.transazione_media(
+        operation, output_dir=tmp_path)
+
+    percorso = media.crea_placeholder("start")
+
+    assert esercizio["frame_start"] == percorso
+    assert Path(percorso).exists()
+    with Image.open(percorso) as immagine:
+        assert immagine.size == (1000, 800)
+    assert changed
+    assert editor.undo() is True
+    assert editor.esercizi[0]["frame_start"] is None
+    assert not Path(percorso).exists()
+
+
+def test_placeholder_rifiuta_suffisso_non_valido(tmp_path):
+    media, _, _ = make_media(tmp_path=tmp_path)
+
+    with pytest.raises(MediaFlowError, match="Suffisso frame non valido"):
+        media.crea_placeholder("laterale")
 
 
 # ------------------------------------------------- AndroidFrameExtractor MMR
