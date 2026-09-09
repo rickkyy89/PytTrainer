@@ -41,8 +41,9 @@ public final class StorageBridge {
                 return "ERR: nome del file mancante.";
             }
             boolean download = "download".equals(kind);
+            String mime = nome.toLowerCase().endsWith(".csv") ? "text/csv" : MIME;
             if (Build.VERSION.SDK_INT >= 29) {
-                return salvaMediaStore(activity, src, nome, download);
+                return salvaMediaStore(activity, src, nome, download, mime);
             }
             return salvaDiretto(activity, src, nome, download);
         } catch (Exception exc) {
@@ -78,7 +79,7 @@ public final class StorageBridge {
     }
 
     private static String salvaMediaStore(Activity activity, File src, String nome,
-                                          boolean download) throws Exception {
+                                          boolean download, String mime) throws Exception {
         String base = download ? Environment.DIRECTORY_DOWNLOADS : Environment.DIRECTORY_DOCUMENTS;
         Uri collection = download
                 ? MediaStore.Downloads.EXTERNAL_CONTENT_URI
@@ -90,7 +91,7 @@ public final class StorageBridge {
 
         ContentValues valori = new ContentValues();
         valori.put(MediaStore.MediaColumns.DISPLAY_NAME, nome);
-        valori.put(MediaStore.MediaColumns.MIME_TYPE, MIME);
+        valori.put(MediaStore.MediaColumns.MIME_TYPE, mime);
         valori.put(MediaStore.MediaColumns.RELATIVE_PATH, base + "/" + CARTELLA);
         valori.put(MediaStore.MediaColumns.IS_PENDING, 1);
 

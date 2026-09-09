@@ -27,8 +27,8 @@ def home_plan(profile: UiProfile) -> LayoutPlan:
 
 
 def home_toolbar_rows(profile: UiProfile) -> tuple[tuple[str, ...], ...]:
-    """Keep six Home actions reachable without horizontal overflow."""
-    actions = ("refresh", "create", "folders", "open_local", "scale", "text")
+    """Keep seven Home actions reachable without horizontal overflow."""
+    actions = ("refresh", "create", "csv_ai", "folders", "open_local", "scale", "text")
     return (actions[:4], actions[4:]) if profile.category == "compact" else (actions,)
 
 

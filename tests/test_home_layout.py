@@ -38,7 +38,7 @@ def test_readonly_recovery_label_is_explicit_and_empty_values_stay_empty():
 def test_home_toolbar_reflows_text_and_scale_without_hiding_actions():
     compact = adaptive_profile(ViewportMetrics(400, 800, input_mode="touch"))
     expanded = adaptive_profile(ViewportMetrics(1200, 800))
-    assert home_toolbar_rows(compact) == (("refresh", "create", "folders", "open_local"),
-                                          ("scale", "text"))
-    assert home_toolbar_rows(expanded) == (("refresh", "create", "folders", "open_local",
-                                            "scale", "text"),)
+    assert home_toolbar_rows(compact) == (("refresh", "create", "csv_ai", "folders"),
+                                          ("open_local", "scale", "text"))
+    assert home_toolbar_rows(expanded) == (("refresh", "create", "csv_ai", "folders",
+                                            "open_local", "scale", "text"),)

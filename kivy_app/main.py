@@ -180,17 +180,16 @@ def run() -> None:
                                 size_hint_y=None,
                                 height=dp(tokens.dimensions["toolbar_height"] *
                                           len(toolbar_rows) +
-                                          (tokens.spacing["xs"] if len(toolbar_rows) > 1 else 0)),
+                                          tokens.spacing["xs"] * (len(toolbar_rows) - 1)),
                                 spacing=dp(tokens.spacing["xs"]))
-            first_row = BoxLayout(spacing=dp(tokens.spacing["xs"]))
-            second_row = (BoxLayout(spacing=dp(tokens.spacing["xs"]))
-                          if profile.category == "compact" else first_row)
             refresh = Button(text="Aggiorna")
             refresh.bind(on_release=lambda *_: self.refresh())
             create = Button(text="Nuova scheda")
             create.background_color = hex_to_rgba(tokens.colors["coral"])
             create.color = hex_to_rgba(tokens.colors["on_coral"])
             create.bind(on_release=lambda *_: self.create_dialog())
+            csv_ai = Button(text="Scheda con AI")
+            csv_ai.bind(on_release=lambda *_: self.csv_ai())
             folders = Button(text="Cartelle")
             folders.bind(on_release=lambda *_: self.folder_dialog())
             open_local = Button(text="Apri locale")
@@ -199,13 +198,14 @@ def run() -> None:
             self._scala_btn.bind(on_release=lambda *_: self.ciclo_scala())
             self._testo_btn = Button(text=etichetta_testo())
             self._testo_btn.bind(on_release=lambda *_: self.apri_testo())
-            for widget in (refresh, create, folders, open_local):
-                first_row.add_widget(widget)
-            for widget in (self._scala_btn, self._testo_btn):
-                second_row.add_widget(widget)
-            toolbar.add_widget(first_row)
-            if second_row is not first_row:
-                toolbar.add_widget(second_row)
+            azioni = {"refresh": refresh, "create": create, "csv_ai": csv_ai,
+                      "folders": folders, "open_local": open_local,
+                      "scale": self._scala_btn, "text": self._testo_btn}
+            for riga in toolbar_rows:
+                contenitore = BoxLayout(spacing=dp(tokens.spacing["xs"]))
+                for nome in riga:
+                    contenitore.add_widget(azioni[nome])
+                toolbar.add_widget(contenitore)
             self.home.add_widget(toolbar)
             self.status = Label(text="Premi Aggiorna per caricare le schede.",
                                 size_hint_y=None, height=40, halign="left", valign="middle")
@@ -268,6 +268,48 @@ def run() -> None:
                 self.show_editor(None, editor, on_back=self.go_home)
             choose_file(scelto, title="Apri scheda locale",
                         patterns=[("Scheda pyTrainer", "*.scheda")])
+
+        def csv_ai(self):
+            """Save the example CSV in Downloads and copy the AI prompt to clipboard."""
+            from .ai_csv import PROMPT_TEMPLATE
+            try:
+                percorso = controller.salva_csv_esempio()
+            except Exception as exc:
+                self.status.text = f"CSV di esempio non salvato: {exc}"
+                return
+            appunti_ok = True
+            try:
+                from kivy.core.clipboard import Clipboard
+                Clipboard.copy(PROMPT_TEMPLATE)
+            except Exception:
+                appunti_ok = False
+            self.status.text = (
+                f"CSV esempio in {percorso}; prompt per l'AI "
+                + ("copiato negli appunti." if appunti_ok else "NON copiabile qui.")
+            )
+            profile = _ui_profile()
+            passi = [
+                ("Prompt copiato negli appunti." if appunti_ok else
+                 "Attenzione: prompt non copiato, riscrivilo dal CSV di esempio."),
+                f"CSV di esempio salvato in: {percorso}",
+                "1. Incolla il prompt in Gemini, ChatGPT o un'altra AI e, subito dopo, "
+                "descrivi la scheda che vuoi (distretti, livello, attrezzi, durata, "
+                "numero di esercizi): piu sei preciso, piu la scheda sara su misura.",
+                "2. Salva su file il CSV che l'AI ti restituisce, senza modificarlo.",
+                "3. Torna in pyTrainer: \"Nuova scheda\", aprila, poi dal menu \"Importa "
+                "CSV\" > \"Da file locale\" scegli il CSV generato.",
+            ]
+            scroll, contenuto = _area_scrollabile(spacing=dp(profile.tokens.spacing["sm"]))
+            for testo in passi:
+                contenuto.add_widget(_label_righe(escape_markup(testo), contenuto))
+            chiudi = Button(text="Ho capito", size_hint=(0.6, None),
+                            height=dp(profile.touch_target))
+            popup = Popup(title="Crea una scheda con l'AI", content=scroll,
+                          size_hint=(0.94, 0.8), auto_dismiss=True)
+            contenuto.add_widget(chiudi)
+            chiudi.bind(on_release=lambda *_: popup.dismiss())
+            popup.open()
+            return popup
 
         def destinazione_locale(self):
             """Choose the Android Documents/Download folder for local mirrors."""
@@ -356,6 +398,7 @@ def run() -> None:
             return apri_menu((
                 ("Aggiorna", self._lista_aggiornata),
                 ("Nuova scheda", lambda: self._azione_da_home(self.create_dialog)),
+                ("Scheda con AI", lambda: self._azione_da_home(self.csv_ai)),
                 ("Apri da locale", lambda: self._azione_da_home(self.apri_locale)),
                 ("Cartelle", lambda: self._azione_da_home(self.folder_dialog)),
                 ("Salvataggio locale", lambda: self._azione_da_home(self.destinazione_locale)),

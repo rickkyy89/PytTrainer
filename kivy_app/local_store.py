@@ -52,8 +52,10 @@ class AndroidLocalStore:
             raise LocalStoreError("Destinazione di salvataggio non valida.")
         self._kind = kind
 
-    def salva(self, src: str | Path, nome: str) -> str:
-        esito = self._bridge_cls.salvaFile(self._activity, str(src), str(nome), self._kind)
+    def salva(self, src: str | Path, nome: str, kind: str | None = None) -> str:
+        """Mirror ``src`` under ``nome``; ``kind`` overrides the chosen destination."""
+        effettivo = self._kind if kind is None else kind
+        esito = self._bridge_cls.salvaFile(self._activity, str(src), str(nome), effettivo)
         return self._esito(esito)
 
     def importa(self, percorso: str, dest_dir: str | Path) -> str:

@@ -115,6 +115,27 @@ class DriveHomeController:
             lambda: self._drive().download_file(remote.id, remote.name),
         )
 
+    def salva_csv_esempio(self) -> str:
+        """Write the AI example CSV where the user can find it, return its label.
+
+        On Android the mirror is always ``Download/pyTrainer`` (independent of
+        the configured save destination); on PC the file lands in the user's
+        ``Downloads`` folder.  Failures surface as-is: this is a local write,
+        Drive is not involved.
+        """
+        from .ai_csv import NOME_CSV_ESEMPIO, csv_esempio
+
+        if self._local_store is not None:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            sorgente = self._cache_dir / NOME_CSV_ESEMPIO
+            sorgente.write_text(csv_esempio(), encoding="utf-8")
+            self._local_store.salva(sorgente, NOME_CSV_ESEMPIO, kind="download")
+            return f"Download/pyTrainer/{NOME_CSV_ESEMPIO}"
+        dest_dir = Path.home() / "Downloads"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / NOME_CSV_ESEMPIO).write_text(csv_esempio(), encoding="utf-8")
+        return str(dest_dir / NOME_CSV_ESEMPIO)
+
     def select_folder(self, folder_id: str) -> DriveFolderConfig:
         if folder_id not in self._config.folder_ids:
             raise AppConfigError("La cartella selezionata non e configurata localmente.")
