@@ -7,11 +7,23 @@ previews, per-side percentage crop with ``*_orig.jpg`` backup and restore,
 user image import, placeholder frames and a 5:4 free-hand drawing popup for
 START/FINISH.
 
+Layout (redesign confermato): app bar with back + title + kebab contestuale
+(il kebab schermo ospita "URL manuale…" e "Euristica 10%/50%", più la voce
+che invoca il menu globale ``on_menu``); azioni video dirette Play/Cerca/
+Estrai frame; campi timestamp impilati in verticale (niente overflow
+orizzontale sui telefoni, identica gerarchia di azioni su PC); nei pannelli
+START/FINISH restano diretti solo Applica e Placeholder (senza conferma),
+mentre Disegna/Immagine…/Ripristina vivono nel kebab del pannello. La
+gerarchia d'azione è definita in ``media_layout`` ed è uguale su ogni
+profilo. Il corpo della pagina viene ricostruito quando resize/rotazione
+cambiano il piano responsive.
+
 Imported only from ``kivy_app.main.run`` so pytest never loads Kivy.
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 import threading
 
@@ -35,7 +47,12 @@ from .fine_slider import FineSlider
 from .launcher import apri_url, ultimo_errore
 from .media import MediaFlowError
 from .material import profile_for_window
-from .media_layout import media_layout
+from .compact_menu import apri_menu
+from .snackbar import mostra_snackbar
+from .media_layout import (
+    media_context_actions, media_layout, panel_context_actions,
+    panel_direct_actions, video_direct_actions,
+)
 
 
 def _formatta_durata(secondi) -> str:
@@ -62,6 +79,9 @@ class _TelaDisegno(Widget):
     def __init__(self, **kwargs):
         kwargs.setdefault("size_hint", (None, None))
         super().__init__(**kwargs)
+        # Settings applies to newly opened canvases without coupling it to a bundle.
+        from .material import spessore_penna_corrente
+        self.SPESSORE_EXPORT = spessore_penna_corrente()
         self.tratti: list[list[tuple[float, float]]] = []
         self._istruzioni: list = []
         self._linea_corrente: Line | None = None
@@ -174,23 +194,51 @@ class MediaScreen(BoxLayout):
         self._busy = False
         self._profile = profile_for_window(Window)
         self._ui = media_layout(self._profile)
+        self._layout_key = self._chiave_layout()
+        # stato dei worker/share: creato una sola volta, sopravvive alla
+        # ricostruzione del corpo durante i reflow del piano responsive
+        self._scrub_jobs: dict[str, object] = {}
+        self._scrub_generazioni: dict[str, int] = {}
+        self._scrub_pendente: dict[str, float] = {}
+        self._scrub_in_corso: dict[str, float] = {}
+        self._scrub_in_volo: set[str] = set()
+        self._scrub_slider: dict[str, Slider] = {}
+        self._preview_jobs: dict[str, object] = {}
+        self._crop_sliders: dict[str, dict[str, Slider]] = {}
+        self._mutating_controls: list[Widget] = []
+        self._result_controls: list[Widget] = []
+        self._syncing = False
+        self._reflowing = False
+        self._reflow_job = None
+        self._error_popup = None
 
-        header = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-        if self._on_menu is not None:
-            self._menu = Button(text="Menu", size_hint_x=None, width=dp(82))
-            self._menu.bind(on_release=lambda *_: self._on_menu())
-            header.add_widget(self._menu)
-        else:
-            self._menu = None
-        self._back = Button(text="< Editor", size_hint_x=None, width=dp(120))
-        self._back.bind(on_release=lambda *_: self._on_back())
-        self.status = Label(text="", halign="left", valign="middle",
+        # Uniform app bar: navigation, title and one contextual overflow
+        # (identical to the editor/export/workout app-bar contract).
+        tokens = self._profile.tokens
+        bar = BoxLayout(size_hint_y=None, height=dp(self._ui.header_height),
+                        spacing=dp(8))
+        self._back = Button(text="‹", size_hint_x=None, width=dp(self._ui.back_width))
+        self._back.bind(on_release=lambda *_: self._exit())
+        self.titolo = Label(text="Video & Frame",
+                            font_size=sp(tokens.typography["section"]),
+                            halign="left", valign="middle",
+                            shorten=True, shorten_from="right")
+        self.titolo.bind(
+            width=lambda _, v: setattr(self.titolo, "text_size", (v, self.titolo.height)))
+        self._menu = Button(text="⋮", size_hint_x=None, width=dp(self._ui.kebab_width))
+        self._menu.bind(on_release=lambda anchor: self._open_media_menu(anchor))
+        bar.add_widget(self._back)
+        bar.add_widget(self.titolo)
+        bar.add_widget(self._menu)
+        self.add_widget(bar)
+
+        self.status = Label(text="", size_hint_y=None,
+                            height=dp(max(32, tokens.typography["body"] + 10)),
+                            halign="left", valign="middle",
                             shorten=True, shorten_from="right")
         self.status.bind(
             width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
-        header.add_widget(self._back)
-        header.add_widget(self.status)
-        self.add_widget(header)
+        self.add_widget(self.status)
 
         body = ScrollView()
         self._scroll = body
@@ -201,12 +249,162 @@ class MediaScreen(BoxLayout):
 
         self._build_video_section()
         self._build_frame_section()
-        self._syncing = False
         self._refresh_status()
+        # rotazione/resize: se il piano responsive cambia, si riflowa il corpo
+        self.bind(size=self._on_size)
         if self._media.video_url and self._media.durata is None:
             # video proveniente dal manifest: la pista scrub non conosce la
             # durata, va risolta in background prima di poterla usare
             self._run_async(self._do_durata)
+
+    # ------------------------------------------------------- menu e reflow
+
+    @property
+    def busy(self):
+        """Reliable public busy state consumed by the application close guard."""
+        return self._busy
+
+    def _exit(self):
+        if self._occupato():
+            return
+        self._on_back()
+
+    def _open_media_menu(self, anchor):
+        """Kebab della app bar: azioni schermo + accesso al menu globale."""
+        if self._occupato():
+            return None
+        callbacks = {
+            "URL manuale…": self._manual_url_popup,
+            "Euristica 10%/50%": self._apply_heuristic,
+        }
+        if self._on_menu is not None:
+            callbacks["Impostazioni"] = lambda: self._open_parent_settings(anchor)
+        return self._open_local_menu(
+            tuple((label, callbacks[label])
+                  for label in media_context_actions(
+                      include_parent=self._on_menu is not None)),
+            anchor=anchor)
+
+    def _open_panel_menu(self, suffisso, anchor):
+        """Kebab del pannello START/FINISH: Disegna, Immagine…, Ripristina."""
+        if self._occupato():
+            return None
+        callbacks = {
+            "Disegna": lambda: self._apri_disegno(suffisso),
+            "Immagine…": lambda: self._import_image(suffisso),
+            "Ripristina": lambda: self._restore(suffisso),
+        }
+        return self._open_local_menu(
+            tuple((label, callbacks[label]) for label in panel_context_actions()),
+            anchor=anchor)
+
+    def _open_local_menu(self, actions, anchor):
+        """Open a local kebab and apply the exact 44/52/60 control preset.
+
+        Shared ``apri_menu`` historically floors rows at 48dp. Media owns the
+        stricter confirmed contract, so its menu buttons are retuned after
+        construction without changing common infrastructure.
+        """
+        menu = apri_menu(actions, anchor=anchor)
+        root = getattr(menu, "overlay", menu)
+        walk = getattr(root, "walk", None)
+        if walk is None:
+            return menu
+        for widget in walk(restrict=True):
+            if isinstance(widget, Button):
+                widget.height = dp(self._ui.target_minimum)
+        return menu
+
+    def _open_parent_settings(self, anchor):
+        """Open Settings in one selection with the current main callback.
+
+        Main passes its bound ``apri_menu`` method. Its owner also exposes
+        ``show_settings``; calling that public callback avoids a redundant
+        one-item parent menu. Other embedders retain the legacy menu fallback.
+        """
+        owner = getattr(self._on_menu, "__self__", None)
+        callback = getattr(owner, "show_settings", None)
+        if callable(callback):
+            return callback()
+        return self._invoke_parent_menu(anchor)
+
+    def _invoke_parent_menu(self, anchor):
+        """Honor both the legacy zero-arg and the anchor-aware parent contract."""
+        if self._on_menu is None:
+            return None
+        try:
+            inspect.signature(self._on_menu).bind(anchor)
+        except (TypeError, ValueError):
+            return self._on_menu()
+        return self._on_menu(anchor)
+
+    def _chiave_layout(self):
+        """Tutto ciò che, cambiando, impone la ricostruzione del corpo."""
+        profilo = profile_for_window(Window)
+        piano = media_layout(profilo)
+        return (piano, profilo.tokens.dimensions["frame_min_height"],
+                profilo.tokens.typography["label"])
+
+    def _on_size(self, *_):
+        if self.width <= 0 or self.height <= 0:
+            return
+        chiave = self._chiave_layout()
+        if chiave == self._layout_key:
+            if self._reflow_job is not None:
+                # la finestra e' tornata al piano corrente: nessun riflow
+                Clock.unschedule(self._reflow_job)
+                self._reflow_job = None
+            return
+        if self._reflow_job is not None:
+            Clock.unschedule(self._reflow_job)
+        # debounce: il drag della finestra non ricostruisce a ogni frame
+        self._reflow_job = Clock.schedule_once(self._riflow, 0.2)
+
+    def _riflow(self, *_):
+        """Ricostruisce il corpo della pagina sul nuovo piano responsive."""
+        self._reflow_job = None
+        chiave = self._chiave_layout()  # ri-legge la finestra: il piano puo'
+        if chiave == self._layout_key:  # essere cambiato durante il debounce
+            return
+        state = self._capture_reflow_state()
+        committed = self._commit_timestamp_fields(allow_busy=True)
+        self._layout_key = chiave
+        self._reflowing = True
+        self._invalida_scrub()
+        for job in self._preview_jobs.values():
+            if job is not None:
+                Clock.unschedule(job)
+        self._preview_jobs.clear()
+        self._profile = profile_for_window(Window)
+        self._ui = media_layout(self._profile)
+        self.column.clear_widgets()
+        self._mutating_controls = []
+        self._result_controls = []
+        self._crop_sliders = {}
+        self._build_video_section()
+        self._build_frame_section()
+        self._sync_video_widgets()
+        for suffisso, valori in state["crop"].items():
+            for lato, valore in valori.items():
+                self._crop_sliders[suffisso][lato].value = valore
+        if not committed:
+            self.ts_start.text = state["timestamp"]["start"]
+            self.ts_finish.text = state["timestamp"]["finish"]
+        self._reflowing = False
+        self._set_mutating_controls_disabled(self._busy)
+        if state["focused"]:
+            Clock.schedule_once(
+                lambda *_: setattr(getattr(self, f"ts_{state['focused']}"), "focus", True), 0)
+
+    def _capture_reflow_state(self):
+        return {
+            "timestamp": {"start": self.ts_start.text, "finish": self.ts_finish.text},
+            "focused": "start" if self.ts_start.focus else "finish" if self.ts_finish.focus else None,
+            "crop": {
+                suffisso: {lato: float(slider.value) for lato, slider in sliders.items()}
+                for suffisso, sliders in self._crop_sliders.items()
+            },
+        }
 
     def _do_durata(self):
         self._media.assicura_durata()
@@ -215,46 +413,55 @@ class MediaScreen(BoxLayout):
     # ------------------------------------------------------------- video
 
     def _build_video_section(self):
-        video_line = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(4))
+        video_line = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum),
+                               spacing=dp(4))
         self.video_label = Label(text=f"Video: {self._media.video_url or 'nessuno'}",
                                  halign="left", valign="middle",
                                  shorten=True, shorten_from="right")
         self.video_label.bind(
             width=lambda _, v: setattr(self.video_label, "text_size", (v, self.video_label.height)))
-        play = Button(text="Play", size_hint_x=None, width=dp(80))
-        play.bind(on_release=lambda *_: self._play())
-        search = Button(text="Cerca", size_hint_x=None, width=dp(100))
-        search.bind(on_release=lambda *_: self._run_async(self._do_search))
-        manual = Button(text="URL manuale", size_hint_x=None, width=dp(130))
-        manual.bind(on_release=lambda *_: self._manual_url_popup())
-        extract = Button(text="Estrai frame", size_hint_x=None, width=dp(130))
-        extract.bind(on_release=lambda *_: self._run_async(self._do_extract))
         video_line.add_widget(self.video_label)
-        video_line.add_widget(play)
-        video_line.add_widget(search)
-        video_line.add_widget(manual)
-        video_line.add_widget(extract)
+        azioni_video = {
+            "Play": self._play,
+            "Cerca": lambda: self._run_async(self._do_search),
+            "Estrai frame": lambda: self._run_async(self._do_extract),
+        }
+        for etichetta in video_direct_actions():
+            # larghezza che cresce col testo: a target grandi "Estrai frame"
+            # non deve risultare tagliato
+            pulsante = Button(text=etichetta, size_hint_x=None,
+                              width=dp(max(80, self._ui.target_minimum,
+                                           len(etichetta) * 9 + 24)))
+            pulsante.bind(on_release=lambda _, az=etichetta: azioni_video[az]())
+            video_line.add_widget(pulsante)
+            if etichetta != "Play":
+                self._register_mutating_control(pulsante)
         self.column.add_widget(video_line)
 
-        row_h = dp(max(56, self._ui.target_minimum))
-        ts_line = BoxLayout(size_hint_y=None, height=row_h, spacing=dp(4), padding=[dp(8), dp(6)])
-        self._tinta_riquadro(ts_line)
-        ts_line.add_widget(Label(text="Start s", size_hint_x=None, width=dp(96),
-                                 halign="left", valign="middle"))
+        # campi timestamp in verticale: etichetta sopra campo a piena
+        # larghezza, nessuna riga orizzontale che tracimi sullo smartphone
+        campo_h = dp(self._ui.target_minimum)
+        etichetta_h = dp(max(22, self._profile.tokens.typography["label"] + 4))
+        ts_box = BoxLayout(orientation="vertical", size_hint_y=None,
+                           height=etichetta_h * 2 + campo_h * 2 + dp(12) + dp(12),
+                           spacing=dp(4), padding=[dp(6), dp(8)])
+        self._tinta_riquadro(ts_box)
         self.ts_start = TextInput(text=self._ts_text(self._media.ts_start),
-                                  multiline=False, size_hint_x=None, width=dp(110))
+                                  multiline=False, size_hint_y=None, height=campo_h)
         self.ts_start.bind(focus=self._ts_handler("ts_start", self.ts_start))
-        ts_line.add_widget(self.ts_start)
-        ts_line.add_widget(Label(text="Finish s", size_hint_x=None, width=dp(110),
-                                 halign="left", valign="middle"))
         self.ts_finish = TextInput(text=self._ts_text(self._media.ts_finish),
-                                    multiline=False, size_hint_x=None, width=dp(110))
+                                   multiline=False, size_hint_y=None, height=campo_h)
         self.ts_finish.bind(focus=self._ts_handler("ts_finish", self.ts_finish))
-        ts_line.add_widget(self.ts_finish)
-        heuristic = Button(text="EURISTICA 10%/50%", size_hint_x=None, width=dp(170))
-        heuristic.bind(on_release=lambda *_: self._apply_heuristic())
-        ts_line.add_widget(heuristic)
-        self.column.add_widget(ts_line)
+        self._register_mutating_control(self.ts_start)
+        self._register_mutating_control(self.ts_finish)
+        for testo, campo in (("Start s", self.ts_start), ("Finish s", self.ts_finish)):
+            etichetta = Label(text=testo, size_hint_y=None, height=etichetta_h,
+                              halign="left", valign="bottom")
+            etichetta.bind(
+                width=lambda _, v, l=etichetta: setattr(l, "text_size", (v, l.height)))
+            ts_box.add_widget(etichetta)
+            ts_box.add_widget(campo)
+        self.column.add_widget(ts_box)
 
         self.results = BoxLayout(orientation="vertical", spacing=4, size_hint_y=None)
         self.results.bind(minimum_height=self.results.setter("height"))
@@ -266,22 +473,9 @@ class MediaScreen(BoxLayout):
 
     def _ts_handler(self, chiave, campo):
         def on_focus(instance, focused):
-            if focused:
+            if focused or self._reflowing:
                 return
-            testo = campo.text.strip().replace(",", ".")
-            if not testo:
-                return
-            try:
-                valore = float(testo)
-            except ValueError:
-                self.status.text = f"Timestamp non numerico: {testo}"
-                campo.text = self._ts_text(getattr(self._media, chiave))
-                return
-            try:
-                self._media.imposta_timestamp(**{chiave: valore})
-            except MediaFlowError as exc:
-                self.status.text = str(exc)
-                self._refresh_status()
+            if self._occupato() or not self._commit_timestamp_fields():
                 return
             # allinea la pista e aggiorna la preview sul nuovo secondo
             self._sync_scrub_sliders()
@@ -297,10 +491,13 @@ class MediaScreen(BoxLayout):
         self._scrub_anteprima(suffisso)
 
     def _apply_heuristic(self):
-        if not self._media.video_url:
-            self.status.text = "Seleziona prima un video."
+        if self._occupato():
             return
-        self._run_async(self._do_heuristic)
+        if not self._media.video_url:
+            self._mostra_errore("Seleziona prima un video.")
+            return
+        self._run_async(self._do_heuristic,
+                        success="Timestamp aggiornati con l'euristica 10%/50%.")
 
     def _do_heuristic(self):
         self._media.proponi_euristica()
@@ -323,6 +520,10 @@ class MediaScreen(BoxLayout):
         contenitore.bind(pos=follow, size=follow)
 
     def _render_results(self, *_):
+        for control in self._result_controls:
+            if control in self._mutating_controls:
+                self._mutating_controls.remove(control)
+        self._result_controls = []
         self.results.clear_widgets()
         for indice, scelta in enumerate(self._media.scelte):
             row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
@@ -331,6 +532,7 @@ class MediaScreen(BoxLayout):
             info.bind(width=lambda _, v, b=info: setattr(b, "text_size", (max(v - dp(20), 10), b.height)),
                       height=lambda _, h, b=info: setattr(b, "text_size", (max(b.width - dp(20), 10), h)))
             info.bind(on_release=lambda _, i=indice: self._run_async(lambda: self._choose(i)))
+            self._register_mutating_control(info, result=True)
             video_id = (scelta.url.split("v=")[-1] if "v=" in scelta.url
                         else scelta.url.rstrip("/").split("/")[-1])[:11]
             preview = AsyncImage(source=f"https://img.youtube.com/vi/{video_id}/default.jpg",
@@ -351,9 +553,12 @@ class MediaScreen(BoxLayout):
                                         self._refresh_frames()), 0)
 
     def _manual_url_popup(self):
+        if self._occupato():
+            return None
         input_url = TextInput(hint_text="https://www.youtube.com/watch?v=...",
                               multiline=False)
-        buttons = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        buttons = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum),
+                            spacing=dp(8))
         content = BoxLayout(orientation="vertical", spacing=dp(6))
         popup = Popup(title="URL video manuale", content=content, size_hint=(0.9, 0.35))
         ok = Button(text="Imposta")
@@ -367,14 +572,17 @@ class MediaScreen(BoxLayout):
         popup.open()
 
     def _apply_manual_url(self, url, popup):
+        if self._occupato():
+            return
         popup.dismiss()
         try:
             self._media.url_manuale(url)
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         self._sync_video_widgets()
         self._refresh_status()
+        self._mostra_info("URL video aggiornato.")
 
     def _sync_video_widgets(self):
         self.video_label.text = f"Video: {self._media.video_url or 'nessuno'}"
@@ -388,9 +596,10 @@ class MediaScreen(BoxLayout):
         anteprima_min = self._profile.tokens.dimensions["frame_min_height"]
         scrub_h = 72
         lato_h = max(90, self._ui.target_minimum * 2)
-        # due righe di azioni: cinque pulsanti su una sola linea schiacciano
-        # le etichette (soprattutto su compact) rendendoli poco accessibili
-        azioni_h = self._ui.target_minimum * 2 + 4
+        # UNA sola riga di azioni dirette (Applica, Placeholder + kebab):
+        # Disegna/Immagine…/Ripristina non ingombrano più il pannello,
+        # vivono nel kebab contestuale ancorato al pulsante ⋮
+        azioni_h = self._ui.target_minimum + 4
         # altezza di UN pannello START/FINISH completo (preview + scrub + crop
         # + azioni, con un po' di margine per gli spacing interni del pannello)
         pannello_h = anteprima_min + scrub_h + lato_h + azioni_h + 24
@@ -400,12 +609,9 @@ class MediaScreen(BoxLayout):
         self.frames_row = BoxLayout(
             orientation=self._ui.frame_axis, size_hint_y=None,
             height=dp(altezza_riga), spacing=dp(8))
-        self._scrub_jobs: dict[str, object] = {}
-        self._scrub_generazioni: dict[str, int] = {}
-        self._scrub_pendente: dict[str, float] = {}
-        self._scrub_in_corso: dict[str, float] = {}
-        self._scrub_in_volo: set[str] = set()
-        self._scrub_slider: dict[str, Slider] = {}
+        # i dizionari di stato dei worker nascono in __init__ e sopravvivono
+        # ai reflow: qui si registrano solo i nuovi slider del corpo
+        self._scrub_slider = {}
         for suffisso in ("start", "finish"):
             panel = BoxLayout(orientation="vertical", spacing=dp(2))
             preview = Image(source=self._media.frame(suffisso) or "",
@@ -420,34 +626,32 @@ class MediaScreen(BoxLayout):
                 box.add_widget(Label(text=lato, size_hint_y=None, height=dp(24)))
                 slider = Slider(min=0, max=45, value=0, orientation="vertical")
                 self._blocca_scroll(slider)
+                self._register_mutating_control(slider)
                 box.add_widget(slider)
                 sliders[lato] = slider
                 lato_line.add_widget(box)
             for slider in sliders.values():
                 slider.bind(on_value=self._preview_handler(suffisso, sliders))
-            self._preview_jobs = getattr(self, "_preview_jobs", {})
+            self._crop_sliders[suffisso] = sliders
             panel.add_widget(lato_line)
-            apply = Button(text="Applica")
-            apply.bind(on_release=lambda _, s=suffisso, sl=sliders: self._apply_crop(s, sl))
-            restore = Button(text="Ripristina")
-            restore.bind(on_release=lambda _, s=suffisso: self._restore(s))
-            import_btn = Button(text="Immagine…", size_hint_x=None, width=dp(self._ui.target_minimum * 2))
-            import_btn.bind(on_release=lambda _, s=suffisso: self._import_image(s))
-            placeholder_btn = Button(text="Placeholder")
-            placeholder_btn.bind(on_release=lambda _, s=suffisso: self._placeholder(s))
-            draw_btn = Button(text="Disegna")
-            draw_btn.bind(on_release=lambda _, s=suffisso: self._apri_disegno(s))
-            azioni_sopra = BoxLayout(size_hint_y=None,
-                                      height=dp(self._ui.target_minimum), spacing=dp(4))
-            azioni_sopra.add_widget(apply)
-            azioni_sopra.add_widget(restore)
-            azioni_sotto = BoxLayout(size_hint_y=None,
-                                     height=dp(self._ui.target_minimum), spacing=dp(4))
-            azioni_sotto.add_widget(import_btn)
-            azioni_sotto.add_widget(placeholder_btn)
-            azioni_sotto.add_widget(draw_btn)
-            panel.add_widget(azioni_sopra)
-            panel.add_widget(azioni_sotto)
+            azioni_pannello = {
+                "Applica": lambda sl=sliders, s=suffisso: self._apply_crop(s, sl),
+                "Placeholder": lambda s=suffisso: self._placeholder(s),
+            }
+            azioni_riga = BoxLayout(size_hint_y=None,
+                                    height=dp(self._ui.target_minimum), spacing=dp(4))
+            for etichetta in panel_direct_actions():
+                pulsante = Button(text=etichetta)
+                pulsante.bind(on_release=lambda _, az=etichetta: azioni_pannello[az]())
+                azioni_riga.add_widget(pulsante)
+                self._register_mutating_control(pulsante)
+            kebab = Button(text="⋮", size_hint_x=None,
+                           width=dp(self._ui.target_minimum))
+            kebab.bind(on_release=lambda anchor, s=suffisso:
+                       self._open_panel_menu(s, anchor))
+            self._register_mutating_control(kebab)
+            azioni_riga.add_widget(kebab)
+            panel.add_widget(azioni_riga)
             self.frames_row.add_widget(panel)
         self.column.add_widget(self.frames_row)
         self._sync_scrub_sliders()
@@ -476,6 +680,7 @@ class MediaScreen(BoxLayout):
         setattr(self, f"scrub_etichetta_{suffisso}", etichetta)
         slider = FineSlider(min=0, max=1, value=0, size_hint_y=None, height=dp(48))
         self._blocca_scroll(slider)
+        self._register_mutating_control(slider)
         slider.bind(on_value=self._scrub_handler(suffisso, slider))
         slider.bind(on_touch_up=lambda _, touch, s=suffisso, sl=slider:
                     self._scrub_release(s, sl, touch))
@@ -487,12 +692,12 @@ class MediaScreen(BoxLayout):
         try:
             url = self._media.url_per_play()
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         if apri_url(url):
-            self.status.text = f"Play dal punto START nel player di sistema: {url}"
+            self._mostra_info("Video aperto dal punto START.")
         else:
-            self.status.text = (f"Nessun player disponibile "
+            self._mostra_errore(f"Nessun player disponibile "
                                 f"({ultimo_errore() or 'motivo sconosciuto'}): {url}")
 
     def _scrub_testo(self, valore) -> str:
@@ -503,7 +708,8 @@ class MediaScreen(BoxLayout):
     def _scrub_handler(self, suffisso, slider):
         def on_value(*_):
             getattr(self, f"scrub_etichetta_{suffisso}").text = self._scrub_testo(slider.value)
-            if self._syncing or slider.disabled or not self._media.video_url:
+            if (self._syncing or self._reflowing or self._busy or slider.disabled
+                    or not self._media.video_url):
                 return
             self._scrub_pendente[suffisso] = float(slider.value)
             vecchio = self._scrub_jobs.get(suffisso)
@@ -545,7 +751,7 @@ class MediaScreen(BoxLayout):
         self._scrub_in_volo.discard(suffisso)
         corrente = generazione == self._scrub_generazioni.get(suffisso)
         if errore and corrente:
-            self.status.text = errore
+            self._mostra_errore(errore)
         elif corrente:
             # mostra SEMPRE l'ultimo frame richiesto, anche se un frame reale
             # esiste gia': lo scrub serve proprio a sceglierne uno nuovo
@@ -559,6 +765,8 @@ class MediaScreen(BoxLayout):
             self._scrub_anteprima(suffisso)
 
     def _scrub_release(self, suffisso, slider, touch=None):
+        if self._occupato():
+            return
         if slider.disabled or not self._media.video_url:
             return
         if touch is not None and not slider.collide_point(*touch.pos):
@@ -566,7 +774,7 @@ class MediaScreen(BoxLayout):
         try:
             self._media.imposta_timestamp(**{f"ts_{suffisso}": float(slider.value)})
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         getattr(self, f"ts_{'start' if suffisso == 'start' else 'finish'}").text = \
             self._ts_text(slider.value)
@@ -604,6 +812,8 @@ class MediaScreen(BoxLayout):
 
     def _preview_handler(self, suffisso, sliders):
         def on_value(*_):
+            if self._reflowing or self._busy:
+                return
             job = self._preview_jobs.get(suffisso)
             if job is not None:
                 Clock.unschedule(job)
@@ -619,48 +829,56 @@ class MediaScreen(BoxLayout):
                 suffisso, sliders["sinistra"].value, sliders["alto"].value,
                 sliders["destra"].value, sliders["basso"].value)
         except (MediaFlowError, ValueError, OSError) as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         preview.source = anteprima
         preview.reload()
 
     def _apply_crop(self, suffisso, sliders):
+        if self._occupato():
+            return
         try:
             self._media.ritaglia(suffisso, sliders["sinistra"].value,
                                  sliders["alto"].value, sliders["destra"].value,
                                  sliders["basso"].value)
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         except ValueError as exc:  # vincoli percentuali di box_ritaglio
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
-        self.status.text = "Ritaglio applicato."
         for slider in sliders.values():
             slider.value = 0
         self._refresh_frames()
+        self._mostra_info("Ritaglio applicato.")
 
     def _restore(self, suffisso):
+        if self._occupato():
+            return
         try:
             self._media.ripristina(suffisso)
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
-        self.status.text = "Originale ripristinato."
         self._refresh_frames()
+        self._mostra_info("Originale ripristinato.")
 
     def _import_image(self, suffisso):
+        if self._occupato():
+            return
         def on_result(percorso):
             if not percorso:
+                return
+            if self._occupato():
                 return
             try:
                 self._media.importa_immagine(percorso, suffisso)
             except MediaFlowError as exc:
-                testo = str(exc)
-                Clock.schedule_once(lambda _, testo=testo: self._set_status(testo), 0)
+                Clock.schedule_once(lambda _, testo=str(exc): self._mostra_errore(testo), 0)
                 return
             Clock.schedule_once(lambda *_: (self._refresh_frames(),
-                                            self._refresh_status()), 0)
+                                            self._refresh_status(),
+                                            self._mostra_info("Immagine importata.")), 0)
         choose_file(on_result, title=f"Scegli immagine {suffisso.upper()}",
                     patterns=[("Immagini", ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"])])
 
@@ -668,7 +886,7 @@ class MediaScreen(BoxLayout):
         """True se un worker asincrono e' in corso: blocca le azioni che
         toccherebbero i frame in parallelo (transazioni concorrenti)."""
         if self._busy:
-            self.status.text = "Attendere: operazione in corso…"
+            self._mostra_info("Attendere: operazione in corso…")
             return True
         return False
 
@@ -678,11 +896,11 @@ class MediaScreen(BoxLayout):
         try:
             self._media.crea_placeholder(suffisso)
         except MediaFlowError as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
-        self.status.text = f"Placeholder {suffisso.upper()} impostato come frame."
         self._refresh_frames()
         self._refresh_status()
+        self._mostra_info(f"Placeholder {suffisso.upper()} impostato.")
 
     def _apri_disegno(self, suffisso):
         """Popup con foglio bianco 5:4 per disegnare il frame a mano."""
@@ -723,7 +941,7 @@ class MediaScreen(BoxLayout):
         if self._occupato():
             return  # popup lasciati aperti: il disegno si recupera e si riprova
         if not tela.tratti:
-            self.status.text = "Nessun tratto da salvare: disegna almeno un segno."
+            self._mostra_errore("Nessun tratto da salvare: disegna almeno un segno.")
             return
         cartella = os.path.dirname(self._media.percorso_anteprima(suffisso))
         disegno = os.path.join(cartella, f"_disegno_{suffisso}.png")
@@ -732,7 +950,7 @@ class MediaScreen(BoxLayout):
             tela.esporta_png(disegno)
             self._media.importa_immagine(disegno, suffisso)
         except (MediaFlowError, OSError, ValueError) as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         finally:
             try:
@@ -740,9 +958,9 @@ class MediaScreen(BoxLayout):
             except OSError:
                 pass
         popup.dismiss()
-        self.status.text = f"Disegno salvato come frame {suffisso.upper()}."
         self._refresh_frames()
         self._refresh_status()
+        self._mostra_info(f"Disegno salvato come frame {suffisso.upper()}.")
 
     def _invalida_scrub(self):
         """Azzera gli scrub pendenti e rende innocui quelli in volo: una
@@ -765,41 +983,114 @@ class MediaScreen(BoxLayout):
             preview.source = self._media.frame(suffisso) or ""
             preview.reload()
 
-    def _set_status(self, testo):
-        self.status.text = testo
+    # --------------------------------------------------------- UI contract
+
+    def _register_mutating_control(self, control, *, result=False):
+        """Track every control able to mutate media or start mutable work."""
+        self._mutating_controls.append(control)
+        if result:
+            self._result_controls.append(control)
+        control.disabled = self._busy
+        return control
+
+    def _set_mutating_controls_disabled(self, disabled):
+        for control in self._mutating_controls:
+            control.disabled = bool(disabled)
+
+    def _commit_timestamp_fields(self, *, allow_busy=False):
+        """Atomically validate and commit visible timestamps.
+
+        Parsing both fields before calling the controller avoids a partial
+        START update when FINISH is invalid. Empty fields retain the model
+        value, matching the previous focus-loss behavior.
+        """
+        if self._busy and not allow_busy:
+            self._mostra_info("Attendere: operazione in corso…")
+            return False
+        updates = {}
+        for suffisso, campo in (("start", self.ts_start), ("finish", self.ts_finish)):
+            testo = campo.text.strip().replace(",", ".")
+            if not testo:
+                continue
+            try:
+                valore = float(testo)
+            except ValueError:
+                self._mostra_errore(f"Timestamp non numerico: {testo}")
+                return False
+            if valore < 0:
+                self._mostra_errore(f"Timestamp ts_{suffisso} non valido: {valore}.")
+                return False
+            corrente = getattr(self._media, f"ts_{suffisso}")
+            if corrente is None or abs(float(corrente) - valore) > 0.0001:
+                updates[f"ts_{suffisso}"] = valore
+        if not updates:
+            return True
+        try:
+            self._media.imposta_timestamp(**updates)
+        except MediaFlowError as exc:
+            self._mostra_errore(exc)
+            return False
+        return True
+
+    def _mostra_info(self, testo):
+        return mostra_snackbar(self, str(testo))
+
+    def _mostra_errore(self, errore):
+        """Errors are modal by contract; success/info use snackbars."""
+        if self._error_popup is not None:
+            self._error_popup.dismiss(animation=False)
+        contenuto = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        messaggio = Label(text=str(errore), halign="left", valign="middle")
+        messaggio.bind(width=lambda _, value: setattr(
+            messaggio, "text_size", (max(value - dp(16), dp(40)), None)))
+        chiudi = Button(text="Chiudi", size_hint_y=None,
+                        height=dp(self._ui.target_minimum))
+        popup = Popup(title="Errore", content=contenuto, size_hint=(0.88, 0.38))
+        chiudi.bind(on_release=lambda *_: popup.dismiss())
+        popup.bind(on_dismiss=lambda *_: setattr(self, "_error_popup", None))
+        contenuto.add_widget(messaggio)
+        contenuto.add_widget(chiudi)
+        self._error_popup = popup
+        popup.open()
+        return popup
 
     # ------------------------------------------------------------- async
 
-    def _run_async(self, operation):
+    def _run_async(self, operation, *, success=None):
         if self._busy:
-            self.status.text = "Attendere: operazione in corso…"
+            self._mostra_info("Attendere: operazione in corso…")
+            return
+        if not self._commit_timestamp_fields():
             return
         self._busy = True
         self._back.disabled = True  # niente ritorno (e niente Salva) durante il worker
-        if self._menu is not None:
-            self._menu.disabled = True
+        self._menu.disabled = True  # il kebab schermo/globale segue il back
+        self._set_mutating_controls_disabled(True)
         self.status.text = "Elaboro…"
 
         def worker():
             try:
                 operation()
-                Clock.schedule_once(lambda *_: self._finish_async(None), 0)
+                Clock.schedule_once(lambda *_: self._finish_async(None, success), 0)
             except Exception as exc:
                 # eccoti il messaggio materializzato SUBITO: fuori dal blocco
                 # except il nome exc verrebbe cancellato e la lambda romperebbe.
                 testo = str(exc) if isinstance(exc, MediaFlowError) else f"Errore imprevisto: {exc}"
-                Clock.schedule_once(lambda _, testo=testo: self._finish_async(testo), 0)
+                Clock.schedule_once(
+                    lambda _, testo=testo: self._finish_async(testo, None), 0)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_async(self, errore):
+    def _finish_async(self, errore, success=None):
         self._busy = False
         self._back.disabled = False
-        if self._menu is not None:
-            self._menu.disabled = False
-        self.status.text = errore if errore else ""
-        if not errore:
-            self._refresh_status()
+        self._menu.disabled = False
+        self._set_mutating_controls_disabled(False)
+        self._refresh_status()
+        if errore:
+            self._mostra_errore(errore)
+        elif success:
+            self._mostra_info(success)
 
     def _refresh_status(self):
         self.status.text = (

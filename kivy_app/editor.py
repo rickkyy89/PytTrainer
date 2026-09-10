@@ -11,11 +11,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 import os
+import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
-from core.csv_utils import parse_esercizi_csv, trova_duplicati_slug
+from core.csv_utils import parse_esercizi_csv, slugify, trova_duplicati_slug
 from core.drive_sync import SyncConflict
 from core.scheda_file import percorso_stato, salva_scheda, titolo_scheda
 
@@ -98,6 +100,10 @@ class SchedaEditorController:
         self._non_sync = False
         self._undo_stack = []
         self._redo_stack = []
+        # Saving runs on a worker while UI callbacks live on Kivy's thread.
+        # Serialize mutations so a checkpoint can never describe data different
+        # from the manifest actually written to disk.
+        self._mutation_lock = threading.RLock()
         self._checkpoint = deepcopy(esercizi)
         self._checkpoint_files = self._snapshot_files(self._frames_root())
 
@@ -125,36 +131,39 @@ class SchedaEditorController:
         return len(self._undo_stack)
 
     def undo(self) -> bool:
-        if not self._undo_stack:
-            return False
-        comando = self._undo_stack[-1]
-        comando.undo()
-        self._undo_stack.pop()
-        self._redo_stack.append(comando)
-        self._dirty = self._is_dirty()
-        return True
+        with self._mutation_lock:
+            if not self._undo_stack:
+                return False
+            comando = self._undo_stack[-1]
+            comando.undo()
+            self._undo_stack.pop()
+            self._redo_stack.append(comando)
+            self._dirty = self._is_dirty()
+            return True
 
     def redo(self) -> bool:
-        if not self._redo_stack:
-            return False
-        comando = self._redo_stack[-1]
-        comando.redo()
-        self._redo_stack.pop()
-        self._undo_stack.append(comando)
-        self._dirty = self._is_dirty()
-        return True
+        with self._mutation_lock:
+            if not self._redo_stack:
+                return False
+            comando = self._redo_stack[-1]
+            comando.redo()
+            self._redo_stack.pop()
+            self._undo_stack.append(comando)
+            self._dirty = self._is_dirty()
+            return True
 
     def restore_checkpoint(self) -> None:
         """Restore the last successful local save without uploading it."""
-        current = deepcopy(self._esercizi)
-        try:
-            _restore_files_atomically(self._frames_root(), self._checkpoint_files)
-            self._esercizi[:] = deepcopy(self._checkpoint)
-        except Exception:
-            self._esercizi[:] = current
-            raise
-        self._clear_history()
-        self._dirty = False
+        with self._mutation_lock:
+            current = deepcopy(self._esercizi)
+            try:
+                _restore_files_atomically(self._frames_root(), self._checkpoint_files)
+                self._esercizi[:] = deepcopy(self._checkpoint)
+            except Exception:
+                self._esercizi[:] = current
+                raise
+            self._clear_history()
+            self._dirty = False
 
     def discard(self) -> None:
         """Discard in-memory changes; the caller may then leave the screen."""
@@ -162,27 +171,28 @@ class SchedaEditorController:
 
     def transazione_media(self, operation, *, output_dir: str | Path):
         """Run one media mutation with manifest and frame-file undo support."""
-        root = Path(output_dir)
-        before = self._snapshot_files(root)
-        prima = deepcopy(self._esercizi)
-        try:
-            risultato = operation()
-            if risultato is False:
+        with self._mutation_lock:
+            root = Path(output_dir)
+            before = self._snapshot_files(root)
+            prima = deepcopy(self._esercizi)
+            try:
+                risultato = operation()
+                if risultato is False:
+                    self._esercizi[:] = prima
+                    self._restore_files(root, before)
+                    return risultato
+            except Exception:
                 self._esercizi[:] = prima
                 self._restore_files(root, before)
+                raise
+            dopo = deepcopy(self._esercizi)
+            dopo_files = self._snapshot_files(root)
+            if prima == dopo and before == dopo_files:
                 return risultato
-        except Exception:
-            self._esercizi[:] = prima
-            self._restore_files(root, before)
-            raise
-        dopo = deepcopy(self._esercizi)
-        dopo_files = self._snapshot_files(root)
-        if prima == dopo and before == dopo_files:
+            self._registra(_SnapshotCommand(
+                self._esercizi, prima, dopo, files_root=root,
+                before_files=before, after_files=dopo_files))
             return risultato
-        self._registra(_SnapshotCommand(
-            self._esercizi, prima, dopo, files_root=root,
-            before_files=before, after_files=dopo_files))
-        return risultato
 
     @property
     def esercizi(self) -> list[dict]:
@@ -215,7 +225,8 @@ class SchedaEditorController:
 
     def marca_modifica(self) -> None:
         """Flag external mutations (video & frame flow of ticket 07) as unsaved."""
-        self._dirty = True
+        with self._mutation_lock:
+            self._dirty = True
 
     def conferma_salvataggio(self) -> None:
         """Clear the dirty flag once an out-of-band conflict resolution synced the bundle."""
@@ -251,6 +262,75 @@ class SchedaEditorController:
             return indice
 
         return self._modifica(operation)
+
+    def duplica(self, indice: int) -> int:
+        """Duplicate an exercise immediately after it, including independent media.
+
+        Frame paths cannot be shared: crop/re-extraction mutates files in place.
+        Existing frames (and their pre-crop backups) are therefore copied into
+        the bundle work directory under a fresh canonical slug.  The file
+        snapshot makes the complete operation undoable and prevents half a
+        duplicate from surviving a copy failure.
+        """
+        with self._mutation_lock:
+            return self._duplica_locked(indice)
+
+    def _duplica_locked(self, indice: int) -> int:
+        originale = self._esame(indice)
+        copia = deepcopy(originale)
+        copia["nome"] = self._nome_copia_unico(originale.get("nome"))
+
+        sorgenti = {
+            chiave: Path(str(copia[chiave]))
+            for chiave in ("frame_start", "frame_finish")
+            if copia.get(chiave) and Path(str(copia[chiave])).is_file()
+        }
+        root = self._frames_root()
+        if sorgenti and root is None:
+            raise EditorValidationError(
+                "Impossibile duplicare i frame senza la cartella di lavoro della scheda."
+            )
+
+        prima = deepcopy(self._esercizi)
+        before_files = self._snapshot_files(root)
+        try:
+            if sorgenti:
+                root.mkdir(parents=True, exist_ok=True)
+                media_slug = self._media_slug_libero(root, slugify(copia["nome"]))
+                for chiave, suffisso in (("frame_start", "start"),
+                                         ("frame_finish", "finish")):
+                    sorgente = sorgenti.get(chiave)
+                    if sorgente is None:
+                        # Never retain a stale/shared path when only one frame exists.
+                        copia[chiave] = None
+                        continue
+                    destinazione = root / f"{media_slug}_{suffisso}.jpg"
+                    shutil.copy2(sorgente, destinazione)
+                    copia[chiave] = str(destinazione)
+                    backup = sorgente.with_name(f"{sorgente.stem}_orig.jpg")
+                    if backup.is_file():
+                        shutil.copy2(
+                            backup,
+                            destinazione.with_name(f"{destinazione.stem}_orig.jpg"),
+                        )
+            else:
+                # Missing media cannot be made independent and must be re-created.
+                copia["frame_start"] = None
+                copia["frame_finish"] = None
+            self._esercizi.insert(indice + 1, copia)
+        except Exception:
+            self._esercizi[:] = prima
+            if root is not None:
+                self._restore_files(root, before_files)
+            raise
+
+        dopo = deepcopy(self._esercizi)
+        after_files = self._snapshot_files(root)
+        self._registra(_SnapshotCommand(
+            self._esercizi, prima, dopo, files_root=root,
+            before_files=before_files, after_files=after_files,
+        ))
+        return indice + 1
 
     def rimuovi(self, indice: int) -> None:
         self._modifica(lambda: self._esercizi.pop(self._indice_valido(indice)))
@@ -371,7 +451,13 @@ class SchedaEditorController:
         With ``sincronizza=False`` the bundle is saved only on disk: the local
         copy stays flagged as ``non_sincronizzato`` until the next real sync.
         """
-        for indice, esercizio in enumerate(self._esercizi):
+        with self._mutation_lock:
+            return self._salva_locked(sincronizza=sincronizza, destinazione=destinazione)
+
+    def _salva_locked(self, sincronizza: bool = True, *, destinazione: str | None = None):
+        esercizi_salvati = deepcopy(self._esercizi)
+        frame_salvati = self._snapshot_files(self._frames_root())
+        for indice, esercizio in enumerate(esercizi_salvati):
             if not str(esercizio.get("nome") or "").strip():
                 raise EditorValidationError(
                     f"L'esercizio {indice + 1} non ha un nome: completo o rimosso prima di salvare."
@@ -380,12 +466,14 @@ class SchedaEditorController:
         if self._lavoro:
             candidato = self._path_cls(percorso_stato(self._lavoro))
             state_path = str(candidato) if candidato.exists() else None
-        self._save_scheda(self._esercizi, self._percorso, state_path=state_path,
+        self._save_scheda(esercizi_salvati, self._percorso, state_path=state_path,
                           titolo=self._titolo)
-        self._checkpoint = deepcopy(self._esercizi)
-        self._checkpoint_files = self._snapshot_files(self._frames_root())
+        self._checkpoint = esercizi_salvati
+        self._checkpoint_files = frame_salvati
         self._clear_history()
-        self._dirty = False
+        # Defensive comparison also catches callers that mutated the exposed
+        # live dictionaries without going through an editor command.
+        self._dirty = self._is_dirty()
         self._copia_locale(destinazione)
         if not sincronizza:
             self._non_sync = True
@@ -466,17 +554,18 @@ class SchedaEditorController:
 
     def _modifica(self, operation):
         """Run one editor mutation and record it as one reversible action."""
-        prima = deepcopy(self._esercizi)
-        try:
-            risultato = operation()
-        except Exception:
-            self._esercizi[:] = prima
-            raise
-        dopo = deepcopy(self._esercizi)
-        if prima == dopo:
+        with self._mutation_lock:
+            prima = deepcopy(self._esercizi)
+            try:
+                risultato = operation()
+            except Exception:
+                self._esercizi[:] = prima
+                raise
+            dopo = deepcopy(self._esercizi)
+            if prima == dopo:
+                return risultato
+            self._registra(_SnapshotCommand(self._esercizi, prima, dopo))
             return risultato
-        self._registra(_SnapshotCommand(self._esercizi, prima, dopo))
-        return risultato
 
     def _registra(self, comando):
         for vecchio in self._redo_stack:
@@ -505,6 +594,31 @@ class SchedaEditorController:
         if not self._lavoro:
             return None
         return Path(self._lavoro) / "frames"
+
+    @staticmethod
+    def _media_slug_libero(root: Path, base: str) -> str:
+        """Return a slug whose canonical start/finish names are both unused."""
+        candidato = base
+        numero = 2
+        while any((root / f"{candidato}_{suffisso}.jpg").exists()
+                  for suffisso in ("start", "finish")):
+            candidato = f"{base}_{numero}"
+            numero += 1
+        return candidato
+
+    def _nome_copia_unico(self, nome) -> str:
+        """Choose ``(copia)``, ``(copia 2)`` ... from the unsuffixed name."""
+        base = re.sub(r" \(copia(?: \d+)?\)$", "", str(nome or "").strip(),
+                      flags=re.IGNORECASE)
+        primo = f"{base} (copia)".strip()
+        nomi = {str(esercizio.get("nome") or "").strip().casefold()
+                for esercizio in self._esercizi}
+        if primo.casefold() not in nomi:
+            return primo
+        numero = 2
+        while f"{base} (copia {numero})".strip().casefold() in nomi:
+            numero += 1
+        return f"{base} (copia {numero})".strip()
 
     def _is_dirty(self):
         return (self._esercizi != self._checkpoint or

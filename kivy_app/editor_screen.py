@@ -8,6 +8,7 @@ this module only renders and forwards events.
 from __future__ import annotations
 
 import math
+import inspect
 import threading
 from pathlib import Path
 
@@ -25,10 +26,17 @@ from kivy.uix.textinput import TextInput
 
 from core.drive_sync import SyncConflict
 
+from .compact_menu import apri_menu
 from .editor import EditorValidationError
 from .file_picker import choose_file, choose_save_file
-from .editor_layout import editor_layout, field_columns
+from .editor_layout import (
+    editor_global_actions,
+    editor_layout,
+    exercise_context_actions,
+    field_columns,
+)
 from .material import profile_for_window
+from .snackbar import mostra_snackbar
 
 
 CAMPI_BREVI = (("nome", "Nome"), ("gruppo", "Gruppo"),
@@ -51,21 +59,32 @@ class EditorScreen(BoxLayout):
         self._fields = []
         self._open_index = 0
         self._saving = False
+        self._disposed = False
+        self._target_h = dp(profile_for_window(Window).touch_target)
 
-        self.header = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        if self._on_menu is not None:
-            menu = Button(text="Menu", size_hint_x=None, width=dp(82))
-            menu.bind(on_release=lambda *_: self.richiedi_uscita(self._on_menu))
-            self.header.add_widget(menu)
-        back = Button(text="< Indietro", size_hint_x=None, width=dp(120))
-        back.bind(on_release=lambda *_: self.richiedi_uscita())
-        self.status = Label(text="", halign="left", valign="middle",
-                            shorten=True, shorten_from="right")
+        # Uniform app bar: navigation, title and one editor overflow.
+        self.header = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
+        self._back = self._button(text="‹", size_hint=(None, None),
+                            width=self._target_h, height=self._target_h)
+        self._back.bind(on_release=lambda *_: self.richiedi_uscita())
+        titolo = self._editor.titolo or Path(self._editor.percorso_bundle).stem or "Editor"
+        self.title = Label(text=titolo, halign="left", valign="middle",
+                           shorten=True, shorten_from="right")
+        self.title.bind(width=lambda _, v: setattr(self.title, "text_size", (v, self.title.height)))
+        self._menu = self._button(text="⋮", size_hint=(None, None),
+                            width=self._target_h, height=self._target_h)
+        self._menu.bind(on_release=lambda button: self._open_editor_menu(button))
+        self.header.add_widget(self._back)
+        self.header.add_widget(self.title)
+        self.header.add_widget(self._menu)
+        self.add_widget(self.header)
+
+        self.status = Label(text="", size_hint_y=None, height=dp(28),
+                            halign="left", valign="middle", shorten=True,
+                            shorten_from="right")
         self.status.bind(
             width=lambda _, v: setattr(self.status, "text_size", (v, self.status.height)))
-        self.header.add_widget(back)
-        self.header.add_widget(self.status)
-        self.add_widget(self.header)
+        self.add_widget(self.status)
         Window.bind(on_key_down=self._on_key_down)
 
         self.rows = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
@@ -74,32 +93,17 @@ class EditorScreen(BoxLayout):
         self._scroll.add_widget(self.rows)
         self.add_widget(self._scroll)
 
-        tools = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-        add = Button(text="Aggiungi esercizio")
-        add.bind(on_release=lambda *_: self._wrap(self._editor.aggiungi, rebuild=True))
-        csv = Button(text="Importa CSV")
-        csv.bind(on_release=lambda *_: self._import_csv())
-        scheda = Button(text="Importa da scheda")
-        scheda.bind(on_release=lambda *_: self._import_scheda())
-        tools.add_widget(add)
-        tools.add_widget(csv)
-        tools.add_widget(scheda)
-        if self._on_export is not None:
-            export = Button(text="Genera Google Doc", size_hint_x=None, width=dp(170))
-            export.bind(on_release=lambda *_: self._on_export(self._editor))
-            tools.add_widget(export)
-        self.add_widget(tools)
-
-        # Undo, redo and save stay reachable while the form scrolls.
-        action_bar = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-        action_profile = profile_for_window(Window)
-        undo_bar = Button(text="Annulla", size_hint_x=None, width=dp(action_profile.touch_target * 2))
+        # The four primary actions stay reachable while the form scrolls.
+        action_bar = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
+        undo_bar = self._button(text="↶ Annulla")
         undo_bar.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
-        redo_bar = Button(text="Ripeti", size_hint_x=None, width=dp(action_profile.touch_target * 2))
+        redo_bar = self._button(text="↷ Ripeti")
         redo_bar.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
-        save_bar = Button(text="Salva", size_hint_x=None, width=dp(action_profile.touch_target * 2))
+        save_bar = self._button(text="▣ Salva")
         save_bar.bind(on_release=lambda *_: self.apri_salvataggio())
-        for button in (undo_bar, redo_bar, save_bar):
+        add_bar = self._button(text="＋ Aggiungi")
+        add_bar.bind(on_release=lambda *_: self._wrap(self._editor.aggiungi, rebuild=True))
+        for button in (undo_bar, redo_bar, save_bar, add_bar):
             action_bar.add_widget(button)
         self.add_widget(action_bar)
 
@@ -110,11 +114,96 @@ class EditorScreen(BoxLayout):
         return self._editor.sporco
 
     def _rebuild(self):
+        self._commit_active_field()
         self.rows.clear_widgets()
         self._fields.clear()
         for indice, esercizio in enumerate(self._editor.esercizi):
             self.rows.add_widget(self._exercise_block(indice, esercizio))
         self._refresh_status()
+
+    def _open_editor_menu(self, anchor):
+        if not self._ready_for_action():
+            return None
+        self._commit_active_field()
+        callbacks = {
+            "Importa CSV": self._import_csv,
+            "Importa da scheda": self._import_scheda,
+            "Genera Google Doc": self._export_document,
+            "Impostazioni": lambda: self.richiedi_uscita(
+                lambda: self._invoke_parent_menu(anchor, action="settings")),
+        }
+        labels = editor_global_actions(include_parent=self._on_menu is not None)
+        return apri_menu(tuple((label, callbacks[label]) for label in labels), anchor=anchor)
+
+    def _invoke_parent_menu(self, anchor, *, action=None):
+        """Invoke the parent context contract, with a legacy direct fallback."""
+        if self._on_menu is None:
+            return None
+        signature = None
+        try:
+            signature = inspect.signature(self._on_menu)
+        except (TypeError, ValueError):
+            pass
+        if action and signature is not None:
+            for action_name in ("action", "azione"):
+                try:
+                    signature.bind(anchor=anchor, **{action_name: action})
+                except TypeError:
+                    continue
+                return self._on_menu(anchor=anchor, **{action_name: action})
+        if action == "settings":
+            # Compatibility with the current bound app callback: invoke the
+            # parent's Settings entry point, never duplicate its construction.
+            direct = getattr(getattr(self._on_menu, "__self__", None), "show_settings", None)
+            if callable(direct):
+                return direct()
+        try:
+            if signature is not None:
+                signature.bind(anchor)
+            return self._on_menu(anchor)
+        except TypeError:
+            return self._on_menu()
+
+    def _export_document(self):
+        self._commit_active_field()
+        if self._on_export is None:
+            self._mostra_errore("Generazione Google Doc non disponibile.")
+            return
+        self._on_export(self._editor)
+
+    def _open_exercise_menu(self, indice, anchor):
+        if not self._ready_for_action():
+            return None
+        self._commit_active_field()
+        callbacks = {
+            "Su": lambda: self._wrap(
+                lambda: self._editor.sposta(indice, -1), rebuild=True),
+            "Giù": lambda: self._wrap(
+                lambda: self._editor.sposta(indice, 1), rebuild=True),
+            "Vai a…": lambda: self._vai_a(indice),
+            "Gruppo": lambda: self._group_popup(indice),
+            "Duplica": lambda: self._duplicate(indice),
+            "Elimina": lambda: self._confirm_delete(indice),
+        }
+        return apri_menu(
+            tuple((label, callbacks[label]) for label in exercise_context_actions()),
+            anchor=anchor,
+        )
+
+    def _duplicate(self, indice):
+        self._commit_active_field()
+        try:
+            self._open_index = self._editor.duplica(indice)
+        except Exception as exc:
+            self._mostra_errore(exc)
+            return
+        self._rebuild()
+
+    def _button(self, **kwargs):
+        """Build an editor-owned button at the active 44/52/60 preset."""
+        kwargs.setdefault("size_hint_y", None)
+        kwargs.setdefault("height", self._target_h)
+        return Button(**kwargs)
 
     def _exercise_block(self, indice, esercizio):
         block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(8))
@@ -122,34 +211,24 @@ class EditorScreen(BoxLayout):
         profile = profile_for_window(Window)
         layout = editor_layout(profile)
 
-        header = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
+        header = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(6))
+        toggle = self._button(text="▾" if indice == self._open_index else "▸",
+                        size_hint=(None, None), width=self._target_h, height=self._target_h)
+        toggle.bind(on_release=lambda *_: self._toggle_exercise(indice))
         titolo = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
                        halign="left", valign="middle", shorten=True, shorten_from="right")
         titolo.bind(width=lambda _, v, l=titolo: setattr(l, "text_size", (v, l.height)))
-        toggle = Button(text="Chiudi" if indice == self._open_index else "Apri",
-                        size_hint_x=None, width=dp(70))
-        toggle.bind(on_release=lambda *_: self._toggle_exercise(indice))
-        up = Button(text="Su", size_hint_x=None, width=dp(60))
-        up.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, -1), rebuild=True))
-        down = Button(text="Giù", size_hint_x=None, width=dp(60))
-        down.bind(on_release=lambda *_: self._wrap(lambda: self._editor.sposta(indice, 1), rebuild=True))
-        goto = Button(text="Vai a…", size_hint_x=None, width=dp(80))
-        goto.bind(on_release=lambda _, i=indice: self._vai_a(i))
-        groups = Button(text="Gruppi", size_hint_x=None, width=dp(90))
-        groups.bind(on_release=lambda _, i=indice: self._group_popup(i))
-        video = Button(text="Video&Frame", size_hint_x=None, width=dp(120))
+        video = self._button(text="Video/Frame", size_hint=(None, None),
+                       width=max(dp(112), self._target_h * 2), height=self._target_h)
         if self._open_media is not None:
-            video.bind(on_release=lambda _, i=indice: self._open_media(self._editor, i))
-        delete = Button(text="Elimina", size_hint_x=None, width=dp(90))
-        delete.bind(on_release=lambda _, i=indice: self._confirm_delete(i))
-        header.add_widget(titolo)
+            video.bind(on_release=lambda _, i=indice: self._open_video(i))
+        context = self._button(text="⋮", size_hint=(None, None),
+                         width=self._target_h, height=self._target_h)
+        context.bind(on_release=lambda button, i=indice: self._open_exercise_menu(i, button))
         header.add_widget(toggle)
-        header.add_widget(up)
-        header.add_widget(down)
-        header.add_widget(goto)
-        header.add_widget(groups)
+        header.add_widget(titolo)
         header.add_widget(video)
-        header.add_widget(delete)
+        header.add_widget(context)
         block.add_widget(header)
 
         if indice != self._open_index:
@@ -161,7 +240,7 @@ class EditorScreen(BoxLayout):
 
         def ricalcola_griglia(*_, g=griglia, b=block):
             largo_dp = max(b.width, 1) / profile.viewport.system_density
-            per_riga = field_columns(profile, largo_dp)
+            per_riga = field_columns(profile_for_window(Window), largo_dp)
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
             g.height = righe * campo_h + (righe - 1) * dp(6)
@@ -201,18 +280,31 @@ class EditorScreen(BoxLayout):
         return block
 
     def _toggle_exercise(self, indice):
+        if not self._ready_for_action():
+            return
+        self._commit_active_field()
         self._open_index = -1 if indice == self._open_index else indice
         self._rebuild()
 
+    def _open_video(self, indice):
+        if not self._ready_for_action():
+            return
+        self._commit_active_field()
+        if self._open_media is not None:
+            self._open_media(self._editor, indice)
+
     def _confirm_delete(self, indice):
+        if not self._ready_for_action():
+            return
+        self._commit_active_field()
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title="Conferma eliminazione", content=content,
                       size_hint=(0.8, 0.3), auto_dismiss=False)
         nome = self._editor.esercizi[indice].get("nome") or f"esercizio {indice + 1}"
         content.add_widget(Label(text=f"Eliminare '{nome}'?"))
-        actions = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        cancel = Button(text="Annulla")
-        confirm = Button(text="Elimina")
+        actions = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
+        cancel = self._button(text="Annulla")
+        confirm = self._button(text="Elimina")
         cancel.bind(on_release=lambda *_: popup.dismiss())
         confirm.bind(on_release=lambda *_: (
             popup.dismiss(),
@@ -240,6 +332,8 @@ class EditorScreen(BoxLayout):
                 return
 
     def richiedi_uscita(self, on_continue=None):
+        if not self._ready_for_action():
+            return
         self._commit_active_field()
         target = on_continue or self._on_back
         if not self._editor.sporco:
@@ -249,10 +343,10 @@ class EditorScreen(BoxLayout):
         popup = Popup(title="Modifiche non salvate", content=content,
                       size_hint=(0.85, 0.35), auto_dismiss=False)
         content.add_widget(Label(text="Vuoi salvare le modifiche prima di uscire?"))
-        actions = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        save = Button(text="Salva")
-        discard = Button(text="Scarta")
-        stay = Button(text="Resta")
+        actions = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
+        save = self._button(text="Salva")
+        discard = self._button(text="Scarta")
+        stay = self._button(text="Resta")
         save.bind(on_release=lambda *_: (
             popup.dismiss(), self.apri_salvataggio(chiudi=True, on_close=target)))
         discard.bind(on_release=lambda *_: (popup.dismiss(), self._editor.discard(), target()))
@@ -263,12 +357,14 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def apri_salvataggio(self, chiudi=False, on_close=None):
+        if not self._ready_for_action():
+            return
         self._commit_active_field()
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title="Salva scheda", content=content, size_hint=(0.8, 0.3),
                       auto_dismiss=True)
-        locale = Button(text="Salva in locale")
-        drive = Button(text="Salva su Drive")
+        locale = self._button(text="Salva in locale")
+        drive = self._button(text="Salva su Drive")
         locale.bind(on_release=lambda *_: (popup.dismiss(), self._salva_locale(chiudi, on_close)))
         drive.bind(on_release=lambda *_: (popup.dismiss(), self._salva_drive(chiudi, on_close)))
         content.add_widget(locale)
@@ -295,7 +391,7 @@ class EditorScreen(BoxLayout):
         try:
             remoto = self._controller.remoto_con_nome(nome)
         except Exception as exc:  # HomeUnavailableError e simili
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         if remoto is None:
             self._pubblica(chiudi, on_close, None)
@@ -305,9 +401,9 @@ class EditorScreen(BoxLayout):
                       size_hint=(0.85, 0.4), auto_dismiss=False)
         popup.add_widget(Label(text=f"'{remoto.name}' esiste già su Drive. "
                                     "Vuoi sovrascriverlo?"))
-        azioni = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        sovrascrivi = Button(text="Sovrascrivi")
-        annulla = Button(text="Annulla")
+        azioni = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
+        sovrascrivi = self._button(text="Sovrascrivi")
+        annulla = self._button(text="Annulla")
         sovrascrivi.bind(on_release=lambda *_: (popup.dismiss(), self._pubblica(chiudi, on_close, remoto)))
         annulla.bind(on_release=lambda *_: popup.dismiss())
         azioni.add_widget(sovrascrivi)
@@ -317,11 +413,11 @@ class EditorScreen(BoxLayout):
 
     def _pubblica(self, chiudi, on_close, remoto):
         if self._saving:
-            self.status.text = "Salvataggio gia in corso: attendi il termine."
+            self._mostra_info("Salvataggio già in corso: attendi il termine.")
             return
         self._saving = True
         self._blocca(True)
-        self.status.text = "Pubblicazione su Drive in corso…"
+        self._mostra_info("Pubblicazione su Drive in corso…")
         target = on_close or self._on_back
 
         def worker():
@@ -330,17 +426,21 @@ class EditorScreen(BoxLayout):
             except Exception as exc:
                 Clock.schedule_once(lambda _, e=exc: esito(e, None), 0)
             else:
-                Clock.schedule_once(lambda: esito(None, None), 0)
+                # Clock always supplies ``dt``; accepting it prevents the UI
+                # from remaining permanently blocked after a successful publish.
+                Clock.schedule_once(lambda _dt: esito(None, None), 0)
 
         def esito(eccezione, _):
             self._saving = False
             self._blocca(False)
             if eccezione is not None:
-                self.status.text = (f"Pubblicazione su Drive non riuscita: {eccezione}. "
-                                    "Modifiche salvate in locale.")
-                self._refresh_status()
+                self._mostra_errore(
+                    f"Pubblicazione su Drive non riuscita: {eccezione}. "
+                    "Modifiche salvate in locale."
+                )
                 return
-            self.status.text = "Scheda pubblicata su Drive."
+            self._refresh_status()
+            self._mostra_info("Scheda pubblicata su Drive.")
             if chiudi:
                 target()
 
@@ -351,7 +451,7 @@ class EditorScreen(BoxLayout):
         content = BoxLayout(orientation="vertical", spacing=4)
         popup = Popup(title="Gruppi esistenti", content=content, size_hint=(0.8, 0.6))
         for nome in gruppi:
-            choice = Button(text=nome, size_hint_y=None, height=44)
+            choice = self._button(text=nome)
             choice.bind(on_release=lambda _, value=nome: self._pick_group(indice, value, popup))
             content.add_widget(choice)
         if not gruppi:
@@ -364,7 +464,7 @@ class EditorScreen(BoxLayout):
 
     def _numero_popup(self, titolo, prompt, minimo, massimo, confermato, iniziale=None):
         profile = profile_for_window(Window)
-        riga = max(48, int(profile.touch_target))
+        riga = int(profile.touch_target)
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title=titolo, content=content, size_hint=(0.8, None),
                       height=dp(3 * riga + 64))
@@ -376,14 +476,14 @@ class EditorScreen(BoxLayout):
                           multiline=False, input_filter="int", size_hint_y=None, height=dp(riga))
         content.add_widget(campo)
         bot = BoxLayout(size_hint_y=None, height=dp(riga), spacing=dp(8))
-        ok = Button(text="Ok")
-        cancel = Button(text="Annulla")
+        ok = self._button(text="Ok")
+        cancel = self._button(text="Annulla")
 
         def valida(*_):
             try:
                 numero = int(campo.text)
             except (TypeError, ValueError):
-                self.status.text = "Inserisci un numero valido."
+                self._mostra_errore("Inserisci un numero valido.")
                 return
             popup.dismiss()
             confermato(numero)
@@ -399,12 +499,12 @@ class EditorScreen(BoxLayout):
     def _vai_a(self, indice):
         massimo = len(self._editor.esercizi)
         if massimo <= 1:
-            self.status.text = "Serve piu' di un esercizio per spostare."
+            self._mostra_info("Serve più di un esercizio per spostare.")
             return
 
         def conferma(numero):
             if not 1 <= numero <= massimo:
-                self.status.text = f"Posizione fuori intervallo (1-{massimo})."
+                self._mostra_errore(f"Posizione fuori intervallo (1-{massimo}).")
                 return
             self._wrap(lambda: self._editor.sposta_alla(indice, numero - 1), rebuild=True)
 
@@ -416,7 +516,7 @@ class EditorScreen(BoxLayout):
 
         def conferma(numero):
             if not 1 <= numero <= massimo:
-                self.status.text = f"Posizione fuori intervallo (1-{massimo})."
+                self._mostra_errore(f"Posizione fuori intervallo (1-{massimo}).")
                 return
             self._wrap(lambda: callback(numero - 1), rebuild=True)
 
@@ -426,9 +526,9 @@ class EditorScreen(BoxLayout):
     def _mode_popup(self, titolo, applica):
         content = BoxLayout(orientation="vertical", spacing=8)
         popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.42))
-        replace = Button(text="Sostituisci tutti gli esercizi")
-        merge = Button(text="Aggiungi in fondo")
-        posiziona = Button(text="Inserisci in una posizione…")
+        replace = self._button(text="Sostituisci tutti gli esercizi")
+        merge = self._button(text="Aggiungi in fondo")
+        posiziona = self._button(text="Inserisci in una posizione…")
         replace.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(True, None), rebuild=True)))
         merge.bind(on_release=lambda *_: (popup.dismiss(), self._wrap(lambda: applica(False, None), rebuild=True)))
 
@@ -446,8 +546,8 @@ class EditorScreen(BoxLayout):
         """Choose the CSV source: a local file or one already in the Drive folder."""
         content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
         popup = Popup(title="Importa CSV", content=content, size_hint=(0.8, 0.32))
-        locale = Button(text="Da file locale")
-        drive = Button(text="Dalla cartella Drive")
+        locale = self._button(text="Da file locale")
+        drive = self._button(text="Dalla cartella Drive")
         locale.bind(on_release=lambda *_: (popup.dismiss(), self._import_csv_locale()))
         drive.bind(on_release=lambda *_: (popup.dismiss(), self._csv_da_drive()))
         content.add_widget(locale)
@@ -457,7 +557,7 @@ class EditorScreen(BoxLayout):
     def _import_csv_locale(self):
         def on_result(percorso):
             if percorso:
-                self._procedi_import_csv(percorso)
+                self._procedi_import_csv(percorso, locale=True)
         choose_file(on_result, title="Importa CSV manifest", parent=self,
                     patterns=[("CSV", "*.csv")])
 
@@ -466,12 +566,12 @@ class EditorScreen(BoxLayout):
         try:
             csvs = self._controller.list_csv()
         except Exception as exc:
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         content = BoxLayout(orientation="vertical", spacing=4)
         popup = Popup(title="Importa CSV da Drive", content=content, size_hint=(0.8, 0.6))
         for remote in csvs:
-            choice = Button(text=remote.name, size_hint_y=None, height=44)
+            choice = self._button(text=remote.name)
             choice.bind(on_release=lambda _, item=remote: (
                 popup.dismiss(), self._csv_da_drive_download(item)))
             content.add_widget(choice)
@@ -480,7 +580,7 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def _csv_da_drive_download(self, remote):
-        self.status.text = "Scarico il CSV da Drive…"
+        self._mostra_info("Scarico il CSV da Drive…")
 
         def fine(percorso, errore):
             self._attendo_csv = False
@@ -502,23 +602,29 @@ class EditorScreen(BoxLayout):
         self._attendo_csv = True
         threading.Thread(target=lavoro, daemon=True).start()
 
-    def _procedi_import_csv(self, percorso):
+    def _procedi_import_csv(self, percorso, *, locale=False):
+        def importa(sostituisci, posizione):
+            if locale:
+                return self._controller.importa_csv_locale(
+                    self._editor, percorso, sostituisci=sostituisci, posizione=posizione)
+            return self._editor.importa_csv(
+                percorso, sostituisci=sostituisci, posizione=posizione)
+
         self._mode_popup(
             f"Importa {Path(percorso).name}",
-            lambda sostituisci, posizione: self._editor.importa_csv(
-                percorso, sostituisci=sostituisci, posizione=posizione))
+            importa)
 
     def _import_scheda(self):
         try:
             remote_id = getattr(self._remote, "id", None)
             schede = [r for r in self._controller.refresh() if r.id != remote_id]
         except Exception as exc:  # HomeUnavailableError e simili
-            self.status.text = str(exc)
+            self._mostra_errore(exc)
             return
         content = BoxLayout(orientation="vertical", spacing=4)
         popup = Popup(title="Importa da un'altra scheda", content=content, size_hint=(0.8, 0.6))
         for remote in schede:
-            choice = Button(text=remote.name, size_hint_y=None, height=44)
+            choice = self._button(text=remote.name)
             choice.bind(on_release=lambda _, item=remote: (popup.dismiss(), self._scheda_mode(item)))
             content.add_widget(choice)
         if not schede:
@@ -526,7 +632,7 @@ class EditorScreen(BoxLayout):
         popup.open()
 
     def _scheda_mode(self, remote):
-        self.status.text = "Carico gli esercizi della scheda…"
+        self._mostra_info("Carico gli esercizi della scheda…")
 
         def fine(esercizi, errore):
             self._attendo_import = False
@@ -554,7 +660,7 @@ class EditorScreen(BoxLayout):
         interno.bind(minimum_height=interno.setter("height"))
         caselle: list[tuple[int, CheckBox]] = []
         tutto = {"attivo": True}
-        toggle = Button(text="Deseleziona tutti", size_hint_y=None, height=dp(52))
+        toggle = self._button(text="Deseleziona tutti")
 
         def commuta(*_):
             tutto["attivo"] = not tutto["attivo"]
@@ -565,7 +671,7 @@ class EditorScreen(BoxLayout):
         toggle.bind(on_release=commuta)
         interno.add_widget(toggle)
         for indice, esercizio in enumerate(esercizi):
-            riga = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
+            riga = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
             casella = CheckBox(active=True)
             caselle.append((indice, casella))
             etichetta = Label(text=f"{indice + 1}. {esercizio.get('nome') or '(senza nome)'}",
@@ -574,13 +680,13 @@ class EditorScreen(BoxLayout):
             riga.add_widget(casella)
             riga.add_widget(etichetta)
             interno.add_widget(riga)
-        avanti = Button(text="Avanti…", size_hint_y=None, height=dp(52))
+        avanti = self._button(text="Avanti…")
 
         def conferma(*_):
             indici = {i for i, casella in caselle if casella.active}
             popup.dismiss()
             if not indici:
-                self.status.text = "Seleziona almeno un esercizio da importare."
+                self._mostra_errore("Seleziona almeno un esercizio da importare.")
                 return
             self._mode_popup(
                 f"Importa {len(indici)} esercizi da {remote.name}",
@@ -597,19 +703,19 @@ class EditorScreen(BoxLayout):
 
     def _blocca(self, value):
         for widget in self.walk(restrict=True):
-            if isinstance(widget, Button):
+            if isinstance(widget, (Button, TextInput, CheckBox)):
                 widget.disabled = value
 
     def _save(self, sincronizza=True, chiudi=False, on_close=None, destinazione=None):
         self._commit_active_field()
         target = on_close or self._on_back
         if self._saving:
-            self.status.text = "Salvataggio gia in corso: attendi il termine."
+            self._mostra_info("Salvataggio già in corso: attendi il termine.")
             return
         self._saving = True
         self._blocca(True)
-        self.status.text = ("Salvataggio su Drive in corso…" if sincronizza
-                            else "Salvataggio locale in corso…")
+        self._mostra_info("Salvataggio su Drive in corso…" if sincronizza
+                          else "Salvataggio locale in corso…")
 
         def worker():
             try:
@@ -626,15 +732,17 @@ class EditorScreen(BoxLayout):
             se_copia = f" Copia in: {copia}." if copia else ""
             if eccezione is not None:
                 if isinstance(eccezione, EditorValidationError):
-                    self.status.text = str(eccezione)
+                    messaggio = str(eccezione)
                 else:
-                    self.status.text = ((f"Salvataggio locale ok, Drive non raggiungibile: {eccezione}."
-                                         + se_copia)
-                                        if sincronizza else f"Salvataggio locale fallito: {eccezione}")
+                    messaggio = ((f"Salvataggio locale ok, Drive non raggiungibile: {eccezione}."
+                                  + se_copia)
+                                 if sincronizza else f"Salvataggio locale fallito: {eccezione}")
                 self._refresh_status()
+                self._mostra_errore(messaggio)
                 return
             if not sincronizza:
-                self.status.text = "Scheda salvata in locale (Drive non aggiornato)." + se_copia
+                self._refresh_status()
+                self._mostra_info("Scheda salvata in locale (Drive non aggiornato)." + se_copia)
                 if chiudi:
                     target()
                 return
@@ -644,10 +752,11 @@ class EditorScreen(BoxLayout):
                                        local_path=self._editor.percorso_bundle)
                 return
             if self._editor.sporco:
-                self.status.text = ("Salvato solo in locale: upload su Drive non riuscito."
+                self._mostra_errore("Salvato solo in locale: upload su Drive non riuscito."
                                     + se_copia)
             else:
-                self.status.text = "Salvato su Drive."
+                self._refresh_status()
+                self._mostra_info("Salvato su Drive.")
                 if chiudi:
                     target()
 
@@ -655,17 +764,21 @@ class EditorScreen(BoxLayout):
 
     def _esito_conflitto(self, choice, esito):
         if isinstance(esito, Exception):
-            self.status.text = str(esito)
+            self._mostra_errore(esito)
             return
         self._editor.conferma_salvataggio()
         if choice == "locale":
-            self.status.text = "Versione locale inviata a Drive."
+            self._refresh_status()
+            self._mostra_info("Versione locale inviata a Drive.")
         elif choice == "remota":
             self._on_conflict_exit("Ricaricata la versione remota: modifiche locali scartate.")
         else:
             self._on_conflict_exit("Versione locale duplicata su Drive; originale riallineato.")
 
     def _wrap(self, operation, rebuild=False):
+        if not self._ready_for_action():
+            return
+        self._commit_active_field()
         try:
             operation()
         except Exception as exc:
@@ -677,7 +790,15 @@ class EditorScreen(BoxLayout):
             self._refresh_status()
 
     def _on_key_down(self, _window, key, _scancode, _codepoint, modifiers):
+        if self._saving:
+            return True
         if key == 27:
+            # Android's physical Back follows the application close contract;
+            # ``PyTrainerApp._on_request_close`` still asks Save/Discard/Stay
+            # when this editor is dirty. Desktop Escape remains in-view Back.
+            import sys
+            if sys.platform == "android":
+                return False
             self.richiedi_uscita()
             return True
         if "ctrl" not in modifiers:
@@ -696,11 +817,36 @@ class EditorScreen(BoxLayout):
     def _mostra_errore(self, exc):
         from .controller import HomeUnavailableError
         if isinstance(exc, EditorValidationError):
-            self.status.text = str(exc)
+            messaggio = str(exc)
         elif isinstance(exc, HomeUnavailableError):
-            self.status.text = str(exc)
+            messaggio = str(exc)
         else:
-            self.status.text = f"Errore imprevisto: {exc}"
+            messaggio = str(exc) if isinstance(exc, str) else f"Errore imprevisto: {exc}"
+        content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        popup = Popup(title="Errore", content=content, size_hint=(0.82, None),
+                      height=dp(160) + self._target_h, auto_dismiss=False)
+        content.add_widget(Label(text=messaggio, halign="center", valign="middle"))
+        ok = self._button(text="OK")
+        ok.bind(on_release=lambda *_: popup.dismiss())
+        content.add_widget(ok)
+        popup.open()
+        return popup
+
+    def _mostra_info(self, messaggio):
+        return mostra_snackbar(self, str(messaggio))
+
+    def _ready_for_action(self):
+        if not self._saving:
+            return True
+        self._mostra_info("Operazione non disponibile durante il salvataggio.")
+        return False
+
+    def dispose(self):
+        """Release the process-wide keyboard binding when leaving the editor."""
+        if self._disposed:
+            return
+        Window.unbind(on_key_down=self._on_key_down)
+        self._disposed = True
 
     def _refresh_status(self):
         parti = []

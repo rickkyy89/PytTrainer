@@ -1,6 +1,7 @@
 """Editor controller behavior; these tests never import Kivy."""
 
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,6 +65,72 @@ def test_add_remove_and_reorder_keep_list_order_and_dirty_flag():
     assert [e["nome"] for e in editor.esercizi] == ["Affondo", "Pressa"]
     with pytest.raises(EditorValidationError):
         editor.rimuovi(5)
+
+
+def test_duplica_copia_tutti_i_dati_e_rende_i_media_indipendenti_nel_bundle(tmp_path):
+    lavoro = tmp_path / "allenamento.scheda.work"
+    frames = lavoro / "frames"
+    frames.mkdir(parents=True)
+    start = frames / "squat_start.jpg"
+    finish = frames / "squat_finish.jpg"
+    start.write_bytes(b"start-originale")
+    finish.write_bytes(b"finish-originale")
+    (frames / "squat_start_orig.jpg").write_bytes(b"backup-originale")
+    esercizio = make_editor().esercizi[0]
+    esercizio.update(
+        video_url="https://youtube.test/squat",
+        ts_start=3.5,
+        ts_finish=9.25,
+        frame_start=str(start),
+        frame_finish=str(finish),
+    )
+    bundle = tmp_path / "allenamento.scheda"
+    editor = make_editor(
+        [esercizio], percorso_bundle=str(bundle), cartella_lavoro=str(lavoro)
+    )
+
+    assert editor.duplica(0) == 1
+
+    originale, copia = editor.esercizi
+    assert copia["nome"] == "Squat (copia)"
+    for campo in ("spiegazione", "note", "ripetizioni", "recupero", "gruppo",
+                  "video_url", "ts_start", "ts_finish"):
+        assert copia[campo] == originale[campo]
+    assert copia["frame_start"] != originale["frame_start"]
+    assert copia["frame_finish"] != originale["frame_finish"]
+    assert Path(copia["frame_start"]).name == "squat_copia_start.jpg"
+    assert Path(copia["frame_finish"]).name == "squat_copia_finish.jpg"
+    Path(copia["frame_start"]).write_bytes(b"start-copia-modificato")
+    assert start.read_bytes() == b"start-originale"
+    assert (frames / "squat_copia_start_orig.jpg").read_bytes() == b"backup-originale"
+
+    editor.salva(sincronizza=False)
+    with zipfile.ZipFile(bundle) as archivio:
+        membri = set(archivio.namelist())
+        assert "frames/squat_start.jpg" in membri
+        assert "frames/squat_copia_start.jpg" in membri
+        assert "frames/squat_copia_finish.jpg" in membri
+        assert "frames/squat_copia_start_orig.jpg" in membri
+
+
+def test_duplica_media_partecipa_a_undo_e_redo(tmp_path):
+    frames = tmp_path / "s.work" / "frames"
+    frames.mkdir(parents=True)
+    source = frames / "squat_start.jpg"
+    source.write_bytes(b"frame")
+    esercizio = make_editor().esercizi[0]
+    esercizio["frame_start"] = str(source)
+    editor = make_editor([esercizio], cartella_lavoro=str(frames.parent))
+
+    editor.duplica(0)
+    copied = frames / "squat_copia_start.jpg"
+    assert copied.exists()
+    assert editor.undo() is True
+    assert len(editor.esercizi) == 1
+    assert not copied.exists()
+    assert editor.redo() is True
+    assert len(editor.esercizi) == 2
+    assert copied.read_bytes() == b"frame"
 
 
 def test_editor_undo_redo_covers_mixed_mutations_and_new_branch():

@@ -23,6 +23,12 @@ class DriveFolderConfig:
 
     folder_ids: tuple[str, ...]
     current_folder_id: str
+    # Tuple instead of a mutable mapping keeps the frozen value predictable and
+    # permits old two-field construction sites to remain source compatible.
+    folder_names: tuple[tuple[str, str], ...] = ()
+
+    def name_for(self, folder_id: str) -> str | None:
+        return dict(self.folder_names).get(folder_id)
 
 
 class FolderConfigStore:
@@ -45,12 +51,22 @@ class FolderConfigStore:
             raise AppConfigError("Configurazione delle cartelle Drive non valida.") from exc
         if not folder_ids or len(set(folder_ids)) != len(folder_ids) or current_folder_id not in folder_ids:
             raise AppConfigError("Configurazione delle cartelle Drive non valida.")
-        return DriveFolderConfig(folder_ids, current_folder_id)
+        raw_names = payload.get("folder_names", {}) if isinstance(payload, dict) else {}
+        names = tuple(
+            (folder_id, str(raw_names[folder_id]).strip())
+            for folder_id in folder_ids
+            if isinstance(raw_names, dict) and str(raw_names.get(folder_id, "")).strip()
+        )
+        return DriveFolderConfig(folder_ids, current_folder_id, names)
 
     def save(self, config: DriveFolderConfig) -> None:
         if not config.folder_ids or config.current_folder_id not in config.folder_ids:
             raise AppConfigError("Configurazione delle cartelle Drive non valida.")
-        payload = {"folder_ids": list(config.folder_ids), "current_folder_id": config.current_folder_id}
+        payload = {
+            "folder_ids": list(config.folder_ids),
+            "current_folder_id": config.current_folder_id,
+            "folder_names": dict(config.folder_names),
+        }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")

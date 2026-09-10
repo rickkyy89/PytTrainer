@@ -2,11 +2,14 @@
 
 Imported only from ``kivy_app.main.run`` so pytest never loads Kivy. All the
 state/countdown logic lives in ``kivy_app.workout.WorkoutSessionController``.
-Layout is one-hand friendly: scrolling cards, fixed bottom timer bar with
-large targets.
+Layout is one-hand friendly: uniform app bar (back + progress title + kebab
+holding "Azzera" and "Impostazioni"), scrolling cards and a fixed bottom
+timer bar where "Stop" stays a direct control.
 """
 
 from __future__ import annotations
+
+import inspect
 
 from kivy.clock import Clock
 from kivy.metrics import dp, sp
@@ -22,9 +25,11 @@ from kivy.utils import escape_markup
 from kivy.core.window import Window
 from kivymd.uix.card import MDCard
 
+from .compact_menu import apri_menu
 from .notify import notifica_fine_recupero
 from .material import hex_to_rgba, markup_px, profile_for_window
-from .workout_layout import workout_layout
+from .snackbar import mostra_snackbar
+from .workout_layout import workout_context_actions, workout_layout
 
 
 def _etichetta(texto, target, delta=48, **kw):
@@ -48,21 +53,23 @@ class WorkoutScreen(BoxLayout):
         self._profile = profile_for_window(Window)
         self._ui = workout_layout(self._profile)
 
-        header = BoxLayout(size_hint_y=None, height=dp(self._ui.minimum_target), spacing=dp(8))
-        if self._on_menu is not None:
-            menu = Button(text="Menu", size_hint_x=None, width=dp(self._ui.minimum_target * 1.7))
-            menu.bind(on_release=lambda *_: self._on_menu())
-            header.add_widget(menu)
-        back = Button(text="< Scheda", size_hint_x=None, width=dp(self._ui.minimum_target * 2))
-        back.bind(on_release=lambda *_: self._exit())
+        # Uniform app bar: navigation, live progress as title, one overflow.
+        self.header = BoxLayout(size_hint_y=None, height=dp(self._ui.minimum_target),
+                                spacing=dp(8))
+        self._back = Button(text="‹", size_hint_x=None, width=dp(self._ui.minimum_target))
+        self._back.bind(on_release=lambda *_: self._exit())
         self.progress_label = Label(text=self._progress_text(),
-                                    font_size=sp(self._ui.header_font_size))
-        reset = Button(text="Azzera", size_hint_x=None, width=dp(self._ui.minimum_target * 2))
-        reset.bind(on_release=lambda *_: self._reset())
-        header.add_widget(back)
-        header.add_widget(self.progress_label)
-        header.add_widget(reset)
-        self.add_widget(header)
+                                    font_size=sp(self._ui.header_font_size),
+                                    halign="left", valign="middle",
+                                    shorten=True, shorten_from="right")
+        self.progress_label.bind(width=lambda _, v: setattr(
+            self.progress_label, "text_size", (v, self.progress_label.height)))
+        self._menu = Button(text="⋮", size_hint_x=None, width=dp(self._ui.minimum_target))
+        self._menu.bind(on_release=lambda anchor: self._open_workout_menu(anchor))
+        self.header.add_widget(self._back)
+        self.header.add_widget(self.progress_label)
+        self.header.add_widget(self._menu)
+        self.add_widget(self.header)
 
         scroll = ScrollView()
         self.cards = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None)
@@ -70,30 +77,68 @@ class WorkoutScreen(BoxLayout):
         scroll.add_widget(self.cards)
         self.add_widget(scroll)
 
-        bar = BoxLayout(size_hint_y=None, height=dp(max(44, self._ui.minimum_target * 1.8)), spacing=dp(8))
+        self.timer_bar = BoxLayout(size_hint_y=None, height=dp(self._ui.minimum_target),
+                                   spacing=dp(8))
         self.timer_label = Label(text="Recupero: —",
                                  font_size=sp(self._ui.header_font_size * 1.3))
-        stop = Button(text="Stop", size_hint_x=None, width=dp(self._ui.minimum_target * 2))
-        stop.bind(on_release=lambda *_: self._stop_timer())
-        bar.add_widget(self.timer_label)
-        bar.add_widget(stop)
-        self.add_widget(bar)
+        self._stop = Button(text="Stop", size_hint_x=None,
+                            width=dp(self._ui.minimum_target * 2))
+        self._stop.bind(on_release=lambda *_: self._stop_timer())
+        self.timer_bar.add_widget(self.timer_label)
+        self.timer_bar.add_widget(self._stop)
+        self.add_widget(self.timer_bar)
 
         for indice, esercizio in enumerate(self._session.esercizi):
             self.cards.add_widget(self._card(indice, esercizio))
 
         self._tick_job = Clock.schedule_interval(self._tick, 0.4)
+        self._attached_once = False
+        self.bind(parent=self._on_parent_changed)
 
     def apply_text_profile(self):
         """Rebuild only presentation; the session/timer controller is retained."""
         self._profile = profile_for_window(Window)
         self._ui = workout_layout(self._profile)
+        target = dp(self._ui.minimum_target)
+        self.header.height = target
+        self._back.width = target
+        self._menu.width = target
+        self.timer_bar.height = target
+        self._stop.width = target * 2
         self.progress_label.font_size = sp(self._ui.header_font_size)
         self.timer_label.font_size = sp(self._ui.header_font_size * 1.3)
         self.cards.clear_widgets()
         self._checkboxes.clear()
         for indice, esercizio in enumerate(self._session.esercizi):
             self.cards.add_widget(self._card(indice, esercizio))
+
+    def _on_parent_changed(self, _screen, parent):
+        """Re-apply settings when this preserved screen returns to the stack."""
+        if parent is None:
+            return
+        if self._attached_once:
+            self.apply_text_profile()
+        else:
+            self._attached_once = True
+
+    # ------------------------------------------------------------- kebab
+
+    def _open_workout_menu(self, anchor):
+        """Contextual kebab: session reset and, when wired, the global menu."""
+        callbacks = {"Azzera": self._reset,
+                     "Impostazioni": lambda: self._invoke_parent_menu(anchor)}
+        azioni = workout_context_actions(include_parent=self._on_menu is not None)
+        return apri_menu(((label, callbacks[label]) for label in azioni), anchor=anchor)
+
+    def _invoke_parent_menu(self, anchor):
+        """Honor both the legacy zero-arg and the anchor-aware parent contract."""
+        if self._on_menu is None:
+            return None
+        try:
+            inspect.signature(self._on_menu).bind(anchor)
+        except (TypeError, ValueError):
+            return self._on_menu()
+        return self._on_menu(anchor)
 
     # ------------------------------------------------------------- cards
 
@@ -150,7 +195,8 @@ class WorkoutScreen(BoxLayout):
                 f"[color={muted}]Note:[/color] {escape_markup(note)}", card,
                 font_size=sp(self._ui.body_font_size),
                 size_hint_y=None))
-        azioni = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(6))
+        azioni = BoxLayout(size_hint_y=None, height=dp(self._ui.minimum_target),
+                           spacing=dp(6))
         avvia = Button(text=f"» Recupero {indice + 1}")
         avvia.bind(on_release=lambda *_: self._start_timer(indice))
         azioni.add_widget(avvia)
@@ -208,7 +254,9 @@ class WorkoutScreen(BoxLayout):
         for checkbox in self._checkboxes.values():
             checkbox.active = False
         self._notified = True
+        self.timer_label.text = "Recupero: —"
         self.progress_label.text = self._progress_text()
+        mostra_snackbar(self, "Allenamento azzerato.")
 
     def _start_timer(self, indice):
         self._session.avvia_recupero(indice)

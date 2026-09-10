@@ -11,6 +11,16 @@ from .config import FolderConfigStore
 from .controller import DriveHomeController, HomeUnavailableError
 
 
+def handle_close_request(current, editor_view, finish_close) -> bool:
+    """Coordinate Android/desktop close without depending on Kivy classes."""
+    if bool(getattr(current, "busy", False)):
+        return True
+    if editor_view is not None and editor_view.modifiche_non_salvate:
+        editor_view.richiedi_uscita(on_continue=finish_close)
+        return True
+    return False
+
+
 def build_controller(
     base_dir: str | Path | None = None, *, is_android: bool | None = None,
     android_bridge_factory=None, local_store=None, prefs_store=None,
@@ -91,13 +101,13 @@ def run() -> None:
     from .media_screen import MediaScreen
     from .workout import WorkoutSessionController
     from .workout_screen import WorkoutScreen
-    from .home_layout import etichetta_recupero, home_toolbar_rows, readonly_card
-    from .material import (TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP, ScalePreferenceStore,
-                           etichetta_testo, hex_to_rgba, imposta_scala,
-                           imposta_testo, markup_px, profile_for_window,
-                           scala_corrente, testo_corrente)
+    from .home_layout import HOME_MENU_LABELS, etichetta_recupero, home_toolbar_rows, readonly_card
+    from .material import (ScalePreferenceStore, hex_to_rgba, imposta_pulsanti,
+                           imposta_spessore_penna, imposta_testo, markup_px,
+                           profile_for_window)
     from .theme import applica_tema, aggiorna_testo_widget, configura_tema_md
     from .compact_menu import apri_menu
+    from .snackbar import mostra_snackbar
     from .launcher import apri_url, ultimo_errore, url_cartella_drive
     from .version import version_label
 
@@ -109,8 +119,10 @@ def run() -> None:
         local_store = AndroidLocalStore(kind=prefs_store.load().destinazione)
     controller = build_controller(base_dir, local_store=local_store, prefs_store=prefs_store)
     scala_store = ScalePreferenceStore(controller.base_dir / "ui-preferences.json")
-    imposta_scala(scala_store.load_scale())
+    scala_store.migrate_legacy()
+    imposta_pulsanti(scala_store.load_button_preset())
     imposta_testo(scala_store.load_text())
+    imposta_spessore_penna(scala_store.load_pen_width())
     if sys.platform == "android":
         from .platform_android import AndroidFrameExtractor, AndroidExportGuard, android_pdf_cache_dir
         media_backend = AndroidFrameExtractor()
@@ -151,8 +163,10 @@ def run() -> None:
             self._view_kind = "home"
             self._readonly_remote = None
             self._readonly_scheda = None
+            self._settings_return = None
             self._costruisce_home()
             Window.bind(on_request_close=self._on_request_close)
+            Window.bind(size=self._on_window_size)
             self.show_home()
             return self.stack
 
@@ -172,66 +186,68 @@ def run() -> None:
             applica_tema(profile)
             configura_tema_md(self.theme_cls, profile)
             tokens = profile.tokens
-            self.home = BoxLayout(orientation="vertical",
-                                  padding=dp(tokens.spacing["md"]),
-                                  spacing=dp(tokens.spacing["sm"]))
-            toolbar_rows = home_toolbar_rows(profile)
-            toolbar = BoxLayout(orientation="vertical" if len(toolbar_rows) > 1 else "horizontal",
-                                size_hint_y=None,
-                                height=dp(tokens.dimensions["toolbar_height"] *
-                                          len(toolbar_rows) +
-                                          tokens.spacing["xs"] * (len(toolbar_rows) - 1)),
-                                spacing=dp(tokens.spacing["xs"]))
+            self.home = BoxLayout(orientation="vertical", spacing=dp(tokens.spacing["sm"]))
+            self.home.add_widget(self._app_bar("Home"))
+            content = BoxLayout(orientation="vertical", padding=dp(tokens.spacing["md"]),
+                                spacing=dp(tokens.spacing["sm"]))
+            self.home.add_widget(content)
             refresh = Button(text="Aggiorna")
             refresh.bind(on_release=lambda *_: self.refresh())
             create = Button(text="Nuova scheda")
             create.background_color = hex_to_rgba(tokens.colors["coral"])
             create.color = hex_to_rgba(tokens.colors["on_coral"])
             create.bind(on_release=lambda *_: self.create_dialog())
-            csv_ai = Button(text="Scheda con AI")
-            csv_ai.bind(on_release=lambda *_: self.csv_ai())
-            folders = Button(text="Cartelle")
-            folders.bind(on_release=lambda *_: self.folder_dialog())
-            open_local = Button(text="Apri locale")
-            open_local.bind(on_release=lambda *_: self.apri_locale())
-            self._scala_btn = Button(text=f"Scala {scala_corrente()}")
-            self._scala_btn.bind(on_release=lambda *_: self.ciclo_scala())
-            self._testo_btn = Button(text=etichetta_testo())
-            self._testo_btn.bind(on_release=lambda *_: self.apri_testo())
-            azioni = {"refresh": refresh, "create": create, "csv_ai": csv_ai,
-                      "folders": folders, "open_local": open_local,
-                      "scale": self._scala_btn, "text": self._testo_btn}
-            for riga in toolbar_rows:
-                contenitore = BoxLayout(spacing=dp(tokens.spacing["xs"]))
-                for nome in riga:
-                    contenitore.add_widget(azioni[nome])
-                toolbar.add_widget(contenitore)
-            self.home.add_widget(toolbar)
+            azioni = {"refresh": refresh, "create": create}
             self.status = Label(text="Premi Aggiorna per caricare le schede.",
                                 size_hint_y=None, height=40, halign="left", valign="middle")
             self.status.bind(
                 width=lambda _, v: setattr(self.status, "text_size", (v, None)))
             self.status.bind(
                 texture_size=lambda l, ts: setattr(l, "height", max(ts[1], 40)))
-            self.home.add_widget(self.status)
+            content.add_widget(self.status)
             self.home_body = BoxLayout(orientation="vertical", spacing=8)
-            self.home.add_widget(self.home_body)
+            content.add_widget(self.home_body)
             footer = Label(text=version_label(), size_hint_y=None,
                            height=dp(max(tokens.typography["caption"] + 6, 22)),
                             font_size=sp(tokens.typography["caption"]),
                            color=hex_to_rgba(tokens.colors["muted"]), halign="right")
             footer.bind(width=lambda _, value: setattr(footer, "text_size", (value, None)))
-            self.home.add_widget(footer)
+            content.add_widget(footer)
+            toolbar = BoxLayout(size_hint_y=None, height=dp(profile.touch_target),
+                                spacing=dp(tokens.spacing["xs"]),
+                                padding=(dp(tokens.spacing["md"]), 0,
+                                         dp(tokens.spacing["md"]), 0))
+            for nome in home_toolbar_rows(profile)[0]:
+                toolbar.add_widget(azioni[nome])
+            self.home.add_widget(toolbar)
 
-        def ciclo_scala(self):
-            ordine = ["auto", "100", "115", "130"]
-            nuova = ordine[(ordine.index(scala_corrente()) + 1) % len(ordine)]
-            imposta_scala(nuova)
-            scala_store.save_scale(nuova)
-            self._dispose_current_view()
-            self._costruisce_home()
-            self.show_home()
-            self.status.text = f"Scala: {nuova}."
+        def _app_bar(self, title, *, on_back=None):
+            profile = _ui_profile()
+            bar = BoxLayout(size_hint_y=None, height=dp(profile.touch_target), spacing=dp(8),
+                            padding=(dp(8), 0, dp(8), 0))
+            if on_back is not None:
+                back = Button(text="‹", size_hint_x=None, width=dp(profile.touch_target))
+                back.bind(on_release=lambda *_: on_back())
+                bar.add_widget(back)
+            label = Label(text=title, halign="left", shorten=True)
+            label.bind(width=lambda widget, value: setattr(
+                widget, "text_size", (value, widget.height)))
+            bar.add_widget(label)
+            menu = Button(text="⋮", size_hint_x=None, width=dp(profile.touch_target))
+            menu.bind(on_release=lambda anchor: self.apri_menu(anchor=anchor))
+            bar.add_widget(menu)
+            return bar
+
+        def _info(self, text):
+            if hasattr(self, "status"):
+                self.status.text = text
+            # Window overlay keeps transient feedback out of navigation stacks.
+            mostra_snackbar(Window, text)
+
+        def _error(self, error, *, prefix=""):
+            text = f"{prefix}{error}"
+            Popup(title="Errore", content=Label(text=text),
+                  size_hint=(0.86, None), height=dp(190)).open()
 
         def show_home(self):
             self._editor_view = None
@@ -244,14 +260,13 @@ def run() -> None:
 
         def go_home_message(self, message):
             self.show_home()
-            self.refresh()
-            self.status.text = message
+            self._info(message)
 
         def edit(self, remote):
             try:
                 editor = controller.open_for_edit(remote)
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
             self.show_editor(remote, editor)
 
@@ -263,7 +278,7 @@ def run() -> None:
                 try:
                     editor = controller.open_for_edit_locale(percorso)
                 except Exception as exc:
-                    self.status.text = f"Impossibile aprire il file: {exc}"
+                    self._error(exc, prefix="Impossibile aprire il file: ")
                     return
                 self.show_editor(None, editor, on_back=self.go_home)
             choose_file(scelto, title="Apri scheda locale",
@@ -275,7 +290,7 @@ def run() -> None:
             try:
                 percorso = controller.salva_csv_esempio()
             except Exception as exc:
-                self.status.text = f"CSV di esempio non salvato: {exc}"
+                self._error(exc, prefix="CSV di esempio non salvato: ")
                 return
             appunti_ok = True
             try:
@@ -283,7 +298,7 @@ def run() -> None:
                 Clipboard.copy(PROMPT_TEMPLATE)
             except Exception:
                 appunti_ok = False
-            self.status.text = (
+            self._info(
                 f"CSV esempio in {percorso}; prompt per l'AI "
                 + ("copiato negli appunti." if appunti_ok else "NON copiabile qui.")
             )
@@ -311,30 +326,6 @@ def run() -> None:
             popup.open()
             return popup
 
-        def destinazione_locale(self):
-            """Choose the Android Documents/Download folder for local mirrors."""
-            if local_store is None:
-                self.status.text = "Su PC il salvataggio locale sceglie il percorso col dialogo."
-                return
-            content = BoxLayout(orientation="vertical", spacing=8)
-            popup = Popup(title="Salvataggio locale", content=content, size_hint=(0.8, 0.42))
-            etichette = {"documenti": "Documenti/pyTrainer", "download": "Download/pyTrainer"}
-            for kind, etichetta in etichette.items():
-                spunta = " ✓" if controller.destinazione_locale == kind else ""
-                bottone = Button(text=etichetta + spunta)
-                bottone.bind(on_release=lambda _, k=kind, p=popup: self._scegli_destinazione(k, p))
-                content.add_widget(bottone)
-            popup.open()
-
-        def _scegli_destinazione(self, kind, popup):
-            popup.dismiss()
-            try:
-                controller.imposta_destinazione_locale(kind)
-            except Exception as exc:
-                self.status.text = f"Destinazione non salvata: {exc}"
-                return
-            self.status.text = f"Salvataggio locale in: {local_store.percorso_descrizione}."
-
         def show_editor(self, remote, editor, *, on_back=None):
             self.stack.clear_widgets()
             self._view_kind = "editor"
@@ -346,20 +337,17 @@ def run() -> None:
                 open_media=lambda ed, i: self.open_media(riapri, ed, i),
                 on_export=lambda ed: self.open_export(riapri, ed),
                 on_conflict_exit=self.go_home_message,
-                on_menu=self.apri_menu,
+                on_menu=self.open_settings_from_screen,
             )
             self.stack.add_widget(self._editor_view)
 
         def _on_request_close(self, *_):
             current = self.stack.children[0] if self.stack.children else None
-            if self._view_kind == "export" and getattr(current, "busy", False):
-                return True
-            if self._editor_view is None:
-                return False
-            if self._editor_view.modifiche_non_salvate:
-                self._editor_view.richiedi_uscita()
-                return True
-            return False
+            return handle_close_request(current, self._editor_view, self._finish_close)
+
+        def _finish_close(self):
+            """Continuation used only after Save or Discard; Stay never calls it."""
+            self.stop()
 
         def _torna_in_lettura(self, remote):
             self._apri_in_lettura(remote)
@@ -372,11 +360,12 @@ def run() -> None:
                     background_guard=export_guard,
                 )
             except Exception as exc:
-                self.status.text = str(exc)
+                self._error(exc, prefix="Impossibile aprire Esporta: ")
                 return
             self.stack.clear_widgets()
             self._view_kind = "export"
-            self.stack.add_widget(ExportScreen(export, on_back=riapri, on_menu=self.apri_menu))
+            self.stack.add_widget(ExportScreen(
+                export, on_back=riapri, on_menu=self.open_settings_from_screen))
 
         def open_media(self, riapri, editor, indice):
             try:
@@ -388,33 +377,35 @@ def run() -> None:
                         operation, output_dir=output_dir),
                 )
             except Exception as exc:  # EditorValidationError e simili
-                self.status.text = str(exc)
+                self._error(exc, prefix="Impossibile aprire Video e frame: ")
                 return
             self.stack.clear_widgets()
             self._view_kind = "media"
-            self.stack.add_widget(MediaScreen(media, on_back=riapri, on_menu=self.apri_menu))
+            self.stack.add_widget(MediaScreen(
+                media, on_back=riapri, on_menu=self.open_settings_from_screen))
 
-        def apri_menu(self):
-            return apri_menu((
-                ("Aggiorna", self._lista_aggiornata),
-                ("Nuova scheda", lambda: self._azione_da_home(self.create_dialog)),
-                ("Scheda con AI", lambda: self._azione_da_home(self.csv_ai)),
-                ("Apri da locale", lambda: self._azione_da_home(self.apri_locale)),
-                ("Cartelle", lambda: self._azione_da_home(self.folder_dialog)),
-                ("Salvataggio locale", lambda: self._azione_da_home(self.destinazione_locale)),
-                ("Apri cartella Drive", lambda: self._azione_da_home(self.apri_cartella_drive)),
-                (f"Scala {scala_corrente()}", self.ciclo_scala),
-                (etichetta_testo(), self.apri_testo),
-            ))
+        def open_settings_from_screen(self, anchor=None):
+            """Child contextual menus already selected Settings: do not open a second menu."""
+            del anchor
+            return self.show_settings()
+
+        def apri_menu(self, anchor=None):
+            if self._view_kind == "home":
+                callbacks = (self.csv_ai, self.apri_locale,
+                             self.apri_cartella_drive, self.show_settings)
+                actions = tuple(zip(HOME_MENU_LABELS, callbacks))
+            else:
+                actions = (("Impostazioni", self.show_settings),)
+            return apri_menu(actions, anchor=anchor)
 
         def apri_cartella_drive(self):
             """Open the selected Drive folder and expose launcher failures in Home."""
             url = url_cartella_drive(controller.folder_config.current_folder_id)
             if apri_url(url):
-                self.status.text = "Cartella Drive aperta."
+                self._info("Cartella Drive aperta.")
             else:
                 dettaglio = ultimo_errore() or "il launcher non ha aperto l'URL"
-                self.status.text = f"Impossibile aprire la cartella Drive: {dettaglio}"
+                self._error(dettaglio, prefix="Impossibile aprire la cartella Drive: ")
 
         def _azione_da_home(self, action):
             if self._view_kind != "home":
@@ -427,49 +418,10 @@ def run() -> None:
             if current is not None and hasattr(current, "dispose"):
                 current.dispose()
 
-        def apri_testo(self):
-            profile = _ui_profile()
-            content = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
-            value = Label(text=etichetta_testo(), size_hint_y=None,
-                          height=dp(profile.touch_target))
-            controls = BoxLayout(size_hint_y=None, height=dp(profile.touch_target),
-                                 spacing=dp(8))
-            popup = Popup(title="Dimensione testo", content=content,
-                          size_hint=(0.82, None), height=dp(225))
-
-            def cambia(nuovo):
-                imposta_testo(nuovo)
-                scala_store.save_text(nuovo)
-                value.text = etichetta_testo()
-                self._applica_testo_corrente()
-
-            auto = Button(text="Auto")
-            meno = Button(text="−")
-            piu = Button(text="+")
-            auto.bind(on_release=lambda *_: cambia("auto"))
-            meno.bind(on_release=lambda *_: cambia(
-                max(TEXT_SIZE_MIN, self._testo_numerico() - TEXT_SIZE_STEP)))
-            piu.bind(on_release=lambda *_: cambia(
-                min(TEXT_SIZE_MAX, self._testo_numerico() + TEXT_SIZE_STEP)))
-            for widget in (meno, value, piu):
-                controls.add_widget(widget)
-            content.add_widget(auto)
-            content.add_widget(Label(text="Manuale", size_hint_y=None,
-                                     height=dp(profile.tokens.typography["caption"] + 8)))
-            content.add_widget(controls)
-            popup.open()
-            return popup
-
-        def _testo_numerico(self):
-            current = testo_corrente()
-            return int(round(_ui_profile().tokens.typography["body"])) if current == "auto" else current
-
         def _applica_testo_corrente(self):
             profile = _ui_profile()
             applica_tema(profile)
             configura_tema_md(self.theme_cls, profile)
-            if hasattr(self, "_testo_btn"):
-                self._testo_btn.text = etichetta_testo()
             if self._view_kind == "home":
                 status = self.status.text
                 self._costruisce_home()
@@ -483,14 +435,151 @@ def run() -> None:
                     current.apply_text_profile()
                 aggiorna_testo_widget(self.stack, profile)
 
+        def show_settings(self):
+            from .settings_screen import SettingsScreen
+
+            if self._view_kind == "settings":
+                return
+            previous = self.stack.children[0] if self.stack.children else self.home
+            self._settings_return = (self._view_kind, previous)
+            self._settings_style_changed = False
+            self._view_kind = "settings"
+            self.stack.clear_widgets()
+            self._settings_view = SettingsScreen(
+                controller, scala_store, on_back=self._return_from_settings,
+                on_text=self._set_text, on_buttons=self._set_buttons,
+                on_pen=self._set_pen, on_destination=self._set_destination,
+                on_folder_change=self._folder_configuration_changed,
+                local_destination_available=local_store is not None,
+            )
+            self.stack.add_widget(self._settings_view)
+            self._refresh_folder_names_async()
+
+        def _return_from_settings(self):
+            if not self._settings_return:
+                self.show_home()
+                return
+            kind, previous = self._settings_return
+            self._settings_return = None
+            self.stack.clear_widgets()
+            self.stack.add_widget(previous)
+            self._view_kind = kind
+            from .settings_layout import settings_return_action
+            action = settings_return_action(
+                kind, getattr(self, "_settings_style_changed", False))
+            if action != "retain":
+                self._apply_style_to_returned_view(kind, previous)
+
+        def _apply_style_to_returned_view(self, kind, previous):
+            """Apply persisted style without replacing stateful editor-like views."""
+            profile = _ui_profile()
+            applica_tema(profile)
+            configura_tema_md(self.theme_cls, profile)
+            if kind == "home":
+                status = self.status.text
+                scroll_y = self.home_body.children[0].scroll_y if self.home_body.children else 1
+                self._costruisce_home()
+                self.stack.clear_widgets()
+                self.stack.add_widget(self.home)
+                self._render_lista()
+                self.status.text = status
+                if self.home_body.children:
+                    self.home_body.children[0].scroll_y = scroll_y
+            elif kind == "readonly" and self._readonly_scheda is not None:
+                self._mostra_lettura(self._readonly_remote, self._readonly_scheda)
+            else:
+                if hasattr(previous, "apply_text_profile"):
+                    previous.apply_text_profile()
+                aggiorna_testo_widget(previous, profile)
+
+        def _refresh_folder_names_async(self):
+            """Render cached labels first, then enrich them off the Kivy thread."""
+            import threading
+            from kivy.clock import Clock
+
+            def worker():
+                controller.refresh_folder_names(attempts=3)
+                Clock.schedule_once(lambda *_: self._folder_names_refreshed(), 0)
+
+            threading.Thread(target=worker, name="drive-folder-names", daemon=True).start()
+
+        def _folder_names_refreshed(self):
+            if self._view_kind == "settings":
+                if getattr(self._settings_view, "slider_active", False):
+                    from kivy.clock import Clock
+                    Clock.schedule_once(lambda *_: self._folder_names_refreshed(), 0.2)
+                    return
+                self._rebuild_settings()
+
+        def _folder_configuration_changed(self):
+            self._rebuild_settings()
+            self._refresh_folder_names_async()
+
+        def _rebuild_settings(self):
+            scroll_y = getattr(getattr(self, "_settings_view", None), "scroll", None)
+            scroll_y = getattr(scroll_y, "scroll_y", 1)
+            from .settings_screen import SettingsScreen
+            self.stack.clear_widgets()
+            self._settings_view = SettingsScreen(
+                controller, scala_store, on_back=self._return_from_settings,
+                on_text=self._set_text, on_buttons=self._set_buttons,
+                on_pen=self._set_pen, on_destination=self._set_destination,
+                on_folder_change=self._folder_configuration_changed,
+                local_destination_available=local_store is not None,
+            )
+            self._settings_view.scroll.scroll_y = scroll_y
+            self.stack.add_widget(self._settings_view)
+
+        def _set_text(self, value):
+            scala_store.save_text(imposta_testo(value))
+            self._settings_style_changed = True
+            profile = _ui_profile()
+            applica_tema(profile)
+            configura_tema_md(self.theme_cls, profile)
+            # Do not replace the Slider while it owns an active touch.
+            aggiorna_testo_widget(self._settings_view, profile)
+
+        def _set_buttons(self, value):
+            scala_store.save_button_preset(imposta_pulsanti(value))
+            self._settings_style_changed = True
+            self._rebuild_settings()
+
+        def _set_pen(self, value):
+            scala_store.save_pen_width(imposta_spessore_penna(value))
+
+        def _set_destination(self, value):
+            controller.imposta_destinazione_locale(value)
+            self._rebuild_settings()
+
+        def _on_window_size(self, *_):
+            # Kivy dispatches continuously during desktop resize/orientation.
+            # Rebuild only layout-sensitive, read-only surfaces and retain scroll.
+            from kivy.clock import Clock
+            Clock.unschedule(self._reflow_current)
+            Clock.schedule_once(self._reflow_current, 0)
+
+        def _reflow_current(self, *_):
+            if self._view_kind == "home":
+                status = self.status.text
+                old_scroll = self.home_body.children[0].scroll_y if self.home_body.children else 1
+                self._costruisce_home()
+                self.show_home()
+                self.status.text = status
+                if self.home_body.children:
+                    self.home_body.children[0].scroll_y = old_scroll
+            elif self._view_kind == "readonly" and self._readonly_scheda is not None:
+                self._mostra_lettura(self._readonly_remote, self._readonly_scheda)
+            elif self._view_kind == "settings":
+                self._rebuild_settings()
+
         def refresh(self):
             try:
                 records = controller.refresh()
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
             self._ultime_schede = records
-            self.status.text = f"{len(records)} schede nella cartella corrente."
+            self._info(f"{len(records)} schede nella cartella corrente.")
             self._render_lista()
 
         def _render_lista(self):
@@ -507,35 +596,35 @@ def run() -> None:
                                  h=profile.touch_target + 16:
                                  setattr(b, "text_size", (max(v - dp(20), 10), dp(h))))
                 open_button.bind(on_release=lambda _, item=remote: self.open(item))
-                duplicate = Button(text="Duplica", size_hint_x=None,
-                                   width=dp(profile.touch_target * 2.2))
-                duplicate.bind(on_release=lambda _, item=remote: self.duplicate_dialog(item))
-                delete = Button(text="Elimina", size_hint_x=None,
-                                width=dp(profile.touch_target * 2.2))
-                delete.background_color = hex_to_rgba(profile.tokens.colors["error_container"])
-                delete.color = hex_to_rgba(profile.tokens.colors["on_error"])
-                delete.bind(on_release=lambda _, item=remote: self.confirm_delete(item))
+                context = Button(text="⋮", size_hint_x=None, width=dp(profile.touch_target))
+                context.bind(on_release=lambda anchor, item=remote:
+                             self._row_menu(item, anchor))
                 row.add_widget(open_button)
-                row.add_widget(duplicate)
-                row.add_widget(delete)
+                row.add_widget(context)
                 contenuto.add_widget(row)
+
+        def _row_menu(self, remote, anchor=None):
+            return apri_menu((
+                ("Duplica", lambda: self.duplicate_dialog(remote)),
+                ("Elimina", lambda: self.confirm_delete(remote)),
+            ), anchor=anchor)
 
         def open(self, remote):
             try:
                 conflitto = controller.check_conflict(remote)
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
             if conflitto is not None:
                 def esito(choice, risultato):
                     if isinstance(risultato, Exception):
-                        self.status.text = str(risultato)
+                        self._error(risultato)
                         return
-                    self.status.text = {
+                    self._info({
                         "locale": "Conflitto risolto con la versione locale.",
                         "remota": "Conflitto risolto con la versione remota.",
                         "duplicata": "Versione locale duplicata su Drive.",
-                    }[choice]
+                    }[choice])
                     self._apri_in_lettura(remote)
                 from .conflict_dialog import apri_dialogo_conflitto
                 apri_dialogo_conflitto(controller, conflitto, esito,
@@ -547,39 +636,33 @@ def run() -> None:
             try:
                 scheda = controller.open(remote)
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
-            self.status.text = f"{scheda.name}: sola lettura"
+            message = f"{scheda.name}: sola lettura"
             if getattr(controller, "avvertenza", None):
-                self.status.text += f" — {controller.avvertenza}"
+                message += f" — {controller.avvertenza}"
+            self._info(message)
             self._mostra_lettura(remote, scheda)
 
         def _mostra_lettura(self, remote, scheda):
+            previous_scroll = getattr(getattr(self, "_readonly_scroll", None), "scroll_y", 1)
             self._editor_view = None
             self._view_kind = "readonly"
             self._readonly_remote = remote
             self._readonly_scheda = scheda
             profile = _ui_profile()
-            root = BoxLayout(orientation="vertical", padding=dp(profile.tokens.spacing["md"]),
-                             spacing=dp(profile.tokens.spacing["sm"]))
-            bar = BoxLayout(size_hint_y=None,
-                            height=dp(profile.tokens.dimensions["toolbar_height"]),
-                            spacing=dp(profile.tokens.spacing["sm"]))
-            menu = Button(text="Menu", size_hint_x=None,
-                          width=dp(profile.touch_target * 1.7))
-            menu.bind(on_release=lambda *_: self.apri_menu())
-            back = Button(text="< Lista", size_hint_x=None,
-                          width=dp(profile.touch_target * 2.5))
-            back.bind(on_release=lambda *_: self._lista_aggiornata())
+            root = BoxLayout(orientation="vertical", spacing=dp(profile.tokens.spacing["sm"]))
+            title = Path(scheda.name).stem
+            root.add_widget(self._app_bar(title, on_back=self.show_home))
+            content = BoxLayout(orientation="vertical", padding=dp(profile.tokens.spacing["md"]),
+                                spacing=dp(profile.tokens.spacing["sm"]))
             edit = Button(text="Modifica")
             edit.bind(on_release=lambda *_: self.edit(remote))
             workout = Button(text="Allenati")
             workout.bind(on_release=lambda *_: self.open_workout(remote))
-            bar.add_widget(menu)
-            bar.add_widget(back)
-            bar.add_widget(edit)
-            bar.add_widget(workout)
             scroll, contenuto = _area_scrollabile(spacing=dp(profile.tokens.spacing["md"]))
+            self._readonly_scroll = scroll
+            scroll.scroll_y = previous_scroll
             gruppo_corrente = object()
             for exercise in scheda.exercises:
                 gruppo = (exercise.group or "").strip()
@@ -593,15 +676,19 @@ def run() -> None:
                             f"[b][color={accent}][size={sezione}]"
                             f"{escape_markup(gruppo.upper())}[/size][/color][/b]", contenuto))
                 contenuto.add_widget(self._card_lettura(exercise))
-            root.add_widget(bar)
-            root.add_widget(scroll)
+            content.add_widget(scroll)
+            root.add_widget(content)
+            bottom = BoxLayout(size_hint_y=None, height=dp(profile.touch_target), spacing=dp(8),
+                               padding=(dp(12), 0, dp(12), 0))
+            bottom.add_widget(edit)
+            bottom.add_widget(workout)
+            root.add_widget(bottom)
             self.stack.clear_widgets()
             self.stack.add_widget(root)
 
         def _lista_aggiornata(self):
             self._dispose_current_view()
             self.show_home()
-            self.refresh()
 
         def _card_lettura(self, exercise):
             profile = _ui_profile()
@@ -699,14 +786,14 @@ def run() -> None:
             try:
                 esercizi = controller.open_for_workout(remote)
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
             session = WorkoutSessionController(esercizi)
             self.stack.clear_widgets()
             self._view_kind = "workout"
             self.stack.add_widget(WorkoutScreen(session,
                                                 on_back=lambda: self._torna_in_lettura(remote),
-                                                on_menu=self.apri_menu))
+                                                on_menu=self.open_settings_from_screen))
 
         def _dialogo_nome(self, titolo, etichetta_conferma, nome_predefinito, on_conferma):
             """Name popup with Enter submission and explicit confirm/cancel buttons."""
@@ -742,10 +829,10 @@ def run() -> None:
 
         def create(self, name):
             try:
-                controller.create(name)
-                self.refresh()
+                creata = controller.create(name)
+                self._info(f"Scheda creata: {creata.name}. Premi Aggiorna per caricarla.")
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
 
         def duplicate_dialog(self, remote):
             return self._dialogo_nome(
@@ -756,10 +843,9 @@ def run() -> None:
             try:
                 creata = controller.duplicate(remote, new_name)
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
+                self._error(exc)
                 return
-            self.refresh()
-            self.status.text = f"Scheda duplicata come {creata.name}."
+            self._info(f"Scheda duplicata come {creata.name}. Premi Aggiorna per caricarla.")
             if getattr(controller, "avvertenza", None):
                 self.status.text += f" — {controller.avvertenza}"
 
@@ -778,41 +864,11 @@ def run() -> None:
             popup.dismiss()
             try:
                 controller.delete(remote)
-                self.refresh()
+                self._ultime_schede = [item for item in self._ultime_schede if item.id != remote.id]
+                self._render_lista()
+                self._info("Scheda eliminata.")
             except HomeUnavailableError as exc:
-                self.status.text = str(exc)
-
-        def folder_dialog(self):
-            content = BoxLayout(orientation="vertical", spacing=6)
-            for folder_id in controller.folder_config.folder_ids:
-                folder = Button(text=folder_id)
-                folder.bind(on_release=lambda _, value=folder_id: self.select_folder(value, popup))
-                content.add_widget(folder)
-            input_id = TextInput(hint_text="Nuovo ID cartella Drive", multiline=False)
-            content.add_widget(input_id)
-            if local_store is not None:
-                destinazione = Button(text=f"Salvataggio locale: {local_store.etichetta}")
-                destinazione.bind(on_release=lambda *_: (popup.dismiss(), self.destinazione_locale()))
-                content.add_widget(destinazione)
-            popup = Popup(title="Cartelle Drive", content=content, size_hint=(0.8, 0.55))
-            input_id.bind(on_text_validate=lambda *_: self.add_folder(input_id.text, popup))
-            popup.open()
-
-        def select_folder(self, folder_id, popup):
-            try:
-                controller.select_folder(folder_id)
-                popup.dismiss()
-                self.refresh()
-            except (HomeUnavailableError, ValueError) as exc:
-                self.status.text = str(exc)
-
-        def add_folder(self, folder_id, popup):
-            try:
-                controller.add_folder(folder_id)
-                popup.dismiss()
-                self.refresh()
-            except (HomeUnavailableError, ValueError) as exc:
-                self.status.text = str(exc)
+                self._error(exc)
 
     PyTrainerApp().run()
 

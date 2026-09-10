@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
+import threading
 import time
 
 from core.drive_sync import DriveSync, RemoteScheda
@@ -63,6 +64,7 @@ class DriveHomeController:
         self._local_store = local_store
         self._prefs_store = prefs_store
         self._retry_sleep = retry_sleep or time.sleep
+        self._config_lock = threading.RLock()
         self._config = config_store.load()
         self._sync = None
         self.avvertenza: str | None = None
@@ -115,6 +117,12 @@ class DriveHomeController:
             lambda: self._drive().download_file(remote.id, remote.name),
         )
 
+    def importa_csv_locale(self, editor, percorso: str, *, sostituisci: bool = False,
+                           posizione: int | None = None) -> int:
+        """Copy an Android ``content://`` CSV into cache before parsing it."""
+        finale = self._importa_locale(percorso)
+        return editor.importa_csv(finale, sostituisci=sostituisci, posizione=posizione)
+
     def salva_csv_esempio(self) -> str:
         """Write the AI example CSV where the user can find it, return its label.
 
@@ -137,24 +145,98 @@ class DriveHomeController:
         return str(dest_dir / NOME_CSV_ESEMPIO)
 
     def select_folder(self, folder_id: str) -> DriveFolderConfig:
-        if folder_id not in self._config.folder_ids:
-            raise AppConfigError("La cartella selezionata non e configurata localmente.")
-        self._config = DriveFolderConfig(self._config.folder_ids, folder_id)
-        self._config_store.save(self._config)
-        self._sync = None
-        return self._config
+        with self._config_lock:
+            if folder_id not in self._config.folder_ids:
+                raise AppConfigError("La cartella selezionata non e configurata localmente.")
+            self._config = DriveFolderConfig(
+                self._config.folder_ids, folder_id, self._config.folder_names)
+            self._config_store.save(self._config)
+            self._sync = None
+            return self._config
 
     def add_folder(self, folder_id: str) -> DriveFolderConfig:
         normalized = folder_id.strip()
         if not normalized:
             raise AppConfigError("L'ID della cartella Drive non puo essere vuoto.")
-        folder_ids = self._config.folder_ids
-        if normalized not in folder_ids:
-            folder_ids += (normalized,)
-        self._config = DriveFolderConfig(folder_ids, normalized)
-        self._config_store.save(self._config)
-        self._sync = None
-        return self._config
+        with self._config_lock:
+            folder_ids = self._config.folder_ids
+            if normalized not in folder_ids:
+                folder_ids += (normalized,)
+            names = dict(self._config.folder_names)
+            self._config = DriveFolderConfig(folder_ids, normalized, tuple(names.items()))
+            self._config_store.save(self._config)
+            self._sync = None
+            return self._config
+
+    def remove_folder(self, folder_id: str) -> DriveFolderConfig:
+        """Remove a local Drive shortcut, but never the last usable folder."""
+        with self._config_lock:
+            if folder_id not in self._config.folder_ids:
+                raise AppConfigError("La cartella da rimuovere non e configurata localmente.")
+            if len(self._config.folder_ids) == 1:
+                raise AppConfigError("Deve rimanere almeno una cartella Drive.")
+            folder_ids = tuple(value for value in self._config.folder_ids if value != folder_id)
+            current = (folder_ids[0] if self._config.current_folder_id == folder_id
+                       else self._config.current_folder_id)
+            names = tuple((key, value) for key, value in self._config.folder_names
+                          if key != folder_id)
+            self._config = DriveFolderConfig(folder_ids, current, names)
+            self._config_store.save(self._config)
+            self._sync = None
+            return self._config
+
+    def folder_labels(self, *, aggiorna: bool = False) -> tuple[tuple[str, str], ...]:
+        """Return cached folder names, optionally enriching them from Drive.
+
+        Name lookup is deliberately best-effort: Settings must remain usable
+        offline and therefore falls back to IDs without mapping an outage to a
+        blocking Home error.
+        """
+        if aggiorna:
+            return self.refresh_folder_names()
+        with self._config_lock:
+            names = dict(self._config.folder_names)
+            return tuple((fid, names.get(fid, fid)) for fid in self._config.folder_ids)
+
+    def refresh_folder_names(self, *, attempts: int = 3) -> tuple[tuple[str, str], ...]:
+        """Best-effort metadata refresh for a background worker.
+
+        Cached labels are never discarded. Transient/offline failures are
+        retried with the controller's injected sleeper and still return IDs.
+        """
+        with self._config_lock:
+            folder_ids = self._config.folder_ids
+            names = dict(self._config.folder_names)
+        changed = False
+        for folder_id in folder_ids:
+            name = self._folder_name_remote(folder_id, attempts=attempts)
+            if name and names.get(folder_id) != name:
+                names[folder_id] = name
+                changed = True
+        if changed:
+            with self._config_lock:
+                current_ids = self._config.folder_ids
+                merged = dict(self._config.folder_names)
+                merged.update(names)
+                self._config = DriveFolderConfig(
+                    current_ids, self._config.current_folder_id,
+                    tuple((fid, merged[fid]) for fid in current_ids if fid in merged),
+                )
+                self._config_store.save(self._config)
+        return self.folder_labels()
+
+    def _folder_name_remote(self, folder_id: str, *, attempts: int = 1) -> str | None:
+        for attempt in range(max(1, attempts)):
+            try:
+                credentials = self._credential_provider.get_credentials([DRIVE_SCOPE])
+                service = self._drive_service_factory(credentials)
+                payload = service.files().get(fileId=folder_id, fields="id,name").execute()
+                value = payload.get("name") if isinstance(payload, dict) else None
+                return value.strip() if isinstance(value, str) and value.strip() else None
+            except Exception:
+                if attempt + 1 < max(1, attempts):
+                    self._retry_sleep(0.25 * 2 ** attempt)
+        return None
 
     def open(self, remote: RemoteScheda) -> ReadonlyScheda:
         esercizi, _, local_path = self._download_editable(remote)

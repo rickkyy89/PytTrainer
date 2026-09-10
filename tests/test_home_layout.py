@@ -8,7 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from kivy_app.home_layout import etichetta_recupero, home_toolbar_rows, readonly_card
+from kivy_app.home_layout import (HOME_MENU_LABELS, abbrevia_id, etichetta_recupero,
+                                  home_toolbar_rows, readonly_card)
 from kivy_app.material import ViewportMetrics, adaptive_profile
 
 
@@ -35,10 +36,15 @@ def test_readonly_recovery_label_is_explicit_and_empty_values_stay_empty():
     assert etichetta_recupero("") == ""
 
 
-def test_home_toolbar_reflows_text_and_scale_without_hiding_actions():
+def test_home_bottom_bar_has_same_minimal_actions_at_every_width():
     compact = adaptive_profile(ViewportMetrics(400, 800, input_mode="touch"))
     expanded = adaptive_profile(ViewportMetrics(1200, 800))
-    assert home_toolbar_rows(compact) == (("refresh", "create", "csv_ai", "folders"),
-                                          ("open_local", "scale", "text"))
-    assert home_toolbar_rows(expanded) == (("refresh", "create", "csv_ai", "folders",
-                                            "open_local", "scale", "text"),)
+    assert home_toolbar_rows(compact) == (("refresh", "create"),)
+    assert home_toolbar_rows(expanded) == (("refresh", "create"),)
+    assert HOME_MENU_LABELS == (
+        "Scheda con AI", "Apri locale", "Apri cartella Drive", "Impostazioni")
+
+
+def test_drive_id_is_abbreviated_but_short_ids_remain_readable():
+    assert abbrevia_id("short-id") == "short-id"
+    assert abbrevia_id("1234567890abcdefghijkl") == "123456…ghijkl"

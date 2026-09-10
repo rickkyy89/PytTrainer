@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from .material import LayoutPlan, UiProfile
 
 
+HOME_MENU_LABELS = (
+    "Scheda con AI", "Apri locale", "Apri cartella Drive", "Impostazioni",
+)
+
+
 @dataclass(frozen=True)
 class ReadonlyCardModel:
     name: str
@@ -27,9 +32,16 @@ def home_plan(profile: UiProfile) -> LayoutPlan:
 
 
 def home_toolbar_rows(profile: UiProfile) -> tuple[tuple[str, ...], ...]:
-    """Keep seven Home actions reachable without horizontal overflow."""
-    actions = ("refresh", "create", "csv_ai", "folders", "open_local", "scale", "text")
-    return (actions[:4], actions[4:]) if profile.category == "compact" else (actions,)
+    """The fixed Home action bar is intentionally identical at every width."""
+    del profile
+    return (("refresh", "create"),)
+
+
+def abbrevia_id(folder_id: str, visible: int = 6) -> str:
+    """Readable but still distinguishable Drive ID for the settings list."""
+    if len(folder_id) <= visible * 2 + 1:
+        return folder_id
+    return f"{folder_id[:visible]}…{folder_id[-visible:]}"
 
 
 def readonly_card(exercise, profile: UiProfile) -> ReadonlyCardModel:

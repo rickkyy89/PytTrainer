@@ -18,6 +18,9 @@ Category = Literal["compact", "medium", "expanded"]
 InputMode = Literal["touch", "pointer"]
 ScaleChoice = Literal["auto", "100", "115", "130"]
 TextChoice = Literal["auto"] | int
+ButtonPreset = Literal["compact", "standard", "large"]
+VALID_BUTTON_PRESETS = frozenset(("compact", "standard", "large"))
+BUTTON_HEIGHTS = {"compact": 44.0, "standard": 52.0, "large": 60.0}
 VALID_SCALE_CHOICES = frozenset(("auto", "100", "115", "130"))
 TEXT_SIZE_MIN = 14
 TEXT_SIZE_MAX = 32
@@ -83,7 +86,9 @@ def adaptive_profile(metrics: ViewportMetrics, scale: ScaleChoice = "auto",
     width = metrics.width_dp
     category: Category = "compact" if width < 600 else "medium" if width < 960 else "expanded"
     multiplier = {"auto": 1.0, "100": 1.0, "115": 1.15, "130": 1.30}[scale]
-    target = 48.0 if metrics.input_mode == "touch" else 40.0
+    # Controls have one user-selected physical hierarchy on every platform;
+    # viewport width may reflow them but must not expose extra actions.
+    target = BUTTON_HEIGHTS[pulsanti_correnti()]
     base = _tokens(target, _body_text_size(metrics, category, text))
     tokens = UiTokens(
         colors=base.colors,
@@ -113,7 +118,9 @@ def input_mode_for_platform(platform: str | None = None) -> InputMode:
 
 
 _scala_corrente: ScaleChoice = "auto"
-_testo_corrente: TextChoice = "auto"
+_testo_corrente: TextChoice = 18
+_pulsanti_correnti: ButtonPreset = "standard"
+_spessore_penna: int = 6
 
 
 def scala_corrente() -> ScaleChoice:
@@ -153,6 +160,34 @@ def imposta_testo(valore: TextChoice) -> TextChoice:
     global _testo_corrente
     _testo_corrente = valida_testo(valore)
     return _testo_corrente
+
+
+def pulsanti_correnti() -> ButtonPreset:
+    return _pulsanti_correnti
+
+
+def imposta_pulsanti(valore: ButtonPreset) -> ButtonPreset:
+    global _pulsanti_correnti
+    if valore not in VALID_BUTTON_PRESETS:
+        raise ValueError(f"Dimensione pulsanti non valida: {valore!r}.")
+    _pulsanti_correnti = valore
+    return valore
+
+
+def spessore_penna_corrente() -> int:
+    return _spessore_penna
+
+
+def imposta_spessore_penna(valore: object) -> int:
+    global _spessore_penna
+    try:
+        numero = int(valore)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Spessore penna non valido.") from exc
+    if not 2 <= numero <= 20:
+        raise ValueError("Lo spessore penna deve essere tra 2 e 20.")
+    _spessore_penna = numero
+    return numero
 
 
 def etichetta_testo(valore: TextChoice | None = None) -> str:
@@ -260,10 +295,34 @@ class ScalePreferenceStore:
 
     def load_text(self) -> TextChoice:
         try:
-            choice = json.loads(self.path.read_text(encoding="utf-8")).get("text", "auto")
-            return valida_testo(choice)
+            choice = json.loads(self.path.read_text(encoding="utf-8")).get("text", 18)
+            # The removed adaptive value migrates once to the confirmed 18pt default.
+            return 18 if choice == "auto" else valida_testo(choice)
         except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError, ValueError):
-            return "auto"
+            return 18
+
+    def load_button_preset(self) -> ButtonPreset:
+        values = self._load_mapping()
+        choice = values.get("button_preset")
+        if choice in VALID_BUTTON_PRESETS:
+            return choice  # type: ignore[return-value]
+        # Migration contract for the old visible Scale preference.
+        return {"100": "compact", "auto": "standard", "115": "standard",
+                "130": "large"}.get(values.get("scale"), "standard")
+
+    def save_button_preset(self, choice: ButtonPreset) -> None:
+        if choice not in VALID_BUTTON_PRESETS:
+            raise ValueError(f"Dimensione pulsanti non valida: {choice!r}.")
+        self._save(button_preset=choice)
+
+    def load_pen_width(self) -> int:
+        try:
+            return imposta_spessore_penna(self._load_mapping().get("pen_width", 6))
+        except ValueError:
+            return 6
+
+    def save_pen_width(self, value: object) -> None:
+        self._save(pen_width=imposta_spessore_penna(value))
 
     def _load_mapping(self) -> dict[str, object]:
         try:
@@ -275,6 +334,22 @@ class ScalePreferenceStore:
     def _save(self, **updates: object) -> None:
         values = self._load_mapping()
         values.update(updates)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary.write_text(json.dumps(values), encoding="utf-8")
+        os.replace(temporary, self.path)
+
+    def migrate_legacy(self) -> None:
+        """Atomically replace removed Scale/auto-text values with new settings."""
+        values = self._load_mapping()
+        if values.get("button_preset") not in VALID_BUTTON_PRESETS:
+            values["button_preset"] = {
+                "100": "compact", "auto": "standard", "115": "standard",
+                "130": "large",
+            }.get(values.get("scale"), "standard")
+        if values.get("text", "auto") == "auto":
+            values["text"] = 18
+        values.pop("scale", None)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(values), encoding="utf-8")

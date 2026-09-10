@@ -225,6 +225,35 @@ def test_apri_edit_locale_da_file_reale(tmp_path):
     assert [e["nome"] for e in editor.esercizi] == ["Squat"]
 
 
+def test_import_csv_locale_android_copia_content_uri_prima_del_parse(tmp_path):
+    csv = tmp_path / "generato.csv"
+    csv.write_text(
+        "Nome,Spiegazione,Note,Ripetizioni,Recupero,Gruppo\n"
+        'Squat,"Scendi, poi risali.",Ginocchia allineate,3x12,90 SEC,Forza\n',
+        encoding="utf-8",
+    )
+
+    class ImportStore:
+        def __init__(self):
+            self.calls = []
+
+        def importa(self, percorso, dest_dir):
+            self.calls.append((percorso, Path(dest_dir)))
+            return str(csv)
+
+    local_store = ImportStore()
+    controller = _controller(tmp_path, local_store=local_store)
+    editor = SchedaEditorController([], percorso_bundle=str(tmp_path / "vuota.scheda"))
+
+    count = controller.importa_csv_locale(
+        editor, "content://com.android.providers.downloads/generato.csv")
+
+    assert count == 1
+    assert editor.esercizi[0]["nome"] == "Squat"
+    assert local_store.calls == [
+        ("content://com.android.providers.downloads/generato.csv", tmp_path / "cache")]
+
+
 def test_remoto_con_nome_trova_per_nome_anche_senza_estensione(tmp_path):
     controller = _controller(tmp_path)
     assert controller.remoto_con_nome("gambe").id == "one"

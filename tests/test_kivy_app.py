@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.drive_sync import RemoteScheda
 from kivy_app.config import AppConfigError, DEFAULT_FOLDER_ID, FolderConfigStore
 from kivy_app.controller import DriveHomeController, HomeUnavailableError
-from kivy_app.main import build_controller, duplicate_default_name
+from kivy_app.main import build_controller, duplicate_default_name, handle_close_request
 
 
 class FakeProvider:
@@ -125,6 +125,52 @@ def test_folder_configuration_defaults_then_persists_added_and_selected_folder(t
     assert added.folder_ids == (DEFAULT_FOLDER_ID, "second-folder")
     assert selected.current_folder_id == DEFAULT_FOLDER_ID
     assert FolderConfigStore(tmp_path / "folders.json").load() == selected
+
+
+def test_folder_names_are_cached_and_removal_never_removes_last(tmp_path):
+    controller, _ = make_controller(tmp_path)
+    controller.add_folder("second-folder")
+    # Fake service has no metadata API: labels safely fall back to IDs offline.
+    assert controller.folder_labels() == (
+        (DEFAULT_FOLDER_ID, DEFAULT_FOLDER_ID), ("second-folder", "second-folder"))
+
+    updated = controller.remove_folder("second-folder")
+    assert updated.current_folder_id == DEFAULT_FOLDER_ID
+    with pytest.raises(AppConfigError, match="almeno una"):
+        controller.remove_folder(DEFAULT_FOLDER_ID)
+
+
+def test_cached_folder_labels_are_immediate_offline_and_remote_refresh_retries(tmp_path):
+    sleeps = []
+
+    class OfflineProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def get_credentials(self, scopes):
+            self.calls += 1
+            raise OSError("offline")
+
+    provider = OfflineProvider()
+    controller, _ = make_controller(tmp_path, provider=provider)
+    assert controller.folder_labels() == ((DEFAULT_FOLDER_ID, DEFAULT_FOLDER_ID),)
+    assert provider.calls == 0  # cached Settings rendering performs no I/O
+    controller._retry_sleep = sleeps.append
+
+    assert controller.refresh_folder_names(attempts=3) == (
+        (DEFAULT_FOLDER_ID, DEFAULT_FOLDER_ID),)
+    assert provider.calls == 3
+    assert sleeps == [0.25, 0.5]
+
+
+def test_folder_store_roundtrips_cached_remote_names(tmp_path):
+    from kivy_app.config import DriveFolderConfig
+    store = FolderConfigStore(tmp_path / "folders.json")
+    configured = DriveFolderConfig(("one", "two"), "two", (("one", "Clienti"),))
+    store.save(configured)
+    assert store.load().name_for("one") == "Clienti"
+    assert store.load().name_for("two") is None
 
 
 def test_invalid_folder_configuration_and_unknown_selection_are_rejected(tmp_path):
@@ -264,6 +310,29 @@ def test_duplicate_keeps_unsynced_local_copy_and_skips_download(tmp_path):
 def test_duplicate_default_name_suggerisce_copia_senza_estensione():
     assert duplicate_default_name("gambe.scheda") == "gambe (copia)"
     assert duplicate_default_name("Gambe Day") == "Gambe Day (copia)"
+
+
+def test_physical_back_waits_for_editor_choice_then_save_or_discard_closes():
+    closed = []
+
+    class DirtyEditor:
+        modifiche_non_salvate = True
+        continuation = None
+
+        def richiedi_uscita(self, on_continue=None):
+            self.continuation = on_continue
+
+    editor = DirtyEditor()
+    assert handle_close_request(SimpleNamespace(busy=False), editor,
+                                lambda: closed.append("closed")) is True
+    assert closed == []  # Stay does not invoke the continuation.
+    editor.continuation()  # Save-success and Discard both invoke it.
+    assert closed == ["closed"]
+
+
+def test_physical_back_blocks_busy_screen_and_allows_clean_close():
+    assert handle_close_request(SimpleNamespace(busy=True), None, lambda: None) is True
+    assert handle_close_request(SimpleNamespace(busy=False), None, lambda: None) is False
 
 
 def test_list_csv_e_download_csv_delegano_a_drive(tmp_path):

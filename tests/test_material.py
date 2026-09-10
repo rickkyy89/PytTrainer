@@ -28,18 +28,18 @@ def test_profile_classifies_widths(width, category):
 def test_profile_scales_system_and_explicit_choice():
     profile = adaptive_profile(ViewportMetrics(800, 600, system_density=2), "130")
     assert profile.scale == pytest.approx(2.6)
-    assert profile.tokens.typography["body"] == 19
+    assert profile.tokens.typography["body"] == 18
     assert profile.tokens.spacing["md"] == pytest.approx(15.6)
 
 
-def test_targets_and_reflow_differ_by_input_mode():
+def test_targets_are_uniform_while_reflow_still_depends_on_width():
     touch = adaptive_profile(ViewportMetrics(400, 800, input_mode="touch"))
     pointer = adaptive_profile(ViewportMetrics(1200, 800, input_mode="pointer"))
-    assert touch.touch_target == 48
-    assert pointer.touch_target == 40
+    assert touch.touch_target == 52
+    assert pointer.touch_target == 52
     assert touch.layout("editor").columns == 1
     assert pointer.layout("editor").master_detail is True
-    assert primitive_specs(touch)["button"]["min_height"] == 48
+    assert primitive_specs(touch)["button"]["min_height"] == 52
 
 
 def test_control_specs_share_material_radius_and_focus_border_tokens():
@@ -55,7 +55,7 @@ def test_scale_store_defaults_validates_and_writes_atomically(tmp_path):
     assert store.load_scale() == "auto"
     store.save_scale("115")
     assert store.load_scale() == "115"
-    assert store.load_text() == "auto"  # old scale-only files remain valid
+    assert store.load_text() == 18  # removed auto text migrates to the confirmed default
     store.save_text(24)
     assert store.load_scale() == "115"
     assert store.load_text() == 24
@@ -137,7 +137,7 @@ def test_profile_for_window_defaults_input_mode_from_platform(monkeypatch):
     monkeypatch.setattr(material, "input_mode_for_platform", lambda platform=None: "touch")
     fake = SimpleNamespace(width=800, height=1200, density=1.0)
     profile = profile_for_window(fake, px_per_dp=1.0)
-    assert profile.touch_target == 48
+    assert profile.touch_target == 52
 
 
 def test_imposta_scala_alimenta_profile_for_window_senza_riavvio(tmp_path, monkeypatch):

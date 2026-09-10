@@ -16,6 +16,21 @@ class WorkoutLayout:
     fixed_timer_bar: bool
 
 
+# Ordered contextual kebab for the workout app bar.  "Azzera" moved out of
+# the header; "Stop" stays a direct control on the timer bar and the
+# per-exercise recovery/video buttons stay on their cards: they are not
+# overflow.  The parent (global) entry is appended last, exactly like the
+# parent app bar, only when the screen has an on_menu callback.
+WORKOUT_CONTEXT_ACTIONS = ("Azzera",)
+WORKOUT_PARENT_ACTION = "Impostazioni"
+
+
+def workout_context_actions(*, include_parent: bool = True) -> tuple[str, ...]:
+    """Same minimal kebab hierarchy on every platform and width."""
+    return WORKOUT_CONTEXT_ACTIONS + (
+        (WORKOUT_PARENT_ACTION,) if include_parent else ())
+
+
 def workout_layout(profile: UiProfile) -> WorkoutLayout:
     return WorkoutLayout(
         frame_axis="vertical" if profile.category == "compact" else "horizontal",
