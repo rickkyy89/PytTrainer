@@ -125,7 +125,7 @@ def import_result(path: Path, db_path: Path) -> None:
         replace_exercises_for_video(con, video_id, exercises)
         replace_video_tags(con, video_id, video_tags)
     RESULTS.mkdir(parents=True, exist_ok=True)
-    target = RESULTS / path.name
+    target = RESULTS / f"video_{video_id:04d}.json"
     if path.resolve() != target.resolve():
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Importati {len(exercises)} esercizi dal video #{video_id}")
