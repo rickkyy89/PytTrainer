@@ -45,6 +45,12 @@ class _FakeBridge:
         self.uris.append((uri, dest_dir))
         return str(Path(dest_dir) / "reimportato.scheda")
 
+    def copiaPath(self, activity, path, dest_dir):
+        # un path pubblico "esiste" nel MediaStore del fake, non sul disco
+        if Path(path).is_file() or "Download" in path:
+            return str(Path(dest_dir) / Path(path).name)
+        return "ERR: file non leggibile ne' nel MediaStore: " + path
+
 
 class _FakeActivity:
     mActivity = object()
@@ -83,6 +89,25 @@ def test_android_importa_copia_content_uri_e_lascia_passare_i_percorsi(tmp_path)
     assert store.importa(str(reale), tmp_path) == str(reale)
     with pytest.raises(LocalStoreError):
         store.importa(str(tmp_path / "inesistente.scheda"), tmp_path)
+
+
+def test_android_importa_path_bloccato_passa_da_copiaPath(tmp_path):
+    """Scoped-storage paths go through the native MediaStore copy fallback."""
+    store, _ = _store()
+    esito = store.importa("/storage/emulated/0/Download/generato.csv", tmp_path)
+    assert esito.endswith("generato.csv")
+
+
+def test_android_importa_senza_copiaPath_da_errore_chiare(tmp_path):
+    class SoloUri:
+        def copiaUri(self, activity, uri, dest_dir):
+            return str(dest_dir)
+
+    store = AndroidLocalStore.__new__(AndroidLocalStore)
+    store._bridge_cls = SoloUri()
+    store._activity = object()
+    with pytest.raises(LocalStoreError, match="non trovato"):
+        store.importa("/storage/emulated/0/Download/x.csv", tmp_path)
 
 
 def test_android_etichetta_e_percorso_descrizione():

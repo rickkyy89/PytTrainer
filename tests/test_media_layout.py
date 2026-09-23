@@ -3,8 +3,8 @@
 The confirmed hierarchy is pinned here: app bar kebab holds "URL manuale…"
 and the timestamp heuristic (plus the global entry when wired), the video
 surface keeps only Play/Cerca/Estrai frame direct, and each START/FINISH
-panel keeps Applica/Placeholder direct (no confirmation) with
-Disegna/Immagine…/Ripristina in the panel kebab.  Ordering functions are
+panel keeps only Placeholder direct (no confirmation) with
+Ritaglia/Disegna/Immagine…/Ripristina in the panel kebab. Ordering functions are
 pure and width-independent, so the same assertions hold on phones and PC.
 """
 
@@ -38,14 +38,12 @@ def test_media_stacks_frames_and_keeps_targets_on_compact():
     # from the platform, so the hierarchy is identical everywhere.
     assert layout.target_minimum == BUTTON_HEIGHTS[pulsanti_correnti()]
     assert layout.keyboard_inset_aware
-    assert layout.timestamp_fields_vertical
 
 
 def test_media_uses_horizontal_frames_on_wide_pointer_view():
     layout = media_layout(adaptive_profile(ViewportMetrics(1200, 800)))
     assert layout.frame_axis == "horizontal"
     assert layout.target_minimum == BUTTON_HEIGHTS[pulsanti_correnti()]
-    assert layout.timestamp_fields_vertical
 
 
 # ------------------------------------------------------- gerarchia d'azioni
@@ -62,9 +60,9 @@ def test_url_manuale_ed_euristica_vivono_nel_kebab_della_app_bar():
 
 
 def test_azioni_pannello_dirette_senza_conferma():
-    # dirette: solo Applica e Placeholder, nessun doppio passo di conferma
-    assert panel_direct_actions() == ("Applica", "Placeholder")
-    assert panel_context_actions() == ("Disegna", "Immagine…", "Ripristina")
+    # diretto: solo Placeholder; gli strumenti aprono il proprio flusso
+    assert panel_direct_actions() == ("Placeholder",)
+    assert panel_context_actions() == ("Ritaglia", "Disegna", "Immagine…", "Ripristina")
     # gli strumenti del kebab non sono mai anche azioni dirette (e viceversa)
     assert not set(panel_direct_actions()) & set(panel_context_actions())
 
@@ -76,8 +74,8 @@ def test_la_gerarchia_di_azioni_e_identica_su_ogni_profilo(metrics):
     assert video_direct_actions() == ("Play", "Cerca", "Estrai frame")
     assert media_context_actions() == ("URL manuale…", "Euristica 10%/50%",
                                        "Impostazioni")
-    assert panel_direct_actions() == ("Applica", "Placeholder")
-    assert panel_context_actions() == ("Disegna", "Immagine…", "Ripristina")
+    assert panel_direct_actions() == ("Placeholder",)
+    assert panel_context_actions() == ("Ritaglia", "Disegna", "Immagine…", "Ripristina")
 
 
 # ------------------------------------------- geometria della pagina senza
@@ -119,8 +117,7 @@ def test_barra_video_e_app_bar_non_trabocano_su_ogni_scenario(scenario):
 
 
 @pytest.mark.parametrize("metrics", METRICHE)
-def test_campi_timestamp_in_verticale_esclusi_dal_calcolo_orizzontale(metrics):
-    """Nessuna riga orizzontale di input a larghezza fissa: i campi ts sono
-    etichetta + campo pieno impilati, quindi non possono tracimare."""
+def test_campi_timestamp_affiancati_non_tracimano(metrics):
+    """Start e Finish sono valori brevi: due colonne anche su smartphone."""
     ui = media_layout(adaptive_profile(metrics))
-    assert ui.timestamp_fields_vertical
+    assert ui.vertical_page  # la pagina resta verticale e scrollabile

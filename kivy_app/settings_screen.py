@@ -12,6 +12,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
 
+from .icons import da_simbolo
 from .material import profile_for_window
 from .settings_layout import folder_rows
 
@@ -42,7 +43,7 @@ class SettingsScreen(BoxLayout):
 
     def _build_header(self):
         bar = BoxLayout(size_hint_y=None, height=dp(self._profile.touch_target), spacing=dp(8))
-        back = Button(text="‹", size_hint_x=None, width=dp(self._profile.touch_target))
+        back = da_simbolo(Button(text="‹", size_hint_x=None, width=dp(self._profile.touch_target)))
         back.bind(on_release=lambda *_: self._on_back())
         bar.add_widget(back)
         bar.add_widget(Label(text="Impostazioni", halign="left"))
@@ -98,7 +99,7 @@ class SettingsScreen(BoxLayout):
         current = self.preferences.load_button_preset()
         for value, label in (("compact", "Compatta · 44"),
                              ("standard", "Standard · 52"), ("large", "Grande · 60")):
-            button = Button(text=("✓ " if value == current else "") + label)
+            button = Button(text=("• " if value == current else "") + label)
             button.bind(on_release=lambda _, selected=value: self._guard(
                 lambda: on_buttons(selected)))
             row.add_widget(button)
@@ -120,7 +121,7 @@ class SettingsScreen(BoxLayout):
         current_destination = self.controller.destinazione_locale
         for value, label in (("documenti", "Documenti/pyTrainer"),
                              ("download", "Download/pyTrainer")):
-            button = Button(text=("✓ " if value == current_destination else "") + label)
+            button = Button(text=("• " if value == current_destination else "") + label)
             button.bind(on_release=lambda _, selected=value: self._guard(
                 lambda: on_destination(selected)))
             row.add_widget(button)
@@ -132,7 +133,7 @@ class SettingsScreen(BoxLayout):
         labels = self.controller.folder_labels()
         for model in folder_rows(labels, self.controller.folder_config.current_folder_id):
             row = BoxLayout(size_hint_y=None, height=dp(self._profile.touch_target), spacing=dp(6))
-            select = Button(text=("✓ " if model.selected else "") + model.label,
+            select = Button(text=("• " if model.selected else "") + model.label,
                             halign="left", shorten=True)
             select.bind(on_release=lambda _, fid=model.folder_id: self._guard(
                 lambda: self._folder_operation(lambda: self.controller.select_folder(fid))))
@@ -143,7 +144,8 @@ class SettingsScreen(BoxLayout):
             row.add_widget(remove)
             self.body.add_widget(row)
         add_row = BoxLayout(size_hint_y=None, height=dp(self._profile.touch_target), spacing=dp(6))
-        field = TextInput(hint_text="ID nuova cartella Drive", multiline=False)
+        field = TextInput(hint_text="ID nuova cartella Drive", multiline=False,
+                          size_hint_y=None, height=dp(self._profile.touch_target))
         add = Button(text="Aggiungi", size_hint_x=None, width=dp(110))
         action = lambda *_: self._guard(lambda: self._folder_operation(
             lambda: self.controller.add_folder(field.text)))

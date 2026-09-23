@@ -3,17 +3,17 @@
 Functional parity with the Streamlit "Video & Frame" tab: search results with
 title/duration and selection, manual URL override, timestamp fields with the
 10%/50% heuristic proposal, extraction through the platform backend, frame
-previews, per-side percentage crop with ``*_orig.jpg`` backup and restore,
+previews, rectangle crop with ``*_orig.jpg`` backup and restore,
 user image import, placeholder frames and a 5:4 free-hand drawing popup for
 START/FINISH.
 
 Layout (redesign confermato): app bar with back + title + kebab contestuale
 (il kebab schermo ospita "URL manuale…" e "Euristica 10%/50%", più la voce
 che invoca il menu globale ``on_menu``); azioni video dirette Play/Cerca/
-Estrai frame; campi timestamp impilati in verticale (niente overflow
-orizzontale sui telefoni, identica gerarchia di azioni su PC); nei pannelli
-START/FINISH restano diretti solo Applica e Placeholder (senza conferma),
-mentre Disegna/Immagine…/Ripristina vivono nel kebab del pannello. La
+Estrai frame; campi timestamp Start/Finish affiancati in due colonne (valori
+brevi, nessun overflow sui telefoni, identica gerarchia di azioni su PC); nei pannelli
+START/FINISH resta diretto solo Placeholder (senza conferma), mentre Ritaglia/
+Disegna/Immagine…/Ripristina vivono nel kebab del pannello. La
 gerarchia d'azione è definita in ``media_layout`` ed è uguale su ogni
 profilo. Il corpo della pagina viene ricostruito quando resize/rotazione
 cambiano il piano responsive.
@@ -28,7 +28,7 @@ import os
 import threading
 
 from kivy.clock import Clock
-from kivy.graphics import Color, Line, Rectangle
+from kivy.graphics import Color, Ellipse, Line, Rectangle
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -36,6 +36,7 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.image import AsyncImage, Image
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
+from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
@@ -43,11 +44,16 @@ from kivy.uix.widget import Widget
 from kivy.core.window import Window
 
 from .file_picker import choose_file
+from .crop_layout import (
+    CropInsets, Rect, crop_percentages_from_rect, displayed_image_rect,
+    drag_crop_rect, hit_test_crop, rect_from_crop_percentages,
+)
 from .fine_slider import FineSlider
 from .launcher import apri_url, ultimo_errore
 from .media import MediaFlowError
 from .material import profile_for_window
 from .compact_menu import apri_menu
+from .icons import da_simbolo
 from .snackbar import mostra_snackbar
 from .media_layout import (
     media_context_actions, media_layout, panel_context_actions,
@@ -185,6 +191,140 @@ class _TelaDisegno(Widget):
         return percorso
 
 
+class _TelaRitaglio(RelativeLayout):
+    """Immagine letterbox con rettangolo di ritaglio trascinabile."""
+
+    def __init__(self, source, image_size, **kwargs):
+        super().__init__(**kwargs)
+        self._image_size = tuple(image_size)
+        self._image_rect: Rect | None = None
+        self._selection: Rect | None = None
+        self._drag_target = None
+        self._drag_start_pos = None
+        self._drag_start_selection = None
+        self._touch = None
+        # RelativeLayout fornisce un unico spazio locale sia ai figli sia alle
+        # loro canvas. L'Image non esegue un secondo contain: occupa esattamente
+        # il rettangolo letterbox calcolato dalla geometria pura.
+        self.immagine = Image(source=source, fit_mode="fill", nocache=True,
+                              size_hint=(None, None))
+        self.add_widget(self.immagine)
+        self._sovrapposizione = Widget(size_hint=(None, None), pos=(0, 0))
+        with self._sovrapposizione.canvas:
+            Color(0, 0, 0, 0.58)
+            self._maschere = [Rectangle() for _ in range(4)]
+            Color(0.96, 0.98, 0.98, 1)
+            self._bordo_contorno = Line(rectangle=(0, 0, 0, 0), width=dp(5))
+            Color(0.23, 0.60, 0.55, 1)  # accent #3A998C
+            self._bordo = Line(rectangle=(0, 0, 0, 0), width=dp(3))
+            Color(0.96, 0.98, 0.98, 1)
+            self._maniglie_contorno = [Ellipse() for _ in range(4)]
+            Color(0.23, 0.60, 0.55, 1)
+            self._maniglie = [Ellipse() for _ in range(4)]
+        self.add_widget(self._sovrapposizione)
+        self.bind(pos=self._aggiorna_geometria, size=self._aggiorna_geometria)
+
+    def percentuali(self) -> CropInsets:
+        if self._image_rect is None or self._selection is None:
+            return CropInsets(0.0, 0.0, 0.0, 0.0)
+        return crop_percentages_from_rect(self._image_rect, self._selection)
+
+    def _aggiorna_geometria(self, *_):
+        if self.width <= 0 or self.height <= 0:
+            return
+        precedenti = None
+        if self._image_rect is not None and self._selection is not None:
+            precedenti = crop_percentages_from_rect(self._image_rect, self._selection)
+        nuovo = displayed_image_rect(
+            Rect(0, 0, self.width, self.height), self._image_size)
+        self._image_rect = nuovo
+        self._selection = (rect_from_crop_percentages(nuovo, precedenti)
+                           if precedenti is not None else nuovo)
+        self.immagine.pos = (nuovo.left, nuovo.bottom)
+        self.immagine.size = (nuovo.width, nuovo.height)
+        self._sovrapposizione.size = self.size
+        self._ridisegna_ritaglio()
+
+    def _ridisegna_ritaglio(self):
+        if self._image_rect is None or self._selection is None:
+            return
+        image = self._image_rect
+        scelta = self._selection
+        rettangoli = (
+            (image.left, image.bottom, scelta.left - image.left, image.height),
+            (scelta.right, image.bottom, image.right - scelta.right, image.height),
+            (scelta.left, image.bottom, scelta.width, scelta.bottom - image.bottom),
+            (scelta.left, scelta.top, scelta.width, image.top - scelta.top),
+        )
+        for maschera, (x, y, width, height) in zip(self._maschere, rettangoli):
+            maschera.pos = (x, y)
+            maschera.size = (max(0, width), max(0, height))
+        bordo = (scelta.left, scelta.bottom, scelta.width, scelta.height)
+        self._bordo_contorno.rectangle = bordo
+        self._bordo.rectangle = bordo
+        raggio = dp(11)
+        raggio_contorno = raggio + dp(2)
+        angoli = ((scelta.left, scelta.top), (scelta.right, scelta.top),
+                  (scelta.left, scelta.bottom), (scelta.right, scelta.bottom))
+        for contorno, maniglia, (x, y) in zip(
+                self._maniglie_contorno, self._maniglie, angoli):
+            contorno.pos = (x - raggio_contorno, y - raggio_contorno)
+            contorno.size = (2 * raggio_contorno, 2 * raggio_contorno)
+            maniglia.pos = (x - raggio, y - raggio)
+            maniglia.size = (2 * raggio, 2 * raggio)
+
+    def _posizione_touch(self, touch):
+        """Converte le coordinate finestra del touch nello spazio locale."""
+        # I Layout standard propagano il touch nello spazio finestra/parent;
+        # RelativeLayout rende invece locali canvas e figli. ``to_local`` e'
+        # quindi la trasformazione inversa esatta applicata dal layout.
+        return self.to_local(*touch.pos)
+
+    def on_touch_down(self, touch):
+        if self._touch is not None or self._selection is None or self._image_rect is None:
+            return False
+        if getattr(touch, "button", None) not in (None, "left"):
+            return False
+        posizione = self._posizione_touch(touch)
+        x, y = posizione
+        image = self._image_rect
+        if not (image.left <= x <= image.right and image.bottom <= y <= image.top):
+            return False  # il letterbox non appartiene all'area selezionabile
+        target = hit_test_crop(self._selection, posizione, handle_radius=dp(24))
+        if target is None:
+            return False
+        self._touch = touch
+        self._drag_target = target
+        self._drag_start_pos = posizione
+        self._drag_start_selection = self._selection
+        touch.grab(self)
+        return True
+
+    def on_touch_move(self, touch):
+        if touch is not self._touch or touch.grab_current is not self:
+            return False
+        x, y = self._posizione_touch(touch)
+        self._selection = drag_crop_rect(
+            self._drag_start_selection, self._drag_target,
+            x - self._drag_start_pos[0], y - self._drag_start_pos[1],
+            self._image_rect,
+            min_size=(min(dp(44), self._image_rect.width),
+                      min(dp(44), self._image_rect.height)),
+        )
+        self._ridisegna_ritaglio()
+        return True
+
+    def on_touch_up(self, touch):
+        if touch is not self._touch or touch.grab_current is not self:
+            return False
+        touch.ungrab(self)
+        self._touch = None
+        self._drag_target = None
+        self._drag_start_pos = None
+        self._drag_start_selection = None
+        return True
+
+
 class MediaScreen(BoxLayout):
     def __init__(self, media, on_back, on_menu=None):
         super().__init__(orientation="vertical", padding=dp(10), spacing=dp(6))
@@ -203,8 +343,6 @@ class MediaScreen(BoxLayout):
         self._scrub_in_corso: dict[str, float] = {}
         self._scrub_in_volo: set[str] = set()
         self._scrub_slider: dict[str, Slider] = {}
-        self._preview_jobs: dict[str, object] = {}
-        self._crop_sliders: dict[str, dict[str, Slider]] = {}
         self._mutating_controls: list[Widget] = []
         self._result_controls: list[Widget] = []
         self._syncing = False
@@ -217,7 +355,7 @@ class MediaScreen(BoxLayout):
         tokens = self._profile.tokens
         bar = BoxLayout(size_hint_y=None, height=dp(self._ui.header_height),
                         spacing=dp(8))
-        self._back = Button(text="‹", size_hint_x=None, width=dp(self._ui.back_width))
+        self._back = da_simbolo(Button(text="‹", size_hint_x=None, width=dp(self._ui.back_width)))
         self._back.bind(on_release=lambda *_: self._exit())
         self.titolo = Label(text="Video & Frame",
                             font_size=sp(tokens.typography["section"]),
@@ -225,7 +363,7 @@ class MediaScreen(BoxLayout):
                             shorten=True, shorten_from="right")
         self.titolo.bind(
             width=lambda _, v: setattr(self.titolo, "text_size", (v, self.titolo.height)))
-        self._menu = Button(text="⋮", size_hint_x=None, width=dp(self._ui.kebab_width))
+        self._menu = da_simbolo(Button(text="⋮", size_hint_x=None, width=dp(self._ui.kebab_width)))
         self._menu.bind(on_release=lambda anchor: self._open_media_menu(anchor))
         bar.add_widget(self._back)
         bar.add_widget(self.titolo)
@@ -286,10 +424,11 @@ class MediaScreen(BoxLayout):
             anchor=anchor)
 
     def _open_panel_menu(self, suffisso, anchor):
-        """Kebab del pannello START/FINISH: Disegna, Immagine…, Ripristina."""
+        """Kebab pannello: Ritaglia, Disegna, Immagine…, Ripristina."""
         if self._occupato():
             return None
         callbacks = {
+            "Ritaglia": lambda: self._apri_ritaglio(suffisso),
             "Disegna": lambda: self._apri_disegno(suffisso),
             "Immagine…": lambda: self._import_image(suffisso),
             "Ripristina": lambda: self._restore(suffisso),
@@ -371,22 +510,14 @@ class MediaScreen(BoxLayout):
         self._layout_key = chiave
         self._reflowing = True
         self._invalida_scrub()
-        for job in self._preview_jobs.values():
-            if job is not None:
-                Clock.unschedule(job)
-        self._preview_jobs.clear()
         self._profile = profile_for_window(Window)
         self._ui = media_layout(self._profile)
         self.column.clear_widgets()
         self._mutating_controls = []
         self._result_controls = []
-        self._crop_sliders = {}
         self._build_video_section()
         self._build_frame_section()
         self._sync_video_widgets()
-        for suffisso, valori in state["crop"].items():
-            for lato, valore in valori.items():
-                self._crop_sliders[suffisso][lato].value = valore
         if not committed:
             self.ts_start.text = state["timestamp"]["start"]
             self.ts_finish.text = state["timestamp"]["finish"]
@@ -400,10 +531,6 @@ class MediaScreen(BoxLayout):
         return {
             "timestamp": {"start": self.ts_start.text, "finish": self.ts_finish.text},
             "focused": "start" if self.ts_start.focus else "finish" if self.ts_finish.focus else None,
-            "crop": {
-                suffisso: {lato: float(slider.value) for lato, slider in sliders.items()}
-                for suffisso, sliders in self._crop_sliders.items()
-            },
         }
 
     def _do_durata(self):
@@ -438,13 +565,13 @@ class MediaScreen(BoxLayout):
                 self._register_mutating_control(pulsante)
         self.column.add_widget(video_line)
 
-        # campi timestamp in verticale: etichetta sopra campo a piena
-        # larghezza, nessuna riga orizzontale che tracimi sullo smartphone
+        # Start e Finish sono valori brevi: due colonne affiancate anche su
+        # smartphone, cosi' occupano meta' altezza senza tracimare.
         campo_h = dp(self._ui.target_minimum)
         etichetta_h = dp(max(22, self._profile.tokens.typography["label"] + 4))
-        ts_box = BoxLayout(orientation="vertical", size_hint_y=None,
-                           height=etichetta_h * 2 + campo_h * 2 + dp(12) + dp(12),
-                           spacing=dp(4), padding=[dp(6), dp(8)])
+        ts_box = BoxLayout(orientation="horizontal", size_hint_y=None,
+                           height=etichetta_h + campo_h + dp(4) + dp(16),
+                           spacing=dp(8), padding=[dp(6), dp(8)])
         self._tinta_riquadro(ts_box)
         self.ts_start = TextInput(text=self._ts_text(self._media.ts_start),
                                   multiline=False, size_hint_y=None, height=campo_h)
@@ -455,12 +582,14 @@ class MediaScreen(BoxLayout):
         self._register_mutating_control(self.ts_start)
         self._register_mutating_control(self.ts_finish)
         for testo, campo in (("Start s", self.ts_start), ("Finish s", self.ts_finish)):
+            cella = BoxLayout(orientation="vertical", spacing=dp(2))
             etichetta = Label(text=testo, size_hint_y=None, height=etichetta_h,
                               halign="left", valign="bottom")
             etichetta.bind(
                 width=lambda _, v, l=etichetta: setattr(l, "text_size", (v, l.height)))
-            ts_box.add_widget(etichetta)
-            ts_box.add_widget(campo)
+            cella.add_widget(etichetta)
+            cella.add_widget(campo)
+            ts_box.add_widget(cella)
         self.column.add_widget(ts_box)
 
         self.results = BoxLayout(orientation="vertical", spacing=4, size_hint_y=None)
@@ -556,11 +685,13 @@ class MediaScreen(BoxLayout):
         if self._occupato():
             return None
         input_url = TextInput(hint_text="https://www.youtube.com/watch?v=...",
-                              multiline=False)
+                              multiline=False, size_hint_y=None,
+                              height=dp(self._ui.target_minimum))
         buttons = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum),
                             spacing=dp(8))
         content = BoxLayout(orientation="vertical", spacing=dp(6))
-        popup = Popup(title="URL video manuale", content=content, size_hint=(0.9, 0.35))
+        popup = Popup(title="URL video manuale", content=content, size_hint=(0.9, None),
+                      height=2 * dp(self._ui.target_minimum) + dp(110))
         ok = Button(text="Imposta")
         cancel = Button(text="Annulla")
         content.add_widget(input_url)
@@ -594,59 +725,38 @@ class MediaScreen(BoxLayout):
 
     def _build_frame_section(self):
         anteprima_min = self._profile.tokens.dimensions["frame_min_height"]
-        scrub_h = 72
-        lato_h = max(90, self._ui.target_minimum * 2)
-        # UNA sola riga di azioni dirette (Applica, Placeholder + kebab):
-        # Disegna/Immagine…/Ripristina non ingombrano più il pannello,
-        # vivono nel kebab contestuale ancorato al pulsante ⋮
-        azioni_h = self._ui.target_minimum + 4
-        # altezza di UN pannello START/FINISH completo (preview + scrub + crop
-        # + azioni, con un po' di margine per gli spacing interni del pannello)
-        pannello_h = anteprima_min + scrub_h + lato_h + azioni_h + 24
-        # in compact i due pannelli si impilano (asse verticale): la riga deve
-        # contenerne DUE piu' lo spacing, non dividere l'altezza di uno
-        altezza_riga = pannello_h * 2 + 8 if self._ui.frame_axis == "vertical" else pannello_h
+        # L'altezza nasce dal contenuto reale (minimum_height): evita tagli
+        # della preview e della barra azioni sui diversi profili.
         self.frames_row = BoxLayout(
-            orientation=self._ui.frame_axis, size_hint_y=None,
-            height=dp(altezza_riga), spacing=dp(8))
+            orientation=self._ui.frame_axis, size_hint_y=None, spacing=dp(8))
+        self.frames_row.bind(minimum_height=self.frames_row.setter("height"))
         # i dizionari di stato dei worker nascono in __init__ e sopravvivono
-        # ai reflow: qui si registrano solo i nuovi slider del corpo
+        # ai reflow: qui si registrano solo i nuovi scrub del corpo
         self._scrub_slider = {}
         for suffisso in ("start", "finish"):
-            panel = BoxLayout(orientation="vertical", spacing=dp(2))
+            panel = BoxLayout(orientation="vertical", spacing=dp(2), size_hint_y=None)
+            panel.bind(minimum_height=panel.setter("height"))
             preview = Image(source=self._media.frame(suffisso) or "",
-                            fit_mode="contain", size_hint_y=1, nocache=True)
+                            fit_mode="contain", size_hint_y=None,
+                            height=dp(anteprima_min), nocache=True)
             panel.add_widget(preview)
             setattr(self, f"preview_{suffisso}", preview)
             panel.add_widget(self._build_scrub(suffisso))
-            sliders = {}
-            lato_line = BoxLayout(size_hint_y=None, height=dp(max(90, self._ui.target_minimum * 2)), spacing=dp(2))
-            for lato in ("sinistra", "alto", "destra", "basso"):
-                box = BoxLayout(orientation="vertical")
-                box.add_widget(Label(text=lato, size_hint_y=None, height=dp(24)))
-                slider = Slider(min=0, max=45, value=0, orientation="vertical")
-                self._blocca_scroll(slider)
-                self._register_mutating_control(slider)
-                box.add_widget(slider)
-                sliders[lato] = slider
-                lato_line.add_widget(box)
-            for slider in sliders.values():
-                slider.bind(on_value=self._preview_handler(suffisso, sliders))
-            self._crop_sliders[suffisso] = sliders
-            panel.add_widget(lato_line)
             azioni_pannello = {
-                "Applica": lambda sl=sliders, s=suffisso: self._apply_crop(s, sl),
                 "Placeholder": lambda s=suffisso: self._placeholder(s),
             }
             azioni_riga = BoxLayout(size_hint_y=None,
                                     height=dp(self._ui.target_minimum), spacing=dp(4))
             for etichetta in panel_direct_actions():
                 pulsante = Button(text=etichetta)
-                pulsante.bind(on_release=lambda _, az=etichetta: azioni_pannello[az]())
+                # `ap` DEVE essere un default: senza, il closure leggerebbe
+                # `azioni_pannello` alla pressione, trovando il dizionario
+                # dell'ultimo pannello costruito (placeholder start -> finish).
+                pulsante.bind(on_release=lambda _, az=etichetta, ap=azioni_pannello: ap[az]())
                 azioni_riga.add_widget(pulsante)
                 self._register_mutating_control(pulsante)
-            kebab = Button(text="⋮", size_hint_x=None,
-                           width=dp(self._ui.target_minimum))
+            kebab = da_simbolo(Button(text="⋮", size_hint_x=None,
+                                      width=dp(self._ui.target_minimum)))
             kebab.bind(on_release=lambda anchor, s=suffisso:
                        self._open_panel_menu(s, anchor))
             self._register_mutating_control(kebab)
@@ -810,48 +920,6 @@ class MediaScreen(BoxLayout):
         finally:
             self._syncing = False
 
-    def _preview_handler(self, suffisso, sliders):
-        def on_value(*_):
-            if self._reflowing or self._busy:
-                return
-            job = self._preview_jobs.get(suffisso)
-            if job is not None:
-                Clock.unschedule(job)
-            self._preview_jobs[suffisso] = Clock.schedule_once(
-                lambda *_: self._render_preview(suffisso, sliders), 0.2)
-        return on_value
-
-    def _render_preview(self, suffisso, sliders):
-        self._preview_jobs[suffisso] = None
-        preview = getattr(self, f"preview_{suffisso}")
-        try:
-            anteprima = self._media.anteprima_crop(
-                suffisso, sliders["sinistra"].value, sliders["alto"].value,
-                sliders["destra"].value, sliders["basso"].value)
-        except (MediaFlowError, ValueError, OSError) as exc:
-            self._mostra_errore(exc)
-            return
-        preview.source = anteprima
-        preview.reload()
-
-    def _apply_crop(self, suffisso, sliders):
-        if self._occupato():
-            return
-        try:
-            self._media.ritaglia(suffisso, sliders["sinistra"].value,
-                                 sliders["alto"].value, sliders["destra"].value,
-                                 sliders["basso"].value)
-        except MediaFlowError as exc:
-            self._mostra_errore(exc)
-            return
-        except ValueError as exc:  # vincoli percentuali di box_ritaglio
-            self._mostra_errore(exc)
-            return
-        for slider in sliders.values():
-            slider.value = 0
-        self._refresh_frames()
-        self._mostra_info("Ritaglio applicato.")
-
     def _restore(self, suffisso):
         if self._occupato():
             return
@@ -901,6 +969,68 @@ class MediaScreen(BoxLayout):
         self._refresh_frames()
         self._refresh_status()
         self._mostra_info(f"Placeholder {suffisso.upper()} impostato.")
+
+    def _apri_ritaglio(self, suffisso):
+        """Apre il selettore rettangolare sul frame START/FINISH corrente."""
+        if self._occupato():
+            return None
+        percorso = self._media.frame(suffisso)
+        if not percorso or not os.path.exists(percorso):
+            self._mostra_errore("Frame non ancora estratto: niente da ritagliare.")
+            return None
+        try:
+            from PIL import Image as ApriImmagine  # locale: ``Image`` e' Kivy
+            with ApriImmagine.open(percorso) as immagine:
+                dimensioni = immagine.size
+                immagine.load()
+        except (ValueError, OSError) as exc:
+            self._mostra_errore(exc)
+            return None
+
+        tela = _TelaRitaglio(percorso, dimensioni)
+        content = BoxLayout(orientation="vertical", spacing=dp(6), padding=dp(6))
+        istruzione = Label(text="Trascina gli angoli o il riquadro.",
+                           size_hint_y=None, height=dp(28))
+        comandi = BoxLayout(size_hint_y=None, height=dp(self._ui.target_minimum),
+                            spacing=dp(6))
+        annulla = Button(text="Annulla")
+        applica = Button(text="Applica")
+        popup = Popup(title=f"Ritaglia frame {suffisso.upper()}", content=content,
+                      size_hint=(0.92, 0.88))
+
+        def rimuovi_controllo(*_):
+            if applica in self._mutating_controls:
+                self._mutating_controls.remove(applica)
+
+        def applica_ritaglio(*_):
+            if self._occupato():
+                return
+            try:
+                crop = tela.percentuali()
+                valori = (crop.sinistra, crop.alto, crop.destra, crop.basso)
+                if all(abs(valore) <= 1e-7 for valore in valori):
+                    popup.dismiss()
+                    return
+                self._media.ritaglia(suffisso, crop.sinistra, crop.alto,
+                                     crop.destra, crop.basso)
+            except (MediaFlowError, ValueError, OSError) as exc:
+                self._mostra_errore(exc)
+                return  # il popup resta aperto per correggere e riprovare
+            popup.dismiss()
+            self._refresh_frames()
+            self._mostra_info("Ritaglio applicato.")
+
+        annulla.bind(on_release=lambda *_: popup.dismiss())
+        applica.bind(on_release=applica_ritaglio)
+        popup.bind(on_dismiss=rimuovi_controllo)
+        self._register_mutating_control(applica)
+        content.add_widget(istruzione)
+        content.add_widget(tela)
+        comandi.add_widget(annulla)
+        comandi.add_widget(applica)
+        content.add_widget(comandi)
+        popup.open()
+        return popup
 
     def _apri_disegno(self, suffisso):
         """Popup con foglio bianco 5:4 per disegnare il frame a mano."""

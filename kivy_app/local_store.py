@@ -62,9 +62,15 @@ class AndroidLocalStore:
         path = str(percorso)
         if path.startswith("content://"):
             return self._esito(self._bridge_cls.copiaUri(self._activity, path, str(dest_dir)))
-        if not Path(path).is_file():
+        if Path(path).is_file():
+            return path
+        # Scoped storage hides public files behind paths the app cannot open
+        # directly: let the bridge copy them via MediaStore instead.
+        try:
+            copia_path = self._bridge_cls.copiaPath
+        except AttributeError:
             raise LocalStoreError(f"File non trovato: {path}")
-        return path
+        return self._esito(copia_path(self._activity, path, str(dest_dir)))
 
     @staticmethod
     def _esito(esito) -> str:

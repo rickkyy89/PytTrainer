@@ -132,12 +132,28 @@ def mostra_snackbar(parent, testo, durata=3.0):
 
     profile = profile_for_window(Window)
     bordo = dp(SNACK_BORDO_DP)
-    larghezza = larghezza_snackbar(Window.width, massimo=dp(SNACK_LARGHEZZA_MAX_DP),
-                                   bordo=bordo)
-    altezza = dp(SNACK_ALTEZZA_DP)
+    pad = dp(16)
+    larghezza_max = larghezza_snackbar(Window.width, massimo=dp(SNACK_LARGHEZZA_MAX_DP),
+                                       bordo=bordo)
+    altezza_min = dp(SNACK_ALTEZZA_DP)
+
+    # Testo e sfondo vivono nello STESSO widget: cosi' il rettangolo non puo'
+    # mai finire disallineato rispetto alla scritta (bug visto sul tablet).
+    etichetta = Label(text=str(testo), halign="center", valign="middle",
+                      color=hex_to_rgba(profile.tokens.colors["text"]),
+                      font_size=sp(profile.tokens.typography["label"]),
+                      padding=(pad, dp(2)), size_hint=(None, None))
+    etichetta.text_size = (larghezza_max - 2 * pad, None)
+    etichetta.texture_update()
+    larghezza = min(larghezza_max, etichetta.texture_size[0] + 2 * pad)
+    altezza = max(altezza_min, etichetta.texture_size[1] + dp(8))
+    etichetta.size = (larghezza, altezza)
+    etichetta.text_size = etichetta.size
+
     zona = rect_da(parent) if parent is not None else Rect(0, 0, Window.width, Window.height)
     x, y = posizione_snackbar(zona, larghezza, altezza, Window.width, Window.height,
                               altezza_barra_inferiore(parent), bordo=bordo)
+    etichetta.pos = (x, y)
 
     stato = {"chiuso": False}
 
@@ -152,21 +168,16 @@ def mostra_snackbar(parent, testo, durata=3.0):
         if _snack_corrente is not None and _snack_corrente.overlay is overlay:
             _snack_corrente = None
 
-    pannello = FloatLayout(size_hint=(None, None), size=(larghezza, altezza), pos=(x, y))
-    with pannello.canvas.before:
+    with etichetta.canvas.before:
         Color(*hex_to_rgba(profile.tokens.colors["surface_container"], 0.97))
-        fondo = Rectangle(pos=pannello.pos, size=pannello.size)
-    pannello.bind(pos=lambda *_: setattr(fondo, "pos", pannello.pos),
-                  size=lambda *_: setattr(fondo, "size", pannello.size))
-    pannello.add_widget(Label(text=str(testo), markup=False, halign="center",
-                              valign="middle", text_size=(larghezza - dp(24), altezza),
-                              color=hex_to_rgba(profile.tokens.colors["text"]),
-                              font_size=sp(profile.tokens.typography["label"])))
+        fondo = Rectangle(pos=etichetta.pos, size=etichetta.size)
+    etichetta.bind(pos=lambda *_: setattr(fondo, "pos", etichetta.pos),
+                   size=lambda *_: setattr(fondo, "size", etichetta.size))
 
     # Pass-through overlay: the snack informs without ever eating touches.
     overlay = FloatLayout(size_hint=(1, 1))
-    overlay.add_widget(pannello)
+    overlay.add_widget(etichetta)
     evento = Clock.schedule_once(chiudi, max(float(durata), 0.0))
     Window.add_widget(overlay)
-    _snack_corrente = SnackAperto(overlay=overlay, pannello=pannello, chiudi=chiudi)
+    _snack_corrente = SnackAperto(overlay=overlay, pannello=etichetta, chiudi=chiudi)
     return _snack_corrente

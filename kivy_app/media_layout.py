@@ -4,8 +4,8 @@ Like the other layout modules this one has no Kivy import: the screen
 translates these numbers into widgets, while tests verify the confirmed
 action hierarchy — app bar kebab holding "URL manuale…" and the timestamp
 heuristic, direct video actions (Play/Cerca/Estrai frame), per-panel direct
-actions without confirmation (Applica/Placeholder) and the panel kebab
-holding Disegna/Immagine…/Ripristina.  The ordering functions are pure and
+actions without confirmation (Placeholder) and the panel kebab holding
+Ritaglia/Disegna/Immagine…/Ripristina.  The ordering functions are pure and
 width-independent on purpose: phones and desktops get the SAME hierarchy and
 only the geometry reflows.  Timestamp fields always stack vertically so no
 horizontal row of fixed-width inputs can overflow a narrow viewport.
@@ -27,10 +27,10 @@ VIDEO_DIRECT_ACTIONS = ("Play", "Cerca", "Estrai frame")
 MEDIA_CONTEXT_ACTIONS = ("URL manuale…", "Euristica 10%/50%")
 MEDIA_PARENT_ACTION = "Impostazioni"
 
-# Per START/FINISH panel: the direct row carries only the two no-confirmation
-# actions; every other frame tool hangs in the panel kebab.
-PANEL_DIRECT_ACTIONS = ("Applica", "Placeholder")
-PANEL_CONTEXT_ACTIONS = ("Disegna", "Immagine…", "Ripristina")
+# Per START/FINISH panel: resta diretto solo Placeholder; gli strumenti frame
+# che aprono un flusso dedicato vivono nel kebab del pannello.
+PANEL_DIRECT_ACTIONS = ("Placeholder",)
+PANEL_CONTEXT_ACTIONS = ("Ritaglia", "Disegna", "Immagine…", "Ripristina")
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,6 @@ class MediaLayout:
     frame_axis: str
     target_minimum: float
     keyboard_inset_aware: bool
-    timestamp_fields_vertical: bool
     header_height: float
     back_width: float
     kebab_width: float
@@ -52,9 +51,6 @@ def media_layout(profile: UiProfile) -> MediaLayout:
         frame_axis="vertical" if profile.category == "compact" else "horizontal",
         target_minimum=target,
         keyboard_inset_aware=True,
-        # Vertical field stack on every profile: no horizontal overflow on
-        # phones and the very same action hierarchy on PC.
-        timestamp_fields_vertical=True,
         header_height=target,
         back_width=target,
         kebab_width=target,
@@ -73,7 +69,7 @@ def media_context_actions(*, include_parent: bool = True) -> tuple[str, ...]:
 
 
 def panel_direct_actions() -> tuple[str, ...]:
-    """Direct START/FINISH actions, applied without confirmation."""
+    """Azione START/FINISH diretta, applicata senza conferma."""
     return PANEL_DIRECT_ACTIONS
 
 

@@ -19,13 +19,16 @@ kivy = pytest.importorskip("kivy")
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
+from PIL import Image as PillowImage
 
+from kivy_app.crop_layout import Rect
 from kivy_app.material import (BUTTON_HEIGHTS, ViewportMetrics, adaptive_profile,
                                imposta_pulsanti, pulsanti_correnti)
 from kivy_app.media import MediaFlowError
-from kivy_app.media_screen import MediaScreen
+from kivy_app.media_screen import MediaScreen, _TelaRitaglio
 
 
 requires_window = pytest.mark.skipif(Window is None, reason="Kivy has no usable window provider")
@@ -48,12 +51,13 @@ class MediaStub:
         self.titolo_video = "Squat"
         self.scelte = []
         self.calls = []
+        self.frames = {}
 
     def pronto(self):
         return False
 
     def frame(self, suffisso):
-        return None
+        return self.frames.get(suffisso)
 
     def imposta_timestamp(self, **updates):
         self.calls.append(("timestamp", updates))
@@ -115,8 +119,7 @@ def test_busy_disabilita_tutti_i_controlli_mutanti_e_i_guard_bloccano_stale_call
     assert all(control.disabled for control in screen._mutating_controls)
     media.calls.clear()  # ignore timestamp commit performed before entering busy
 
-    sliders = screen._crop_sliders["start"]
-    screen._apply_crop("start", sliders)
+    screen._apri_ritaglio("start")
     screen._restore("start")
     screen._import_image("start")
     screen._placeholder("start")
@@ -137,21 +140,11 @@ def test_busy_disabilita_tutti_i_controlli_mutanti_e_i_guard_bloccano_stale_call
 
 
 @requires_window
-def test_reflow_committa_il_timestamp_focused_e_preserva_tutti_i_crop(monkeypatch):
+def test_reflow_committa_il_timestamp_focused_senza_stato_slider_crop(monkeypatch):
     media = MediaStub()
     screen = make_screen(media)
     screen.ts_start.text = "12,5"
     screen.ts_start.focus = True
-    expected = {
-        "start": {"sinistra": 3, "alto": 7, "destra": 11, "basso": 13},
-        "finish": {"sinistra": 5, "alto": 9, "destra": 15, "basso": 17},
-    }
-    screen._reflowing = True  # avoid crop-preview jobs while arranging the fixture
-    for suffix, values in expected.items():
-        for side, value in values.items():
-            screen._crop_sliders[suffix][side].value = value
-    screen._reflowing = False
-
     compact = adaptive_profile(ViewportMetrics(400, 800, input_mode="touch"))
     monkeypatch.setattr("kivy_app.media_screen.profile_for_window", lambda window: compact)
     screen._layout_key = object()  # force the rebuild path
@@ -160,9 +153,8 @@ def test_reflow_committa_il_timestamp_focused_e_preserva_tutti_i_crop(monkeypatc
 
     assert media.ts_start == pytest.approx(12.5)
     assert screen.ts_start.text == "12.5"
-    for suffix, values in expected.items():
-        assert {side: slider.value for side, slider in
-                screen._crop_sliders[suffix].items()} == values
+    assert not hasattr(screen, "_crop_sliders")
+    assert "crop" not in screen._capture_reflow_state()
 
 
 @requires_window
@@ -244,3 +236,229 @@ def test_successi_usano_snackbar_errori_popup_e_impostazioni_e_diretta(monkeypat
     dict(captured)["Impostazioni"]()
     assert owner.settings == 1
     assert owner.menu == 0
+
+
+@requires_window
+def test_placeholder_del_pannello_start_non_piazza_quello_finish():
+    """Regression: late-bound panel actions made every START button act on FINISH."""
+    media = MediaStub()
+    screen = make_screen(media)
+    try:
+        panels = {s: screen.frames_row.children[-1 if s == "start" else 0]
+                  for s in ("start", "finish")}  # children e' in ordine inverso di add
+        for suffisso, panel in panels.items():
+            riga = next(w for w in panel.walk(restrict=True)
+                        if isinstance(w, BoxLayout)
+                        and any(isinstance(c, Button) and c.text == "Placeholder"
+                                for c in w.children))
+            pulsante = next(c for c in riga.children if getattr(c, "text", "") == "Placeholder")
+            pulsante.dispatch("on_release")
+            assert media.calls[-1] == ("placeholder", suffisso)
+    finally:
+        if hasattr(screen, "dispose"):
+            screen.dispose()
+
+
+@requires_window
+def test_pannelli_hanno_solo_placeholder_e_kebab_con_quattro_azioni(monkeypatch):
+    screen = make_screen()
+    assert not hasattr(screen, "_crop_sliders")
+    for panel in screen.frames_row.children:
+        riga = panel.children[0]
+        pulsanti = [child for child in riga.children if isinstance(child, Button)]
+        assert len(pulsanti) == 2
+        assert sum(button.text == "Placeholder" for button in pulsanti) == 1
+
+    captured = []
+    monkeypatch.setattr("kivy_app.media_screen.apri_menu",
+                        lambda actions, anchor=None: captured.extend(actions))
+    screen._open_panel_menu("start", screen._menu)
+    assert [label for label, _ in captured] == [
+        "Ritaglia", "Disegna", "Immagine…", "Ripristina",
+    ]
+
+
+def _frame_jpeg(tmp_path, nome="frame.jpg"):
+    percorso = tmp_path / nome
+    PillowImage.new("RGB", (200, 100), "white").save(percorso, "JPEG")
+    return str(percorso)
+
+
+def _pulsante(popup, testo):
+    return next(widget for widget in popup.content.walk(restrict=True)
+                if isinstance(widget, Button) and widget.text == testo)
+
+
+def _tela(popup):
+    return next(widget for widget in popup.content.walk(restrict=True)
+                if isinstance(widget, _TelaRitaglio))
+
+
+class _TouchSimulato:
+    """Touch minimo con coordinate finestra e semantica grab di Kivy."""
+
+    button = "left"
+
+    def __init__(self, pos):
+        self.pos = pos
+        self.grab_current = None
+
+    @property
+    def x(self):
+        return self.pos[0]
+
+    @property
+    def y(self):
+        return self.pos[1]
+
+    def grab(self, widget):
+        self.grab_current = widget
+
+    def ungrab(self, widget):
+        if self.grab_current is widget:
+            self.grab_current = None
+
+
+@requires_window
+def test_tela_ritaglio_immagine_e_selezione_condividono_coordinate(tmp_path):
+    tela = _TelaRitaglio(_frame_jpeg(tmp_path), (200, 100),
+                         pos=(37, 53), size=(400, 300), size_hint=(None, None))
+    tela._aggiorna_geometria()
+
+    image = tela._image_rect
+    assert tela.immagine.pos == pytest.approx((image.left, image.bottom))
+    assert tela.immagine.size == pytest.approx((image.width, image.height))
+    assert tela._selection == image  # la selezione iniziale copre tutto il frame
+
+
+@requires_window
+def test_touch_finestra_restringe_angolo_e_trascina_corpo_dal_centro(tmp_path):
+    tela = _TelaRitaglio(_frame_jpeg(tmp_path), (200, 100),
+                         pos=(37, 53), size=(400, 300), size_hint=(None, None))
+    tela._aggiorna_geometria()
+    image = tela._image_rect
+
+    # Il top-left entra verso il centro; bottom-right deve restare fisso.
+    angolo = _TouchSimulato(tela.to_parent(image.left, image.top))
+    assert tela.on_touch_down(angolo)
+    angolo.pos = tela.to_parent(image.left + 60, image.top - 40)
+    assert tela.on_touch_move(angolo)
+    ristretta = tela._selection
+    assert ristretta.left > image.left and ristretta.top < image.top
+    assert ristretta.right == pytest.approx(image.right)
+    assert ristretta.bottom == pytest.approx(image.bottom)
+    assert tela.on_touch_up(angolo)
+
+    # Il centro immagine e' nel corpo: la selezione si sposta, senza deformarsi.
+    centro = ((image.left + image.right) / 2, (image.bottom + image.top) / 2)
+    corpo = _TouchSimulato(tela.to_parent(*centro))
+    assert tela.on_touch_down(corpo)
+    assert tela._drag_target == "body"
+    corpo.pos = tela.to_parent(centro[0] - 20, centro[1] + 15)
+    assert tela.on_touch_move(corpo)
+    spostata = tela._selection
+    assert spostata.width == pytest.approx(ristretta.width)
+    assert spostata.height == pytest.approx(ristretta.height)
+    assert spostata.left < ristretta.left and spostata.bottom > ristretta.bottom
+    assert tela.on_touch_up(corpo)
+
+
+@pytest.mark.parametrize("suffisso", ("start", "finish"))
+@requires_window
+def test_popup_ritaglio_ha_titolo_corretto_per_frame_valido(tmp_path, suffisso):
+    media = MediaStub()
+    media.frames[suffisso] = _frame_jpeg(tmp_path, f"{suffisso}.jpg")
+    popup = make_screen(media)._apri_ritaglio(suffisso)
+    try:
+        assert popup.title == f"Ritaglia frame {suffisso.upper()}"
+    finally:
+        popup.dismiss(animation=False)
+
+
+@requires_window
+def test_selezione_nota_applica_percentuali_aggiorna_preview_e_informa(
+        tmp_path, monkeypatch):
+    notices = []
+    monkeypatch.setattr("kivy_app.media_screen.mostra_snackbar",
+                        lambda parent, text: notices.append(text))
+    media = MediaStub()
+    media.frames["start"] = _frame_jpeg(tmp_path)
+    screen = make_screen(media)
+    reloads = []
+    screen.preview_start.reload = lambda: reloads.append(True)
+    popup = screen._apri_ritaglio("start")
+    tela = _tela(popup)
+    tela._image_rect = Rect(0, 0, 200, 100)
+    tela._selection = Rect(20, 15, 140, 80)
+
+    _pulsante(popup, "Applica").dispatch("on_release")
+
+    assert media.calls[-1][0:2] == ("ritaglia", "start")
+    assert media.calls[-1][2] == pytest.approx((10, 20, 30, 15))
+    assert reloads == [True]
+    assert notices == ["Ritaglio applicato."]
+
+
+@requires_window
+def test_annulla_e_ritaglio_nullo_non_mutano(tmp_path):
+    media = MediaStub()
+    media.frames["start"] = _frame_jpeg(tmp_path)
+    screen = make_screen(media)
+    popup = screen._apri_ritaglio("start")
+    _pulsante(popup, "Annulla").dispatch("on_release")
+    assert not any(call[0] == "ritaglia" for call in media.calls)
+
+    popup = screen._apri_ritaglio("start")
+    tela = _tela(popup)
+    tela._selection = tela._image_rect
+    _pulsante(popup, "Applica").dispatch("on_release")
+    assert not any(call[0] == "ritaglia" for call in media.calls)
+
+
+@requires_window
+def test_frame_mancante_mostra_errore_senza_popup():
+    screen = make_screen()
+    errors = []
+    screen._mostra_errore = lambda error: errors.append(str(error))
+    assert screen._apri_ritaglio("start") is None
+    assert errors == ["Frame non ancora estratto: niente da ritagliare."]
+
+
+@requires_window
+def test_busy_blocca_apertura_callback_stale_e_controllo_viene_rimosso(
+        tmp_path, monkeypatch):
+    notices = []
+    monkeypatch.setattr("kivy_app.media_screen.mostra_snackbar",
+                        lambda parent, text: notices.append(text))
+    media = MediaStub()
+    media.frames["start"] = _frame_jpeg(tmp_path)
+    screen = make_screen(media)
+    popup = screen._apri_ritaglio("start")
+    applica = _pulsante(popup, "Applica")
+    assert applica in screen._mutating_controls
+
+    screen._busy = True
+    assert screen._apri_ritaglio("start") is None
+    applica.dispatch("on_release")
+    assert not any(call[0] == "ritaglia" for call in media.calls)
+    assert notices and all("Attendere" in text for text in notices)
+    screen._busy = False
+    popup.dismiss(animation=False)
+    assert applica not in screen._mutating_controls
+
+
+@requires_window
+def test_campi_timestamp_affiancati_orizzontalmente():
+    """Start e Finish condividono la stessa riga (due colonne)."""
+    screen = make_screen(MediaStub())
+    try:
+        cella_start = screen.ts_start.parent
+        cella_finish = screen.ts_finish.parent
+        assert cella_start is not cella_finish
+        contenitore = cella_start.parent
+        assert isinstance(contenitore, BoxLayout)
+        assert contenitore.orientation == "horizontal"
+        assert cella_finish.parent is contenitore
+    finally:
+        if hasattr(screen, "dispose"):
+            screen.dispose()

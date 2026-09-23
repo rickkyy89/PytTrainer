@@ -36,6 +36,7 @@ from .editor_layout import (
     field_columns,
 )
 from .material import profile_for_window
+from .icons import da_simbolo
 from .snackbar import mostra_snackbar
 
 
@@ -95,13 +96,13 @@ class EditorScreen(BoxLayout):
 
         # The four primary actions stay reachable while the form scrolls.
         action_bar = BoxLayout(size_hint_y=None, height=self._target_h, spacing=dp(8))
-        undo_bar = self._button(text="↶ Annulla")
+        undo_bar = self._button(text="Annulla")
         undo_bar.bind(on_release=lambda *_: self._wrap(self._editor.undo, rebuild=True))
-        redo_bar = self._button(text="↷ Ripeti")
+        redo_bar = self._button(text="Ripeti")
         redo_bar.bind(on_release=lambda *_: self._wrap(self._editor.redo, rebuild=True))
-        save_bar = self._button(text="▣ Salva")
+        save_bar = self._button(text="Salva")
         save_bar.bind(on_release=lambda *_: self.apri_salvataggio())
-        add_bar = self._button(text="＋ Aggiungi")
+        add_bar = self._button(text="Aggiungi")
         add_bar.bind(on_release=lambda *_: self._wrap(self._editor.aggiungi, rebuild=True))
         for button in (undo_bar, redo_bar, save_bar, add_bar):
             action_bar.add_widget(button)
@@ -203,7 +204,7 @@ class EditorScreen(BoxLayout):
         """Build an editor-owned button at the active 44/52/60 preset."""
         kwargs.setdefault("size_hint_y", None)
         kwargs.setdefault("height", self._target_h)
-        return Button(**kwargs)
+        return da_simbolo(Button(**kwargs))
 
     def _exercise_block(self, indice, esercizio):
         block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(8))
@@ -235,23 +236,32 @@ class EditorScreen(BoxLayout):
             return block
 
         campo_h = dp(profile.tokens.dimensions["field_height"])
+        # Il label sopra al campo STA nella riga: se row_default_height resta
+        # campo_h la cella (label + campo) sfonda e il titolo si sovrappone
+        # alla casella di testo (bug visible sul tablet).
+        etichetta_h = dp(max(profile.tokens.typography["body"] + 8, 22))
+        sopra_h = etichetta_h + dp(4) if layout.labels_above else 0
+        riga_h = campo_h + sopra_h
         griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
-                             row_default_height=campo_h, row_force_default=True)
+                             row_default_height=riga_h, row_force_default=True)
 
         def ricalcola_griglia(*_, g=griglia, b=block):
             largo_dp = max(b.width, 1) / profile.viewport.system_density
             per_riga = field_columns(profile_for_window(Window), largo_dp)
             g.cols = per_riga
             righe = math.ceil(len(CAMPI_BREVI) / per_riga)
-            g.height = righe * campo_h + (righe - 1) * dp(6)
+            g.height = righe * g.row_default_height + (righe - 1) * dp(6)
         block.bind(width=ricalcola_griglia)
         for chiave, etichetta in CAMPI_BREVI:
             cella = BoxLayout(orientation="vertical" if layout.labels_above else "horizontal", spacing=dp(4))
             etichetta_label = Label(text=etichetta, size_hint_x=1 if layout.labels_above else None,
                                     width=0 if layout.labels_above else dp(95),
-                                    halign="left", valign="middle")
+                                    halign="left", valign="bottom")
             etichetta_label.bind(
-                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, campo_h)))
+                width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, l.height)))
+            if layout.labels_above:
+                etichetta_label.size_hint_y = None
+                etichetta_label.height = etichetta_h
             cella.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
                               hint_text=etichetta,
@@ -266,8 +276,8 @@ class EditorScreen(BoxLayout):
         for chiave, etichetta in CAMPI_LUNGHI:
             box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(2))
             box.bind(minimum_height=box.setter("height"))
-            etichetta_label = Label(text=etichetta, size_hint_y=None, height=dp(20),
-                                    halign="left", valign="middle")
+            etichetta_label = Label(text=etichetta, size_hint_y=None, height=etichetta_h,
+                                    halign="left", valign="bottom")
             etichetta_label.bind(
                 width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, l.height)))
             box.add_widget(etichetta_label)

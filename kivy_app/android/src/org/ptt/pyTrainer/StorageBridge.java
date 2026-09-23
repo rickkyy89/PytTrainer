@@ -51,6 +51,45 @@ public final class StorageBridge {
         }
     }
 
+    /** Copy a plain filesystem path into destDir, converting it through
+     *  MediaStore when scoped storage blocks direct reads. Returns the dest
+     *  path/uri or "ERR: <motivo>". */
+    public static String copiaPath(Activity activity, String path, String destDir) {
+        try {
+            File src = new File(path);
+            File dest = new File(new File(destDir), src.getName());
+            InputStream in = null;
+            OutputStream out = null;
+            try {
+                in = new FileInputStream(src);
+                out = new FileOutputStream(dest);
+                copiain(in, out);
+                return dest.getAbsolutePath();
+            } catch (Exception diretta) {
+                Cursor c = null;
+                try {
+                    Uri collection = MediaStore.Files.getContentUri("external");
+                    c = activity.getContentResolver().query(collection,
+                            new String[]{MediaStore.Files.FileColumns._ID},
+                            MediaStore.Files.FileColumns.DATA + "=?",
+                            new String[]{path}, null);
+                    if (c != null && c.moveToFirst()) {
+                        Uri uri = ContentUris.withAppendedId(collection, c.getLong(0));
+                        return copiaUri(activity, uri.toString(), destDir);
+                    }
+                } finally {
+                    if (c != null) c.close();
+                }
+                return "ERR: file non leggibile ne' nel MediaStore: " + path;
+            } finally {
+                chiudi(in);
+                chiudi(out);
+            }
+        } catch (Exception exc) {
+            return "ERR: " + exc;
+        }
+    }
+
     /** Copy a content:// selection into destDir keeping its display name. */
     public static String copiaUri(Activity activity, String uriStr, String destDir) {
         InputStream in = null;

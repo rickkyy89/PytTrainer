@@ -15,9 +15,8 @@ from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
-from kivy.uix.checkbox import CheckBox
-from kivy.uix.image import Image
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
@@ -26,18 +25,32 @@ from kivy.core.window import Window
 from kivymd.uix.card import MDCard
 
 from .compact_menu import apri_menu
+from .icons import da_simbolo, imposta_icona
 from .notify import notifica_fine_recupero
 from .material import hex_to_rgba, markup_px, profile_for_window
 from .snackbar import mostra_snackbar
 from .workout_layout import workout_context_actions, workout_layout
 
 
-def _etichetta(texto, target, delta=48, **kw):
-    """Wrapping label: text_size follows the container width, height the texture."""
+def _etichetta(texto, target, delta=24, **kw):
+    """Wrapping label: text_size follows the container width, height the texture.
+
+    ``delta`` is in dp and is subtracted from ``target.width``.  Pass ``delta=0``
+    when a sibling already narrows the label (the workout checkbox cell): Kivy
+    draws the texture centred on the widget, so a text_size wider than the
+    widget would push the text back underneath that sibling.  A raw pixel
+    margin would also drift with the window density.
+    """
     kw.setdefault("size_hint_y", None)
     label = Label(text=texto, halign="left", valign="top", markup=True, **kw)
-    target.bind(width=lambda _, v, l=label: setattr(l, "text_size", (max(v - delta, 10), None)))
-    label.bind(texture_size=lambda l, ts: setattr(l, "height", ts[1]))
+    margine = dp(delta)
+    if margine:
+        target.bind(width=lambda _, v, l=label, m=margine:
+                    setattr(l, "text_size", (max(v - m, 10), None)))
+    else:
+        label.bind(width=lambda l, v: setattr(l, "text_size", (max(v, 10), None)))
+    if label.size_hint_y is None:
+        label.bind(texture_size=lambda l, ts: setattr(l, "height", ts[1]))
     return label
 
 
@@ -49,14 +62,14 @@ class WorkoutScreen(BoxLayout):
         self._on_menu = on_menu
         self._notifier = notifier
         self._notified = True
-        self._checkboxes: dict[int, CheckBox] = {}
+        self._checkboxes: dict[int, Button] = {}
         self._profile = profile_for_window(Window)
         self._ui = workout_layout(self._profile)
 
         # Uniform app bar: navigation, live progress as title, one overflow.
         self.header = BoxLayout(size_hint_y=None, height=dp(self._ui.minimum_target),
                                 spacing=dp(8))
-        self._back = Button(text="‹", size_hint_x=None, width=dp(self._ui.minimum_target))
+        self._back = da_simbolo(Button(text="‹", size_hint_x=None, width=dp(self._ui.minimum_target)))
         self._back.bind(on_release=lambda *_: self._exit())
         self.progress_label = Label(text=self._progress_text(),
                                     font_size=sp(self._ui.header_font_size),
@@ -64,7 +77,7 @@ class WorkoutScreen(BoxLayout):
                                     shorten=True, shorten_from="right")
         self.progress_label.bind(width=lambda _, v: setattr(
             self.progress_label, "text_size", (v, self.progress_label.height)))
-        self._menu = Button(text="⋮", size_hint_x=None, width=dp(self._ui.minimum_target))
+        self._menu = da_simbolo(Button(text="⋮", size_hint_x=None, width=dp(self._ui.minimum_target)))
         self._menu.bind(on_release=lambda anchor: self._open_workout_menu(anchor))
         self.header.add_widget(self._back)
         self.header.add_widget(self.progress_label)
@@ -152,13 +165,18 @@ class WorkoutScreen(BoxLayout):
 
         top_height = max(56, self._profile.tokens.typography["title"] * 1.5)
         top = BoxLayout(size_hint_y=None, height=dp(top_height), spacing=dp(6))
-        cella = FloatLayout(size_hint_x=None, width=dp(self._ui.minimum_target))
-        checkbox = CheckBox(active=self._session.completato(indice))
-        checkbox.size_hint = (None, None)
-        checkbox.size = (dp(38), dp(38))
-        checkbox.pos_hint = {"center_x": 0.5, "center_y": 0.5}
-        checkbox.bind(active=lambda _, active: self._toggle(indice, active))
+        lato = dp(self._ui.minimum_target)
+        cella = FloatLayout(size_hint_x=None, width=lato)
+        # Pulsante-toggle a icona MDI: la CheckBox nativa era minuscola e
+        # quasi invisibile sul fondo scuro; cosi' e' grande come il pulsante
+        # Recupero e coerente col resto dei pulsanti.
+        checkbox = Button(size_hint=(None, None), size=(lato, lato),
+                          pos_hint={"center_x": 0.5, "center_y": 0.5},
+                          font_size=sp(self._profile.tokens.typography["title"] + 6))
+        checkbox.bind(on_release=lambda *_, i=indice:
+                      self._toggle(i, not self._session.completato(i)))
         self._checkboxes[indice] = checkbox
+        self._aggiorna_casella(indice, self._session.completato(indice))
         cella.add_widget(checkbox)
         top.add_widget(cella)
         title_px = markup_px(self._profile, self._profile.tokens.typography["title"])
@@ -168,7 +186,7 @@ class WorkoutScreen(BoxLayout):
             f"[b][size={title_px}]{escape_markup(str(esercizio.get('nome') or '(senza nome)'))}[/size][/b]  "
             f"[size={body_px}]{escape_markup(str(esercizio.get('ripetizioni') or ''))}[/size]  "
             f"[color={primary}][size={body_px}]{escape_markup(str(esercizio.get('recupero') or ''))}[/size][/color]",
-            top, size_hint_x=1)
+            top, delta=0, size_hint_x=1, size_hint_y=1)
         top.add_widget(titolo)
         titolo.bind(texture_size=lambda _, ts, box=top, base=top_height:
                     setattr(box, "height", dp(max(base, ts[1] + 8))))
@@ -247,12 +265,21 @@ class WorkoutScreen(BoxLayout):
         if active == current:
             return
         self._session.toggle_completato(indice)
+        self._aggiorna_casella(indice, self._session.completato(indice))
         self.progress_label.text = self._progress_text()
+
+    def _aggiorna_casella(self, indice, completato):
+        """Draw the toggle as a big MDI checkbox (filled when completed)."""
+        casella = self._checkboxes.get(indice)
+        if casella is not None:
+            imposta_icona(casella,
+                          "checkbox-marked" if completato else "checkbox-blank-outline",
+                          "[x]" if completato else "[ ]")
 
     def _reset(self):
         self._session.azzera_sessione()
-        for checkbox in self._checkboxes.values():
-            checkbox.active = False
+        for indice in self._checkboxes:
+            self._aggiorna_casella(indice, False)
         self._notified = True
         self.timer_label.text = "Recupero: —"
         self.progress_label.text = self._progress_text()

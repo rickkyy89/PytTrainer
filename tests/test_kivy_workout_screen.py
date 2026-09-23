@@ -17,10 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 kivy = pytest.importorskip("kivy")
 
+from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.label import Label
 
 from kivy_app.material import imposta_pulsanti, pulsanti_correnti
 from kivy_app.workout import WorkoutSessionController
@@ -80,7 +83,9 @@ def test_l_app_bar_e_back_titolo_kebab_senza_azzera_direct():
     try:
         header = screen.children[-1]
         etichette = [w.text for w in header.children]
-        assert "‹" in etichette and "⋮" in etichette
+        from kivy_app.icons import glifo
+        assert glifo("chevron-left", "‹")[0] in etichette
+        assert glifo("dots-vertical", "⋮")[0] in etichette
         assert any("Allenamento" in t for t in etichette if isinstance(t, str))
         pulsanti = [w.text for w in screen.walk() if isinstance(w, Button)]
         assert "Azzera" not in pulsanti  # vive solo nel kebab, non piu' nell'header
@@ -138,7 +143,8 @@ def test_azzera_dal_kebab_pulisce_spunte_progresso_e_timer(monkeypatch):
         menu = screen._open_workout_menu(screen._menu)
         assert premi_voce(menu, "Azzera")
         assert sessione.conteggio_completati() == 0
-        assert screen._checkboxes[0].active is False
+        from kivy_app.icons import glifo
+        assert screen._checkboxes[0].text == glifo("checkbox-blank-outline", "[ ]")[0]
         assert "0/2" in screen.progress_label.text
         assert screen.timer_label.text == "Recupero: —"
         assert sessione.recupero_attivo() is False
@@ -208,6 +214,36 @@ def test_workout_rispetta_i_tre_preset_su_barre_e_card(preset, atteso):
         if screen is not None:
             screen.dispose()
         imposta_pulsanti(precedente)
+
+
+@requires_window
+def test_casella_e_titolo_condividono_la_riga_senza_sovrapporsi():
+    """Regressione: la texture del titolo non deve finire sotto la casella.
+
+    Kivy disegna la texture centrata sul widget, quindi un ``text_size`` piu'
+    largo del label fa scivolare il testo a sinistra: sul tablet (density 2) il
+    margine in pixel grezzi non copriva piu' la cella della checkbox.
+    """
+    host = BoxLayout()
+    screen, _ = nuova_vista()
+    host.add_widget(screen)
+    try:
+        host.size = (800, 1280)
+        for _ in range(10):  # nested layouts settle on the following frames
+            Clock.tick()
+        for card in screen.cards.children:
+            riga = next(w for w in card.children
+                        if isinstance(w, BoxLayout)
+                        and any(isinstance(c, FloatLayout) for c in w.children))
+            cella = next(w for w in riga.children if isinstance(w, FloatLayout))
+            casella = next(w for w in cella.children if isinstance(w, Button))
+            titolo = next(w for w in riga.children if isinstance(w, Label))
+            assert titolo.text_size[0] <= titolo.width
+            assert titolo.x >= casella.right
+            assert titolo.center_y == pytest.approx(casella.center_y)
+    finally:
+        host.remove_widget(screen)
+        screen.dispose()
 
 
 @requires_window
