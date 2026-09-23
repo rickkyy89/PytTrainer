@@ -449,3 +449,88 @@ def test_esporta_pdf_limita_il_nome_senza_spezzare_unicode_o_estensione(tmp_path
     assert len(path.name.encode("utf-8")) <= 180
     assert path.suffix == ".pdf"
     assert path.read_bytes().startswith(b"%PDF-")
+
+
+# ------------------------------------------------------- placeholder init
+
+
+def _creator(percorso: str, _etichetta: str) -> str:
+    Path(percorso).parent.mkdir(parents=True, exist_ok=True)
+    Path(percorso).write_bytes(b"png")
+    return percorso
+
+
+def _importer(_png: str, nome: str, suffisso: str, output_dir: str) -> str:
+    destinazione = Path(output_dir) / f"{nome.lower().replace(' ', '_')}_{suffisso}.jpg"
+    destinazione.parent.mkdir(parents=True, exist_ok=True)
+    destinazione.write_bytes(b"jpg")
+    return str(destinazione)
+
+
+def test_frame_mancanti_elenco_indici_esercizi_e_suffissi(tmp_path):
+    controller, _, _ = make_export(tmp_path)
+
+    mancanti = controller.frame_mancanti()
+
+    assert [(indice, sorted(suffissi)) for indice, _e, suffissi in mancanti] == \
+        [(2, ["finish", "start"])]
+
+
+def test_frame_mancanti_segna_anche_i_percorsi_punti_su_file_inesistenti(tmp_path):
+    controller, editor, _ = make_export(tmp_path)
+    Path(editor.esercizi[0]["frame_finish"]).unlink()
+
+    mancanti = controller.frame_mancanti()
+
+    assert [indice for indice, _e, _s in mancanti] == [0, 2]
+
+
+def test_inizializza_placeholder_crea_i_frame_mancanti_e_riepilogo(tmp_path):
+    controller, editor, _ = make_export(tmp_path)
+
+    creati = controller.inizializza_placeholder(creator=_creator, importer=_importer)
+
+    assert creati == 2
+    esercizio = editor.esercizi[2]
+    assert Path(esercizio["frame_start"]).exists()
+    assert Path(esercizio["frame_finish"]).exists()
+    assert controller.frame_mancanti() == []
+    assert controller.riepilogo().pronti == 3
+    assert editor.sporco is True
+
+
+def test_inizializza_placeholder_idempotente_e_unificabile_in_undo(tmp_path):
+    controller, editor, _ = make_export(tmp_path)
+    controller.inizializza_placeholder(creator=_creator, importer=_importer)
+
+    assert controller.inizializza_placeholder(creator=_creator, importer=_importer) == 0
+
+    assert editor.undo()
+    assert editor.esercizi[2]["frame_start"] is None
+    assert editor.esercizi[2]["frame_finish"] is None
+
+
+def test_inizializza_placeholder_rifiuta_esercizi_senza_nome(tmp_path):
+    editor = make_editor(tmp_path, pronti=0, rotti=1)
+    editor.esercizi[0]["nome"] = "   "
+    controller, _, _ = make_export(tmp_path, editor=editor)
+
+    with pytest.raises(DocExportError, match="senza nome"):
+        controller.inizializza_placeholder(creator=_creator, importer=_importer)
+
+    assert editor.esercizi[0]["frame_start"] is None
+
+
+def test_inizializza_placeholder_propaga_il_rollback_del_transattore(tmp_path):
+    controller, editor, _ = make_export(tmp_path)
+
+    def importatore_rotto(_png, _nome, suffisso, _output_dir):
+        if suffisso == "finish":
+            raise ValueError("immagine illeggibile")
+        return str(Path(_output_dir) / "start.jpg")
+
+    with pytest.raises(DocExportError, match="Placeholder FINISH fallito"):
+        controller.inizializza_placeholder(creator=_creator, importer=importatore_rotto)
+
+    assert editor.esercizi[2]["frame_start"] is None
+    assert editor.esercizi[2]["frame_finish"] is None

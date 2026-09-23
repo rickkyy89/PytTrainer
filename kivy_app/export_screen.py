@@ -28,6 +28,7 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 
 from .compact_menu import apri_menu
+from .icons import da_simbolo
 from .export import DocExportError
 from .export_layout import (
     export_layout,
@@ -55,13 +56,13 @@ class ExportScreen(BoxLayout):
         # Uniform app bar: navigation, title and one contextual overflow.
         self.header = BoxLayout(size_hint_y=None, height=dp(self._ui.header_height),
                                 spacing=dp(8))
-        self._back = Button(text="‹", size_hint_x=None, width=dp(self._ui.back_width))
+        self._back = da_simbolo(Button(text="‹", size_hint_x=None, width=dp(self._ui.back_width)))
         self._back.bind(on_release=lambda *_: self._exit())
         self.title = Label(text="Generazione Google Doc", halign="left", valign="middle",
                            shorten=True, shorten_from="right")
         self.title.bind(
             width=lambda _, v: setattr(self.title, "text_size", (v, self.title.height)))
-        self._menu = Button(text="⋮", size_hint_x=None, width=dp(self._ui.kebab_width))
+        self._menu = da_simbolo(Button(text="⋮", size_hint_x=None, width=dp(self._ui.kebab_width)))
         self._menu.bind(on_release=lambda anchor: self._open_export_menu(anchor))
         self.header.add_widget(self._back)
         self.header.add_widget(self.title)
@@ -70,9 +71,7 @@ class ExportScreen(BoxLayout):
 
         riepilogo = self._export.riepilogo()
         self.info = Label(
-            text=(f"Titolo: {riepilogo.titolo}\n"
-                  f"Esercizi pronti (frame START+FINISH): {riepilogo.pronti}/{riepilogo.totali}\n"
-                  "La generazione crea un Google Doc A4 e sincronizza lo stato sul bundle."),
+            text=self._riepilogo_testo(riepilogo),
             halign="left", valign="top", size_hint_y=None, height=dp(110),
         )
         self.info.bind(width=lambda _, v: setattr(self.info, "text_size", (v, None)))
@@ -103,6 +102,17 @@ class ExportScreen(BoxLayout):
     @property
     def generated(self):
         return bool(self._url)
+
+    def _riepilogo_testo(self, riepilogo) -> str:
+        parti = [f"Titolo: {riepilogo.titolo}",
+                 (f"Esercizi pronti (frame START+FINISH): {riepilogo.pronti}/"
+                  f"{riepilogo.totali}")]
+        mancanti = riepilogo.totali - riepilogo.pronti
+        if mancanti > 0:
+            parti.append(f"Esercizi senza frame completo: {mancanti} "
+                         "(Avvia proporrà i placeholder).")
+        parti.append("La generazione crea un Google Doc A4 e sincronizza lo stato sul bundle.")
+        return "\n".join(parti)
 
     def apply_text_profile(self):
         """Refresh preset-driven control sizes without changing export state."""
@@ -156,8 +166,69 @@ class ExportScreen(BoxLayout):
             if not apri_url(self._url):
                 dettaglio = ultimo_errore() or "il launcher non ha aperto l'URL"
                 self._show_error(f"Impossibile aprire il documento: {dettaglio}")
-        else:
+            return
+        try:
+            mancanti = self._export.frame_mancanti()
+        except Exception as exc:
+            self._show_error(f"Impossibile controllare i frame mancanti: {exc}")
+            return
+        if mancanti:
+            return self._conferma_placeholder(mancanti)
+        self._start()
+        return None
+
+    def _conferma_placeholder(self, mancanti):
+        """Ask before generating: initialize every missing frame with a placeholder."""
+        numero_frame = sum(len(suffissi) for _i, _e, suffissi in mancanti)
+        esercizi = len(mancanti)
+        pronti = self._export.riepilogo().pronti
+        contenuto = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(8))
+        etichetta = Label(
+            text=(f"{esercizi} esercizi sono senza frame START/FINISH "
+                  f"({numero_frame} frame mancanti).\n"
+                  "Vuoi inserire un placeholder bianco ovunque serva e poi "
+                  "generare il documento con tutti gli esercizi?"),
+            halign="left", valign="middle")
+        etichetta.bind(width=lambda _, value: setattr(etichetta, "text_size", (value, None)))
+        popup = Popup(title="Frame mancanti", content=contenuto, size_hint=(0.9, None),
+                      height=dp(170 + (3 if pronti else 2) * self._ui.minimum_target + 12))
+
+        def metti(*_):
+            popup.dismiss()
+            self._inizializza_e_avvia()
+
+        def solo_pronti(*_):
+            popup.dismiss()
             self._start()
+
+        conferma = Button(text="Metti placeholder e genera", size_hint_y=None,
+                          height=dp(self._ui.minimum_target))
+        conferma.bind(on_release=metti)
+        contenuto.add_widget(etichetta)
+        contenuto.add_widget(conferma)
+        if pronti:
+            alternativo = Button(text="Genera solo i pronti", size_hint_y=None,
+                                 height=dp(self._ui.minimum_target))
+            alternativo.bind(on_release=solo_pronti)
+            contenuto.add_widget(alternativo)
+        annulla = Button(text="Annulla", size_hint_y=None,
+                         height=dp(self._ui.minimum_target))
+        annulla.bind(on_release=lambda *_: popup.dismiss())
+        contenuto.add_widget(annulla)
+        popup.open()
+        return popup
+
+    def _inizializza_e_avvia(self):
+        """Create the placeholders (fast local PIL work) then launch generation."""
+        try:
+            creati = self._export.inizializza_placeholder()
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        riepilogo = self._export.riepilogo()
+        self.info.text = self._riepilogo_testo(riepilogo)
+        mostra_snackbar(self, f"{creati} placeholder creati.")
+        self._start()
 
     def _refresh_primary(self):
         self.primary.text = export_primary_action(generated=self.generated)

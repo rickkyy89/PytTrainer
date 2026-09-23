@@ -1,4 +1,4 @@
-"""Redesign behavior of the export Kivy screen (app bar, kebab, primary).
+﻿"""Redesign behavior of the export Kivy screen (app bar, kebab, primary).
 
 Kivy layer of the confirmed Export redesign: exactly one visible primary
 action per state, contextual kebab overflow, and the busy protections and
@@ -43,11 +43,23 @@ def feedback(monkeypatch):
 class ExportStub:
     """DocExportController stand-in; the worker never touches Google/Drive."""
 
-    def __init__(self):
+    def __init__(self, mancanti=None):
         self.chiamate_genera = []
+        self.chiamate_placeholder = 0
+        # Default: the third exercise lacks both frames (pronti=2 totali=3).
+        self._mancanti = mancanti if mancanti is not None else \
+            [(2, {"nome": "Rotto"}, ["start", "finish"])]
 
     def riepilogo(self):
-        return SimpleNamespace(titolo="My", pronti=2, totali=3)
+        return SimpleNamespace(titolo="My", pronti=3 - len(self._mancanti), totali=3)
+
+    def frame_mancanti(self):
+        return list(self._mancanti)
+
+    def inizializza_placeholder(self, **_kw):
+        self.chiamate_placeholder += 1
+        self._mancanti = []
+        return 2
 
     def genera(self, *, force_regenerate=False):
         self.chiamate_genera.append(force_regenerate)
@@ -101,7 +113,9 @@ def test_app_bar_uniforme_back_titolo_kebab_e_un_solo_primary(monkeypatch):
 
     header = screen.children[-1]
     etichette = [w.text for w in header.children]
-    assert "‹" in etichette and "⋮" in etichette
+    from kivy_app.icons import glifo
+    assert glifo("chevron-left", "‹")[0] in etichette
+    assert glifo("dots-vertical", "⋮")[0] in etichette
     assert "Generazione Google Doc" in etichette
     assert [w.text for w in screen.actions.children] == ["Avvia"]  # prima della generazione
 
@@ -315,3 +329,91 @@ def test_errori_launcher_e_document_id_usano_popup(monkeypatch):
     assert popup.title == "Errore"
     assert screen.busy is False
     popup.dismiss(animation=False)
+
+
+# ------------------------------------------------- prompt placeholder/frame
+
+
+@requires_window
+def test_avvia_con_frame_mancanti_apre_il_dialogo_e_non_genera(monkeypatch):
+    monkeypatch.setattr("kivy_app.export_screen.threading.Thread", ThreadStub)
+    screen, export = nuova_scheda()
+
+    popup = screen._primary_pressed()
+
+    assert screen.busy is False
+    assert export.chiamate_genera == []
+    assert popup.title == "Frame mancanti"
+    assert premi_voce(popup, "Annulla")
+    assert export.chiamate_placeholder == 0
+    time.sleep(0.3)
+    Clock.tick()
+
+
+@requires_window
+def test_placeholder_e_genera_inizializza_aggiorna_riepilogo_e_avvia(monkeypatch):
+    monkeypatch.setattr("kivy_app.export_screen.threading.Thread", ThreadStub)
+    screen, export = nuova_scheda()
+
+    popup = screen._primary_pressed()
+    assert premi_voce(popup, "Metti placeholder e genera")
+
+    assert export.chiamate_placeholder == 1
+    assert screen.busy is True
+    assert "3/3" in screen.info.text
+    assert screen._poll is not None  # la generazione è partita davvero
+    screen._done(RISULTATO_OK)
+    popup.dismiss(animation=False)
+    time.sleep(0.3)
+    Clock.tick()
+
+
+@requires_window
+def test_genera_solo_i_pronti_salta_i_placeholder(monkeypatch):
+    monkeypatch.setattr("kivy_app.export_screen.threading.Thread", ThreadStub)
+    screen, export = nuova_scheda()
+
+    popup = screen._primary_pressed()
+    assert premi_voce(popup, "Genera solo i pronti")
+
+    assert export.chiamate_placeholder == 0
+    assert screen.busy is True
+    assert screen._poll is not None
+    screen._done(RISULTATO_OK)
+    popup.dismiss(animation=False)
+    time.sleep(0.3)
+    Clock.tick()
+
+
+@requires_window
+def test_avvia_senza_frame_mancanti_genera_subito_senza_dialogo(monkeypatch):
+    monkeypatch.setattr("kivy_app.export_screen.threading.Thread", ThreadStub)
+    export = ExportStub(mancanti=[])
+    screen = ExportScreen(export, on_back=lambda: None, on_menu=lambda anchor=None: None)
+    screen._run_worker = lambda: None
+
+    screen._primary_pressed()
+
+    assert screen.busy is True
+    assert screen._poll is not None
+    overlay = [w for w in Window.children if isinstance(w, Popup)]
+    assert overlay == []
+
+
+@requires_window
+def test_dialogo_placeholder_offre_genera_solo_pronti_in_base_alle_scelte(monkeypatch):
+    monkeypatch.setattr("kivy_app.export_screen.threading.Thread", ThreadStub)
+    completo = ExportStub()
+    completo.riepilogo = lambda: SimpleNamespace(titolo="My", pronti=0, totali=3)
+    screen = ExportScreen(completo, on_back=lambda: None,
+                          on_menu=lambda anchor=None: None)
+    screen._run_worker = lambda: None
+
+    popup = screen._primary_pressed()
+    etichette = [w.text for w in popup.walk(restrict=True) if isinstance(w, Button)]
+
+    assert "Genera solo i pronti" not in etichette
+    assert "Metti placeholder e genera" in etichette
+    popup.dismiss(animation=False)
+    time.sleep(0.3)
+    Clock.tick()

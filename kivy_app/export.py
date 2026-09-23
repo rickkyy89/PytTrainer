@@ -21,6 +21,9 @@ from pathlib import Path
 
 from core.docs_helper import carica_stato, create_workout_document
 from core.scheda_file import percorso_stato
+from core.video_helper import FrameExtractionError, importa_frame_da_immagine
+
+from .media import crea_immagine_placeholder
 
 
 class DocExportError(Exception):
@@ -90,6 +93,69 @@ class DocExportController:
     def _titolo_default(self) -> str:
         nome = os.path.basename(str(self._editor.percorso_bundle))
         return nome[:-len(".scheda")] if nome.endswith(".scheda") else nome
+
+    # ------------------------------------------------------- placeholder
+
+    def frame_mancanti(self) -> list[tuple[int, dict, list[str]]]:
+        """Exercises lacking a frame on disk: (index, exercise, missing suffixes)."""
+        esiti: list[tuple[int, dict, list[str]]] = []
+        for indice, esercizio in enumerate(self._editor.esercizi):
+            mancanti = [suffisso for suffisso in ("start", "finish")
+                        if not self._frame_su_disco(esercizio, suffisso)]
+            if mancanti:
+                esiti.append((indice, esercizio, mancanti))
+        return esiti
+
+    @staticmethod
+    def _frame_su_disco(esercizio: dict, suffisso: str) -> bool:
+        percorso = esercizio.get(f"frame_{suffisso}")
+        return bool(percorso) and os.path.exists(percorso)
+
+    def inizializza_placeholder(self, *, creator=crea_immagine_placeholder,
+                                importer=importa_frame_da_immagine) -> int:
+        """Insert a white 5:4 placeholder for every missing START/FINISH frame.
+
+        Lets generation proceed for a freshly imported sheet whose frames were
+        never extracted: each exercise gets its own undoable media transaction
+        (manifest entry + frame file), so the user can revert the whole
+        initialization from the editor. Returns the number of frames created.
+        """
+        mancanti = self.frame_mancanti()
+        if not mancanti:
+            return 0
+        cartella = self._editor.output_frames()
+        senza_nome = [indice + 1 for indice, esercizio, _suffissi in mancanti
+                      if not str(esercizio.get("nome") or "").strip()]
+        if senza_nome:
+            raise DocExportError(
+                "Gli esercizi senza nome non possono ricevere un placeholder: "
+                f"assegna un nome agli esercizi {', '.join(str(i) for i in senza_nome)}."
+            )
+        creati = 0
+        for _indice, esercizio, suffissi in mancanti:
+            nome = str(esercizio.get("nome") or "").strip()
+
+            def operation(esercizio=esercizio, suffissi=suffissi, nome=nome):
+                for suffisso in suffissi:
+                    temporaneo = os.path.join(cartella, f"_placeholder_{suffisso}.png")
+                    try:
+                        creator(temporaneo, suffisso)
+                        esercizio[f"frame_{suffisso}"] = importer(
+                            temporaneo, nome, suffisso, cartella)
+                    except (FrameExtractionError, OSError, ValueError) as exc:
+                        raise DocExportError(
+                            f"Placeholder {suffisso.upper()} fallito per "
+                            f"'{nome}': {exc}") from exc
+                    finally:
+                        try:
+                            os.remove(temporaneo)
+                        except OSError:
+                            pass
+                return True
+
+            self._editor.transazione_media(operation, output_dir=cartella)
+            creati += len(suffissi)
+        return creati
 
     # --------------------------------------------------------------- genera
 

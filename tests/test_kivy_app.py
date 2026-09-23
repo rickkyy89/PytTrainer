@@ -484,3 +484,44 @@ def test_create_non_ritenta_operazione_drive_non_idempotente(tmp_path):
     with pytest.raises(HomeUnavailableError):
         controller.create("nuova")
     assert calls == ["create"]
+
+
+# ------------------------------------------------ secondary mouse filtering
+
+
+class _Touch:
+    def __init__(self, profile=(), button=None):
+        self.profile = list(profile)
+        if button is not None:
+            self.button = button
+
+
+def test_tocca_da_ignorare_colpisce_solo_destra_e_middle():
+    from kivy_app.main import tocca_da_ignorare
+
+    assert tocca_da_ignorare(_Touch(["pos", "button"], "right")) is True
+    assert tocca_da_ignorare(_Touch(["pos", "button"], "middle")) is True
+    assert tocca_da_ignorare(_Touch(["pos", "button"], "left")) is False
+    assert tocca_da_ignorare(_Touch(["pos", "button"], "scrollup")) is False
+    assert tocca_da_ignorare(_Touch(["pos"])) is False  # dito / hover
+    assert tocca_da_ignorare(_Touch()) is False
+
+
+def test_installa_filtro_ancola_down_move_up_e_blocca_secondari():
+    from kivy_app.main import installa_filtro_mouse_secondari
+
+    class FakeWindow:
+        def __init__(self):
+            self.ancolati = {}
+
+        def fbind(self, nome, handler):
+            self.ancolati[nome] = handler
+
+    finestra = FakeWindow()
+    installa_filtro_mouse_secondari(finestra)
+
+    assert set(finestra.ancolati) == {"on_touch_down", "on_touch_move", "on_touch_up"}
+    down = finestra.ancolati["on_touch_down"]
+    assert down(None, _Touch(["pos", "button"], "right")) is True
+    assert down(None, _Touch(["pos", "button"], "left")) is False
+    assert down(None, _Touch(["pos", "trackid"])) is False

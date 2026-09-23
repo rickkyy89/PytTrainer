@@ -67,12 +67,49 @@ def pc_icon_path() -> Path:
 
 
 def configure_pc_window_icon() -> None:
-    """Configure Kivy's PC window icon before the window is created."""
+    """Configure Kivy's PC window icon and mouse behavior before the window.
+
+    ``mouse,disable_multitouch`` keeps the right/middle buttons out of Kivy's
+    multitouch emulation: without it, a right-click spawns a red "touch ring"
+    ellipse on ``Window.canvas.after`` that never gets a release (the provider
+    waits for a second simulated finger), and the zombie touch keeps grabbing
+    the field it started on and swallows the next nearby press via the
+    provider's ``find_touch`` proximity search — which is exactly the stuck
+    red dots plus "click twice to focus a text field" behavior.
+    """
     if sys.platform == "android":
         return
     from kivy.config import Config
 
     Config.set("kivy", "window_icon", str(pc_icon_path()))
+    Config.set("input", "mouse", "mouse,disable_multitouch")
+
+
+TOUCH_MOUSE_SECONDARI = ("right", "middle")
+
+
+def tocca_da_ignorare(touch) -> bool:
+    """True only for right/middle mouse touches; fingers, hover and scroll pass."""
+    profile = getattr(touch, "profile", None) or ()
+    if "button" not in profile:
+        return False
+    return getattr(touch, "button", None) in TOUCH_MOUSE_SECONDARI
+
+
+def installa_filtro_mouse_secondari(window) -> None:
+    """Swallow secondary mouse-button touches before they reach any widget.
+
+    With multitouch emulation disabled, right/middle would otherwise behave
+    like a full left click: pressing a Button with the right button would
+    fire it and right-clicking a TextInput would move the cursor. Binding on
+    the Window and returning True stops dispatch to the widget tree only for
+    those two buttons.
+    """
+    def intercetta(_finestra, touch):
+        return True if tocca_da_ignorare(touch) else False
+
+    for evento in ("on_touch_down", "on_touch_move", "on_touch_up"):
+        window.fbind(evento, intercetta)
 
 
 def run() -> None:
@@ -97,6 +134,7 @@ def run() -> None:
     from .export import DocExportController
     from .export_screen import ExportScreen
     from .file_picker import choose_file, choose_save_file
+    from .icons import imposta_icona
     from .media import MediaFlowController
     from .media_screen import MediaScreen
     from .workout import WorkoutSessionController
@@ -110,6 +148,10 @@ def run() -> None:
     from .snackbar import mostra_snackbar
     from .launcher import apri_url, ultimo_errore, url_cartella_drive
     from .version import version_label
+
+    # The window exists at import time: drop right/middle touches globally so
+    # no widget (button press, TextInput cursor) ever reacts to them.
+    installa_filtro_mouse_secondari(Window)
 
     base_dir = Path(__file__).resolve().parent.parent
     prefs_store = LocalPrefsStore(base_dir / "local-save.json")
@@ -227,6 +269,7 @@ def run() -> None:
                             padding=(dp(8), 0, dp(8), 0))
             if on_back is not None:
                 back = Button(text="‹", size_hint_x=None, width=dp(profile.touch_target))
+                imposta_icona(back, "chevron-left", "‹")
                 back.bind(on_release=lambda *_: on_back())
                 bar.add_widget(back)
             label = Label(text=title, halign="left", shorten=True)
@@ -234,6 +277,7 @@ def run() -> None:
                 widget, "text_size", (value, widget.height)))
             bar.add_widget(label)
             menu = Button(text="⋮", size_hint_x=None, width=dp(profile.touch_target))
+            imposta_icona(menu, "dots-vertical", "⋮")
             menu.bind(on_release=lambda anchor: self.apri_menu(anchor=anchor))
             bar.add_widget(menu)
             return bar
@@ -241,8 +285,13 @@ def run() -> None:
         def _info(self, text):
             if hasattr(self, "status"):
                 self.status.text = text
-            # Window overlay keeps transient feedback out of navigation stacks.
-            mostra_snackbar(Window, text)
+            # Window overlay keeps transient feedback out of navigation stacks;
+            # a failing snack must never take the app down with it.
+            try:
+                mostra_snackbar(Window, text)
+            except Exception:
+                import traceback
+                traceback.print_exc()
 
         def _error(self, error, *, prefix=""):
             text = f"{prefix}{error}"
@@ -578,9 +627,20 @@ def run() -> None:
             except HomeUnavailableError as exc:
                 self._error(exc)
                 return
+            except Exception as exc:
+                import traceback
+                self._error("".join(traceback.format_exception(exc))[-800:],
+                            prefix="Errore imprevisto:\n")
+                return
             self._ultime_schede = records
+            try:
+                self._render_lista()
+            except Exception as exc:
+                import traceback
+                self._error("".join(traceback.format_exception(exc))[-800:],
+                            prefix="Errore imprevisto (lista):\n")
+                return
             self._info(f"{len(records)} schede nella cartella corrente.")
-            self._render_lista()
 
         def _render_lista(self):
             self.home_body.clear_widgets()
@@ -597,6 +657,7 @@ def run() -> None:
                                  setattr(b, "text_size", (max(v - dp(20), 10), dp(h))))
                 open_button.bind(on_release=lambda _, item=remote: self.open(item))
                 context = Button(text="⋮", size_hint_x=None, width=dp(profile.touch_target))
+                imposta_icona(context, "dots-vertical", "⋮")
                 context.bind(on_release=lambda anchor, item=remote:
                              self._row_menu(item, anchor))
                 row.add_widget(open_button)
@@ -798,13 +859,15 @@ def run() -> None:
         def _dialogo_nome(self, titolo, etichetta_conferma, nome_predefinito, on_conferma):
             """Name popup with Enter submission and explicit confirm/cancel buttons."""
             profile = _ui_profile()
+            riga = dp(profile.touch_target)
             content = BoxLayout(orientation="vertical",
                                 spacing=dp(profile.tokens.spacing["sm"]))
             input_name = TextInput(hint_text="Nome scheda", text=nome_predefinito,
-                                   multiline=False)
-            buttons = BoxLayout(size_hint_y=None, height=dp(profile.touch_target),
+                                   multiline=False, size_hint_y=None, height=riga)
+            buttons = BoxLayout(size_hint_y=None, height=riga,
                                 spacing=dp(profile.tokens.spacing["sm"]))
-            popup = Popup(title=titolo, content=content, size_hint=(0.8, 0.35))
+            popup = Popup(title=titolo, content=content, size_hint=(0.8, None),
+                          height=2 * riga + dp(profile.tokens.spacing["sm"]) + dp(96))
 
             def submit(*_):
                 popup.dismiss()
