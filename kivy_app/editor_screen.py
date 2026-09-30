@@ -245,6 +245,11 @@ class EditorScreen(BoxLayout):
         griglia = GridLayout(cols=4, spacing=(dp(10), dp(6)), size_hint_y=None,
                              row_default_height=riga_h, row_force_default=True)
 
+        # FocusBehavior defaults to ``input_type="null"``. On Android SDL
+        # copies that to DummyEdit's EditorInfo as TYPE_NULL, making Gboard use
+        # its limited key-event mode; after voice input is paused it then has
+        # no text-editor toolbar to leave visible. These are real text editors.
+
         def ricalcola_griglia(*_, g=griglia, b=block):
             largo_dp = max(b.width, 1) / profile.viewport.system_density
             per_riga = field_columns(profile_for_window(Window), largo_dp)
@@ -264,7 +269,7 @@ class EditorScreen(BoxLayout):
                 etichetta_label.height = etichetta_h
             cella.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=False,
-                              hint_text=etichetta,
+                              hint_text=etichetta, input_type="text",
                               **({} if not layout.labels_above else
                                  {"size_hint_y": None, "height": campo_h}))
             campo.bind(focus=self._field_handler(indice, chiave, campo))
@@ -282,7 +287,8 @@ class EditorScreen(BoxLayout):
                 width=lambda _, v, l=etichetta_label: setattr(l, "text_size", (v, l.height)))
             box.add_widget(etichetta_label)
             campo = TextInput(text=str(esercizio.get(chiave) or ""), multiline=True,
-                              hint_text=etichetta, size_hint_y=None, height=dp(90))
+                              hint_text=etichetta, input_type="text",
+                              size_hint_y=None, height=dp(90))
             campo.bind(focus=self._field_handler(indice, chiave, campo))
             self._fields.append(campo)
             box.add_widget(campo)
@@ -332,7 +338,14 @@ class EditorScreen(BoxLayout):
             corrente = self._editor.esercizi[indice].get(chiave) or ""
             if valore == corrente:
                 return
-            self._wrap(lambda: self._editor.aggiorna(indice, **{chiave: valore}))
+            # The blur is already the commit boundary.  Committing whichever
+            # field is currently focused here is reentrant: during a focus
+            # transfer Kivy has already focused the destination TextInput but
+            # is still moving the shared keyboard away from this one.
+            self._wrap(
+                lambda: self._editor.aggiorna(indice, **{chiave: valore}),
+                commit_active=False,
+            )
         return on_focus
 
     def _commit_active_field(self):
@@ -785,10 +798,11 @@ class EditorScreen(BoxLayout):
         else:
             self._on_conflict_exit("Versione locale duplicata su Drive; originale riallineato.")
 
-    def _wrap(self, operation, rebuild=False):
+    def _wrap(self, operation, rebuild=False, commit_active=True):
         if not self._ready_for_action():
             return
-        self._commit_active_field()
+        if commit_active:
+            self._commit_active_field()
         try:
             operation()
         except Exception as exc:
