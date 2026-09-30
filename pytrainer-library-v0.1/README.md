@@ -150,21 +150,31 @@ python tools\export_pytrainer.py --exercise-id 2 --exercise-id 4 --output export
 
 I CSV vengono scritti in `exports/` con UTF-8 BOM, adatto anche all'apertura diretta in Excel.
 
-## Analisi video con Scrutatore
+## Analisi video con OpenCode
 
-Le analisi visive vengono delegate al subagente OpenCode `scrutatore`, indipendentemente
-dal modello scelto per l'agente `build`. Il modello primario e' `openai/gpt-5.6-luna`;
-il fallback e' `opencode-go/qwen3.8-flash`.
+Il comando delega la prima analisi visiva al subagente locale `scrutatore`, definito
+nel file `opencode.json` della repo. Modello iniziale: `openai/gpt-6-luna`, con fallback
+`opencode-go/deepseek-v4-flash-vision-exp` tramite il plugin globale
+`opencode-runtime-fallback`.
 
 ```text
 /analizza-video 6
+/sub_models scrutatore
 ```
 
-Scrutatore prepara i frame e produce solo JSON. L'agente principale valida e importa il
-risultato; l'export CSV resta un'operazione esplicita. Quando almeno un esercizio ha
-confidence inferiore a `0.75`, l'agente build riesamina gli stessi artefatti con il
-proprio modello e salva un secondo JSON per il confronto. Se il dubbio persiste, il
-risultato resta fuori dal database fino alla revisione dell'allenatore.
+`/sub_models scrutatore` chiede solo modello principale e fallback di Scrutatore e
+aggiorna la configurazione locale. `/sub_models general` aggiorna soltanto General
+nella configurazione globale, salvo un suo override locale. `/sub_models` senza
+argomenti configura tutti i subagenti globali, inclusi quelli aggiunti in futuro.
+Un nome inesistente viene segnalato senza creare agenti. Dopo una modifica alla
+configurazione, chiudere e riavviare OpenCode.
+
+L'agente principale prepara i frame, Scrutatore produce i JSON e l'agente principale
+li valida senza importarli.
+Importazione ed export CSV restano operazioni esplicite. Quando almeno un esercizio ha
+confidence inferiore a `0.75`, riesamina gli stessi artefatti e salva un secondo JSON
+per il confronto. Se il dubbio persiste, il risultato resta fuori dal database fino
+alla revisione dell'allenatore.
 
 I tag vengono normalizzati da `tools/tag_policy.py`: sinonimi e traduzioni vengono
 ricondotti a forme italiane canoniche, i tag generici sono rimossi e categoria o
